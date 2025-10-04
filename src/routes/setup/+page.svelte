@@ -39,7 +39,7 @@
     try {
       const { error } = await supabase
         .from('profiles')
-        .insert({
+        .upsert({
           id: user.id,
           role,
           full_name: fullName,

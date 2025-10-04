@@ -38,3 +38,45 @@ td {
 tr:hover {
   background: #f7fafc;
 }
+
+/* Mobile optimizations */
+@media (max-width: 768px) {
+  /* Improve tap targets and prevent iOS zoom */
+  input, select, textarea, button {
+    font-size: 16px;
+    min-height: 44px;
+  }
+
+  /* Card padding on small screens */
+  .card, .table-card, .modal-content, .action-card {
+    padding: 20px !important;
+  }
+
+  /* Navbar spacing and safe areas */
+  nav {
+    padding-top: env(safe-area-inset-top);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+
+  .nav-content {
+    padding: 10px 12px !important;
+    gap: 12px !important;
+  }
+
+  .nav-links {
+    gap: 12px !important;
+  }
+
+  /* Tables: make slightly smaller on mobile */
+  table {
+    font-size: 0.95rem;
+  }
+}
+
+/* Notch safe area for the bottom when needed */
+@supports (padding: max(0px)) {
+  body {
+    padding-bottom: max(env(safe-area-inset-bottom), 0px);
+  }
+}

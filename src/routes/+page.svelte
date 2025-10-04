@@ -28,8 +28,28 @@
         })
         
         if (signInError) throw signInError
-        
-        // Redirect to dashboard after login
+
+        // After login, check if user has a profile/role
+        const { data: userData } = await supabase.auth.getUser()
+        const uid = userData?.user?.id
+
+        if (uid) {
+          const { data: profile, error: profileError } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', uid)
+            .maybeSingle()
+
+          if (profileError) throw profileError
+
+          // If no profile or no role yet, send to setup
+          if (!profile || !profile.role) {
+            window.location.href = '/setup'
+            return
+          }
+        }
+
+        // Otherwise go to dashboard
         window.location.href = '/dashboard'
       }
     } catch (err) {
@@ -42,7 +62,7 @@
 
 <div class="container">
   <div class="card">
-    <h1>👶 Family Hub</h1>
+    <h1>Family Hub</h1>
     <h2>{mode === 'login' ? 'Welcome Back' : 'Create Account'}</h2>
     
     {#if error}
@@ -187,4 +207,11 @@
     font-weight: 600;
     text-decoration: underline;
   }
+
+  @media (max-width: 480px) {
+    .card { padding: 24px; }
+    h1 { font-size: 1.8em; }
+    h2 { font-size: 1.1em; }
+  }
 </style>
+

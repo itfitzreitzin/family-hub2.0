@@ -60,7 +60,7 @@
 
 <div class="container">
   <div class="card">
-    <h1>👶 Welcome to Family Hub!</h1>
+    <h1>Welcome to Family Hub!</h1>
     <h2>Let's get you set up</h2>
     
     <div class="role-selection">
@@ -69,7 +69,7 @@
       <label class="role-card" class:selected={role === 'family'}>
         <input type="radio" bind:group={role} value="family" />
         <div class="role-content">
-          <div class="role-icon">👨‍👩‍👧</div>
+          <div class="role-icon">👨‍👩‍👧‍👦</div>
           <div class="role-name">Family Member</div>
           <div class="role-desc">Parents, manage schedules & payments</div>
         </div>
@@ -78,7 +78,7 @@
       <label class="role-card" class:selected={role === 'nanny'}>
         <input type="radio" bind:group={role} value="nanny" />
         <div class="role-content">
-          <div class="role-icon">👶</div>
+          <div class="role-icon">🧑‍🍼</div>
           <div class="role-name">Nanny / Caregiver</div>
           <div class="role-desc">Track hours and view payments</div>
         </div>
@@ -264,4 +264,12 @@
     opacity: 0.6;
     cursor: not-allowed;
   }
+
+  @media (max-width: 480px) {
+    .card { padding: 24px; }
+    h1 { font-size: 1.6em; }
+    h2 { font-size: 1.05em; }
+    .role-icon { font-size: 2.2em; }
+  }
 </style>
+

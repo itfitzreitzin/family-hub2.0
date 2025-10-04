@@ -140,6 +140,12 @@
       .single()
     
     profile = profileData
+
+    // If no profile or missing role, send to setup
+    if (!profile || !profile.role) {
+      window.location.href = '/setup'
+      return
+    }
     
     // Load data based on role
     if (profile?.role === 'family' || profile?.role === 'admin') {

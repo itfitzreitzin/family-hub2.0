@@ -1155,4 +1155,10 @@ async function deleteEntry(entryId) {
   color: #718096;
   font-size: 0.85em;
 }
+
+@media (max-width: 600px) {
+  .form-row {
+    grid-template-columns: 1fr;
+  }
+}
 </style>

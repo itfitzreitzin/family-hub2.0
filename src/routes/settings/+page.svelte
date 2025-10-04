@@ -319,4 +319,9 @@
     background: #f7fafc;
     color: #718096;
   }
+  
+  @media (max-width: 480px) {
+    .container { padding: 20px 16px; }
+    .card { padding: 20px; }
+  }
 </style>

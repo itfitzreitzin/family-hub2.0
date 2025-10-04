@@ -5,6 +5,7 @@
   export let currentPage = ''
  
   let isAdmin = false
+  let userRole = null
  
   onMount(async () => {
     const { data: { user } } = await supabase.auth.getUser()
@@ -22,6 +23,7 @@
       console.log('Nav: Role:', profile?.role)
      
       isAdmin = profile?.role === 'admin'
+      userRole = profile?.role || null
       console.log('Nav: isAdmin:', isAdmin)
     }
   })
@@ -39,6 +41,9 @@
     <div class="nav-links">
       <a href="/dashboard" class:active={currentPage === 'dashboard'}>Dashboard</a>
       <a href="/tracker" class:active={currentPage === 'tracker'}>Time Tracker</a>
+      {#if userRole === 'family' || userRole === 'admin'}
+        <a href="/schedule" class:active={currentPage === 'schedule'}>Schedule</a>
+      {/if}
       <a href="/history" class:active={currentPage === 'history'}>History</a>
       {#if isAdmin}
         <a href="/admin" class:active={currentPage === 'admin'} class="admin-link">Admin</a>
@@ -138,6 +143,14 @@
       justify-content: space-around;
       padding-top: 10px;
       border-top: 1px solid #e2e8f0;
+    }
+    .logo {
+      font-size: 1.1em;
+    }
+    .sign-out {
+      order: 2;
+      margin-left: auto;
+      padding: 6px 12px;
     }
   }
 </style>

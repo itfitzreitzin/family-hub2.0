@@ -19,7 +19,9 @@ let clockInTime = '09:00'
   let currentWeekOffset = 0
   let currentWeekStart = null
   let currentWeekEnd = null
-  
+  let todaySchedules = []
+  let currentSchedule = null
+
   onMount(async () => {
     const { data: { user: currentUser } } = await supabase.auth.getUser()
     
@@ -58,11 +60,13 @@ let clockInTime = '09:00'
     await checkCurrentEntry()
     await loadWeekData()
     loading = false
+    await loadTodaySchedule()
   })
   
  async function handleNannyChange() {
   await checkCurrentEntry()
   await loadWeekData()
+  await loadTodaySchedule() 
 }
   
   $: filteredEntries = entries.filter(e => e.clock_out)
@@ -90,7 +94,105 @@ let clockInTime = '09:00'
       stopTimer()
     }
   }
+  async function loadTodaySchedule() {
+  if (!selectedNannyId) return
   
+  const today = new Date().toISOString().split('T')[0]
+  
+  try {
+    const { data, error } = await supabase
+      .from('schedules')
+      .select('*')
+      .eq('nanny_id', selectedNannyId)
+      .eq('date', today)
+      .order('start_time')
+    
+    if (error) throw error
+    
+    todaySchedules = data || []
+    
+    // Find the current or next upcoming shift
+    const now = new Date().toTimeString().slice(0, 5)
+    currentSchedule = todaySchedules.find(s => {
+      const endTime = s.end_time.slice(0, 5)
+      return endTime > now && (s.status === 'scheduled' || s.status === 'in_progress')
+    })
+    
+    console.log('Today schedules:', todaySchedules)
+    console.log('Current/next schedule:', currentSchedule)
+  } catch (err) {
+    console.error('Error loading today schedule:', err)
+    todaySchedules = []
+    currentSchedule = null
+  }
+}
+async function clockInWithSchedule(scheduleId = null) {
+  if (!selectedNannyId) {
+    alert('Please select a nanny')
+    return
+  }
+  
+  if (profile?.role !== 'nanny' && selectedNannyId === user.id) {
+    alert('You cannot clock yourself in. Please select a nanny.')
+    return
+  }
+  
+  loading = true
+  
+  try {
+    // Check if anyone is already clocked in
+    const { data: activeEntry } = await supabase
+      .from('time_entries')
+      .select('*, profiles!time_entries_nanny_id_fkey(full_name)')
+      .is('clock_out', null)
+      .limit(1)
+      .maybeSingle()
+    
+    if (activeEntry) {
+      alert(`${activeEntry.profiles.full_name} is already clocked in. Only one nanny can be on the clock at a time.`)
+      loading = false
+      return
+    }
+    
+    // Prepare clock-in data
+    const clockInData = {
+      nanny_id: selectedNannyId,
+      clock_in: new Date().toISOString()
+    }
+    
+    // Add schedule_id if clocking in for a specific schedule
+    if (scheduleId) {
+      clockInData.schedule_id = scheduleId
+      
+      // Update schedule status to in_progress
+      await supabase
+        .from('schedules')
+        .update({ status: 'in_progress' })
+        .eq('id', scheduleId)
+    }
+    
+    const { data, error } = await supabase
+      .from('time_entries')
+      .insert(clockInData)
+      .select()
+      .single()
+    
+    if (error) throw error
+    
+    currentEntry = data
+    startTimer()
+    await loadWeekData()
+    await loadTodaySchedule()
+    
+    if (scheduleId && currentSchedule) {
+      alert(`Clocked in for scheduled shift: ${currentSchedule.start_time.slice(0,5)} - ${currentSchedule.end_time.slice(0,5)}`)
+    }
+  } catch (err) {
+    alert('Error clocking in: ' + err.message)
+  } finally {
+    loading = false
+  }
+}
   async function loadWeekData() {
     if (!selectedNannyId) return
     
@@ -203,6 +305,17 @@ function formatDate(dateString) {
   // Show confirmation modal instead of immediately clocking in
   showClockInConfirm = true
   clockInTime = new Date().toTimeString().slice(0, 5) // HH:MM format
+ 
+  // If there's a current schedule, offer to clock in for it
+  if (currentSchedule) {
+    if (confirm(`Clock in for scheduled shift ${currentSchedule.start_time.slice(0,5)} - ${currentSchedule.end_time.slice(0,5)}?`)) {
+      await clockInWithSchedule(currentSchedule.id)
+    } else {
+      await clockInWithSchedule(null) // Clock in without schedule
+    }
+  } else {
+    await clockInWithSchedule(null) // No schedule, just clock in
+  }
 }
 
 async function confirmClockIn() {
@@ -253,13 +366,12 @@ async function clockOut() {
   loading = true
   
   try {
-    // Fetch the current active entry for the selected nanny
     const { data: activeEntry, error: fetchError } = await supabase
       .from('time_entries')
       .select('*')
       .eq('nanny_id', selectedNannyId)
       .is('clock_out', null)
-      .maybeSingle()  // Changed from .single()
+      .maybeSingle()
     
     if (fetchError) throw fetchError
     
@@ -283,12 +395,21 @@ async function clockOut() {
     
     if (updateError) throw updateError
     
+    // If this was a scheduled shift, update its status
+    if (activeEntry.schedule_id) {
+      await supabase
+        .from('schedules')
+        .update({ status: 'completed' })
+        .eq('id', activeEntry.schedule_id)
+    }
+    
     alert(`Clocked out! Worked ${hours.toFixed(2)} hours`)
     
     currentEntry = null
     stopTimer()
-    await checkCurrentEntry()  // Force recheck
+    await checkCurrentEntry()
     await loadWeekData()
+    await loadTodaySchedule()
   } catch (err) {
     console.error('Clock out error:', err)
     alert('Error clocking out: ' + err.message)
@@ -296,6 +417,7 @@ async function clockOut() {
     loading = false
   }
 }
+
   
   async function generateVenmoPayment() {
     if (weekTotal === 0) {
@@ -598,7 +720,49 @@ async function deleteEntry(entryId) {
         </select>
       </div>
     {/if}
+    <!-- Today's Schedule Card (only show if there are schedules) -->
+{#if todaySchedules.length > 0}
+  <div class="card schedule-today-card">
+    <h2>📅 Today's Schedule</h2>
     
+    <div class="schedule-list">
+      {#each todaySchedules as schedule}
+        <div class="schedule-item" class:active={schedule.status === 'in_progress'} class:completed={schedule.status === 'completed'}>
+          <div class="schedule-info">
+            <div class="schedule-time">
+              <strong>{schedule.start_time.slice(0,5)} - {schedule.end_time.slice(0,5)}</strong>
+              {#if schedule.status === 'completed'}
+                <span class="status-badge completed">✅ Completed</span>
+              {:else if schedule.status === 'in_progress'}
+                <span class="status-badge active">🟢 In Progress</span>
+              {:else if schedule.id === currentSchedule?.id}
+                <span class="status-badge upcoming">⏰ Up Next</span>
+              {:else}
+                <span class="status-badge scheduled">📅 Scheduled</span>
+              {/if}
+            </div>
+            
+            {#if schedule.notes}
+              <div class="schedule-notes">{schedule.notes}</div>
+            {/if}
+          </div>
+          
+          {#if schedule.status === 'scheduled' && !currentEntry && schedule.id === currentSchedule?.id}
+            <button class="btn btn-schedule-clock" on:click={() => clockInWithSchedule(schedule.id)}>
+              Clock In for This Shift
+            </button>
+          {/if}
+        </div>
+      {/each}
+    </div>
+    
+    {#if !currentEntry && !currentSchedule}
+      <div class="no-current-schedule">
+        No upcoming shifts today. You can still clock in for unscheduled work.
+      </div>
+    {/if}
+  </div>
+{/if}
     <!-- Timer Card -->
     <div class="card">
       <h2>⏰ Time Tracking</h2>
@@ -1160,5 +1324,108 @@ async function deleteEntry(entryId) {
   .form-row {
     grid-template-columns: 1fr;
   }
+}
+
+/* Today's Schedule Styles */
+.schedule-today-card {
+  background: linear-gradient(to right, #f7fafc, white);
+  border-left: 4px solid #667eea;
+}
+
+.schedule-list {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.schedule-item {
+  background: white;
+  border: 2px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 15px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: all 0.3s;
+}
+
+.schedule-item.active {
+  border-color: #48bb78;
+  background: #f0fff4;
+}
+
+.schedule-item.completed {
+  border-color: #9f7aea;
+  background: #faf5ff;
+  opacity: 0.8;
+}
+
+.schedule-info {
+  flex: 1;
+}
+
+.schedule-time {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 5px;
+}
+
+.status-badge {
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 0.8em;
+  font-weight: 600;
+}
+
+.status-badge.completed {
+  background: #c6f6d5;
+  color: #22543d;
+}
+
+.status-badge.active {
+  background: #c6f6d5;
+  color: #22543d;
+}
+
+.status-badge.upcoming {
+  background: #fef5e7;
+  color: #744210;
+}
+
+.status-badge.scheduled {
+  background: #e6f7ff;
+  color: #0050b3;
+}
+
+.schedule-notes {
+  color: #718096;
+  font-size: 0.9em;
+  margin-top: 5px;
+}
+
+.btn-schedule-clock {
+  padding: 10px 20px;
+  background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-schedule-clock:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(72, 187, 120, 0.3);
+}
+
+.no-current-schedule {
+  text-align: center;
+  padding: 20px;
+  color: #718096;
+  background: #f7fafc;
+  border-radius: 8px;
+  margin-top: 15px;
 }
 </style>

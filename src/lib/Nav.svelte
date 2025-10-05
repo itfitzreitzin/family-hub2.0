@@ -41,7 +41,7 @@
     <div class="nav-links">
       <a href="/dashboard" class:active={currentPage === 'dashboard'}>Dashboard</a>
       <a href="/tracker" class:active={currentPage === 'tracker'}>Time Tracker</a>
-      {#if userRole === 'family' || userRole === 'admin'}
+      {#if userRole === 'family' || userRole === 'admin' || userRole === 'nanny'}
         <a href="/schedule" class:active={currentPage === 'schedule'}>Schedule</a>
       {/if}
       <a href="/history" class:active={currentPage === 'history'}>History</a>
@@ -154,3 +154,4 @@
     }
   }
 </style>
+

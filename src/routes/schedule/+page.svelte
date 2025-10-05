@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import { supabase } from '$lib/supabase'
   import Nav from '$lib/Nav.svelte'
+  import CalendarManager from '$lib/components/CalendarManager.svelte' // Import the calendar manager
   
   let user = null
   let profile = null
@@ -9,8 +10,8 @@
   let shifts = []
   let loading = true
   let showAddShift = false
+  let showCalendarManager = false // New state for calendar manager modal
   let nannies = []
-  let debugMode = true // Add debug mode for troubleshooting
   
   let shiftForm = {
     nannyId: null,
@@ -19,6 +20,16 @@
     endTime: '17:00',
     notes: ''
   }
+  let weekSummary = null
+  let showInsights = false
+  let viewMode = 'grid' // 'grid' or 'coverage'
+  
+  // Real calendar data
+  let parentCalendarEvents = {
+    you: [],
+    partner: []
+  }
+  let familyMembers = [] // Store family member profiles
   
   onMount(async () => {
     const { data: { user: currentUser } } = await supabase.auth.getUser()
@@ -36,9 +47,10 @@
       .single()
     
     profile = profileData
-    
-    // Load nannies for family/admin
+
     if (profile?.role === 'family' || profile?.role === 'admin') {
+      await loadFamilyMembers()
+      
       const { data: nanniesData } = await supabase
         .from('profiles')
         .select('*')
@@ -49,11 +61,171 @@
       if (nannies.length > 0) {
         shiftForm.nannyId = nannies[0].id
       }
+    } else if (profile?.role === 'nanny') {
+      nannies = profile ? [profile] : []
+      shiftForm.nannyId = profile?.id || null
     }
-    
+
     setCurrentWeek(0)
     loading = false
   })
+  
+  async function loadFamilyMembers() {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('role', 'family')
+      .order('created_at')
+    
+    if (error) {
+      console.error('Error loading family members:', error)
+      return
+    }
+    
+    familyMembers = data || []
+    console.log('Family members loaded:', familyMembers)
+  }
+  
+  async function loadParentCalendarEvents() {
+    if (!currentWeekStart || familyMembers.length === 0) return
+    
+    const weekEnd = new Date(currentWeekStart)
+    weekEnd.setDate(weekEnd.getDate() + 6)
+    
+    try {
+      // Load calendar events for all family members
+      const { data: events, error } = await supabase
+        .from('calendar_events')
+        .select(`
+          *,
+          parent_calendars!inner (
+            calendar_name,
+            color,
+            sync_enabled,
+            user_id
+          )
+        `)
+        .gte('start_time', currentWeekStart.toISOString())
+        .lte('start_time', weekEnd.toISOString())
+        .eq('is_busy', true)
+        .eq('parent_calendars.sync_enabled', true)
+        .order('start_time')
+      
+      if (error) throw error
+      
+      // Also load manual busy times
+      const { data: manualTimes, error: manualError } = await supabase
+        .from('manual_busy_times')
+        .select('*')
+        .gte('start_time', currentWeekStart.toISOString())
+        .lte('start_time', weekEnd.toISOString())
+      
+      if (manualError) throw manualError
+      
+      // Process recurring manual times
+      const recurringEvents = await processRecurringEvents(manualTimes || [], currentWeekStart, weekEnd)
+      
+      // Organize events by family member
+      parentCalendarEvents = {
+        you: [],
+        partner: []
+      }
+      
+      // Determine which user is "you" and which is "partner"
+      const youId = user.id
+      const partnerId = familyMembers.find(m => m.id !== youId)?.id
+      
+      // Sort calendar events
+      (events || []).forEach(event => {
+        const eventData = {
+          title: event.title,
+          startTime: new Date(event.start_time),
+          endTime: new Date(event.end_time),
+          color: event.parent_calendars.color,
+          calendarName: event.parent_calendars.calendar_name
+        }
+        
+        if (event.parent_calendars.user_id === youId) {
+          parentCalendarEvents.you.push(eventData)
+        } else if (event.parent_calendars.user_id === partnerId) {
+          parentCalendarEvents.partner.push(eventData)
+        }
+      })
+      
+      // Add recurring manual events
+      recurringEvents.forEach(event => {
+        const eventData = {
+          title: event.title,
+          startTime: new Date(event.start_time),
+          endTime: new Date(event.end_time),
+          color: '#718096',
+          calendarName: 'Manual Entry'
+        }
+        
+        if (event.user_id === youId) {
+          parentCalendarEvents.you.push(eventData)
+        } else if (event.user_id === partnerId) {
+          parentCalendarEvents.partner.push(eventData)
+        }
+      })
+      
+      console.log('Calendar events loaded:', parentCalendarEvents)
+      
+    } catch (err) {
+      console.error('Error loading calendar events:', err)
+    }
+  }
+  
+  async function processRecurringEvents(manualTimes, weekStart, weekEnd) {
+    const recurringEvents = []
+    
+    for (const manual of manualTimes.filter(m => m.recurring)) {
+      // Generate instances for this week
+      const instances = generateRecurringInstances(manual, weekStart, weekEnd)
+      recurringEvents.push(...instances)
+    }
+    
+    return recurringEvents
+  }
+  
+  function generateRecurringInstances(event, weekStart, weekEnd) {
+    const instances = []
+    const startDate = new Date(event.start_time)
+    const endDate = new Date(event.end_time)
+    const duration = endDate - startDate
+    
+    // For weekly/biweekly patterns
+    if (event.recurring_pattern === 'weekly' || event.recurring_pattern === 'biweekly') {
+      const interval = event.recurring_pattern === 'weekly' ? 7 : 14
+      
+      for (let d = new Date(weekStart); d <= weekEnd; d.setDate(d.getDate() + 1)) {
+        const dayName = d.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase()
+        
+        if (event.recurring_days && event.recurring_days.includes(dayName)) {
+          // Check if this instance should occur based on the pattern
+          const weeksDiff = Math.floor((d - startDate) / (7 * 24 * 60 * 60 * 1000))
+          
+          if (event.recurring_pattern === 'weekly' || weeksDiff % 2 === 0) {
+            // Check if within recurring period
+            if (!event.recurring_until || d <= new Date(event.recurring_until)) {
+              const instanceStart = new Date(d)
+              instanceStart.setHours(startDate.getHours(), startDate.getMinutes(), 0)
+              
+              const instanceEnd = new Date(instanceStart.getTime() + duration)
+              
+              instances.push({
+                ...event,
+                start_time: instanceStart.toISOString(),
+                end_time: instanceEnd.toISOString()
+              })
+            }
+          }
+        }
+      }
+    }
+    
+    return instances
+  }
   
   function setCurrentWeek(offset) {
     const now = new Date()
@@ -62,6 +234,9 @@
     weekStart.setHours(0, 0, 0, 0)
     currentWeekStart = weekStart
     loadShifts()
+    if (profile?.role === 'family' || profile?.role === 'admin') {
+      loadParentCalendarEvents() // Load calendar events when week changes
+    }
   }
 
   function ymd(date) {
@@ -84,15 +259,18 @@
     return Number.isNaN(parsed.getTime()) ? '' : ymd(parsed)
   }
 
-  function getNannyName(shift) {
-    // First check if we have the nanny data from the join
-    if (shift.nanny && shift.nanny.full_name) {
-      return shift.nanny.full_name
+  function getNannyName(id) {
+    const nanny = nannies.find(x => x.id === id)
+    if (nanny) {
+      if (profile?.role === 'nanny' && nanny.id === profile?.id) {
+        return nanny.full_name || 'You'
+      }
+      return nanny.full_name
     }
-    
-    // Fallback to looking up in the nannies array
-    const n = nannies.find(x => x.id === shift.nanny_id)
-    return n ? n.full_name : 'Nanny'
+    if (profile?.role === 'nanny' && id === profile?.id) {
+      return profile.full_name || 'You'
+    }
+    return 'Nanny'
   }
 
   async function loadShifts() {
@@ -102,43 +280,60 @@
     weekEnd.setDate(weekEnd.getDate() + 6)
     
     try {
-      console.log('Loading shifts for:', ymd(currentWeekStart), 'to', ymd(weekEnd))
-      
-      // Query with profile information joined
-      const { data, error } = await supabase
+      let query = supabase
         .from('schedules')
-        .select(`
-          *,
-          nanny:profiles!schedules_nanny_id_fkey(id, full_name, hourly_rate)
-        `)
+        .select('*')
         .gte('date', ymd(currentWeekStart))
         .lte('date', ymd(weekEnd))
         .order('date', { ascending: true })
         .order('start_time', { ascending: true })
+      
+      if (profile?.role === 'nanny') {
+        query = query.eq('nanny_id', user.id)
+      }
+      
+      const { data, error } = await query
 
       if (error) {
         console.error('Supabase error:', error)
         throw error
       }
       
-      // Debug: Log raw data
-      console.log('Raw data from Supabase:', data)
+      shifts = (data || []).map((shift) => ({
+        ...shift,
+        date: normalizeDateValue(shift.date)
+      }))
       
-      shifts = (data || []).map((shift) => {
-        const normalized = {
-          ...shift,
-          date: normalizeDateValue(shift.date)
-        }
-        console.log('Normalized shift:', normalized)
-        return normalized
-      })
-      
-      console.log('All shifts loaded:', shifts)
-      
+      if (profile?.role === 'family' || profile?.role === 'admin') {
+        await loadWeekSummary()
+      } else {
+        weekSummary = null
+      }
+
     } catch (err) {
       console.error('Error loading schedules:', err)
       shifts = []
     }
+  }
+
+  async function loadWeekSummary() {
+    if (!currentWeekStart) return
+    
+    const weekStartDate = new Date(currentWeekStart)
+    weekStartDate.setHours(0, 0, 0, 0)
+    
+    const { data, error } = await supabase
+      .from('weekly_coverage_summary')
+      .select('*')
+      .gte('week_start', weekStartDate.toISOString())
+      .lt('week_start', new Date(weekStartDate.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString())
+      .maybeSingle()
+    
+    if (error) {
+      console.error('Error loading week summary:', error)
+    }
+    
+    weekSummary = data
   }
 
   async function saveShift() {
@@ -148,32 +343,20 @@
     }
     
     try {
-      const insertData = {
-        nanny_id: shiftForm.nannyId,
-        date: shiftForm.date,
-        start_time: shiftForm.startTime,
-        end_time: shiftForm.endTime,
-        notes: shiftForm.notes || null,
-        created_by: user.id
-      }
-      
-      console.log('Saving shift with data:', insertData)
-      
       const { data: inserted, error } = await supabase
         .from('schedules')
-        .insert(insertData)
-        .select(`
-          *,
-          nanny:profiles!schedules_nanny_id_fkey(id, full_name, hourly_rate)
-        `)
+        .insert({
+          nanny_id: shiftForm.nannyId,
+          date: shiftForm.date,
+          start_time: shiftForm.startTime,
+          end_time: shiftForm.endTime,
+          notes: shiftForm.notes || '',
+          created_by: user.id
+        })
+        .select('*')
         .single()
       
-      if (error) {
-        console.error('Insert error:', error)
-        throw error
-      }
-      
-      console.log('Successfully inserted:', inserted)
+      if (error) throw error
       
       // Reset form
       shiftForm = {
@@ -185,7 +368,7 @@
       }
       
       showAddShift = false
-      await loadShifts() // Reload shifts after saving
+      await loadShifts()
       
     } catch (err) {
       console.error('Error saving:', err)
@@ -207,30 +390,20 @@
   
   function getShiftsForDay(date) {
     const dateStr = ymd(date)
-    console.log('Getting shifts for date:', dateStr)
-    const dayShifts = shifts.filter(s => {
-      const shiftDate = normalizeDateValue(s.date)
-      console.log('Comparing:', shiftDate, '===', dateStr, shiftDate === dateStr)
-      return shiftDate === dateStr
-    })
-    console.log('Found shifts for', dateStr, ':', dayShifts)
-    return dayShifts
+    return shifts.filter(s => normalizeDateValue(s.date) === dateStr)
   }
   
   function formatTime(timeStr) {
     if (!timeStr) return ''
-    // Handle both HH:MM and HH:MM:SS formats
     return timeStr.slice(0, 5)
   }
   
   function openAddShift(date) {
-    // Require at least one nanny for family/admin users
     if ((profile?.role === 'family' || profile?.role === 'admin') && (!nannies || nannies.length === 0)) {
-      alert('No nannies found. Please create a nanny profile first (via Admin).')
+      alert('No nannies found. Please create a nanny profile first.')
       return
     }
     shiftForm.date = ymd(date)
-    // If exactly one nanny, preselect it
     if (!shiftForm.nannyId && nannies && nannies.length === 1) {
       shiftForm.nannyId = nannies[0].id
     }
@@ -243,6 +416,9 @@
     newStart.setDate(newStart.getDate() + (offset * 7))
     currentWeekStart = newStart
     loadShifts()
+    if (profile?.role === 'family' || profile?.role === 'admin') {
+      loadParentCalendarEvents() // Reload calendar events for new week
+    }
   }
   
   async function deleteShift(shiftId) {
@@ -262,6 +438,168 @@
       alert('Error deleting shift')
     }
   }
+
+  function getCoverageStats() {
+    let totalHours = 0
+    let coveredHours = 0
+    let nannyHours = 0
+    let yourHours = 0
+    let partnerHours = 0
+    
+    const days = getWeekDays()
+    
+    days.forEach(day => {
+      if (day.getDay() === 0 || day.getDay() === 6) return // Skip weekends
+      
+      for (let hour = 8; hour < 18; hour++) {
+        totalHours++
+        const responsible = getResponsibleParty(day, hour)
+        
+        if (responsible.type !== 'gap') {
+          coveredHours++
+        }
+        
+        if (responsible.type === 'nanny') nannyHours++
+        else if (responsible.type === 'you') yourHours++
+        else if (responsible.type === 'partner') partnerHours++
+      }
+    })
+    
+    return {
+      coverageRate: Math.round((coveredHours / totalHours) * 100),
+      nannyHours,
+      yourHours,
+      partnerHours,
+      gaps: findCoverageGaps().length,
+      estimatedCost: nannyHours * 20
+    }
+  }
+  
+  function getHourRange() {
+    const hours = []
+    for (let h = 7; h <= 19; h++) {
+      hours.push(h)
+    }
+    return hours
+  }
+  
+  function getResponsibleParty(day, hour) {
+    // Check if nanny is scheduled
+    const nannyShift = shifts.find(s => {
+      const shiftDate = new Date(s.date)
+      if (shiftDate.toDateString() !== day.toDateString()) return false
+      
+      const start = parseInt(s.start_time.split(':')[0])
+      const end = parseInt(s.end_time.split(':')[0])
+      return hour >= start && hour < end
+    })
+    
+    if (nannyShift) {
+      return { 
+        type: 'nanny', 
+        name: getNannyName(nannyShift.nanny_id), 
+        color: 'bg-green-100 border-green-400 text-green-900' 
+      }
+    }
+    
+    // Check real calendar data for parent availability
+    const checkTime = new Date(day)
+    checkTime.setHours(hour, 0, 0, 0)
+    const checkTimeEnd = new Date(day)
+    checkTimeEnd.setHours(hour + 1, 0, 0, 0)
+    
+    // Check if "you" are busy
+    const youBusy = parentCalendarEvents.you.some(event => {
+      return checkTime < event.endTime && checkTimeEnd > event.startTime
+    })
+    
+    // Check if partner is busy
+    const partnerBusy = parentCalendarEvents.partner.some(event => {
+      return checkTime < event.endTime && checkTimeEnd > event.startTime
+    })
+    
+    // Get partner name
+    const partnerName = familyMembers.find(m => m.id !== user.id)?.full_name || 'Partner'
+    
+    // Determine who's responsible
+    if (youBusy && partnerBusy) {
+      return { 
+        type: 'gap', 
+        name: '⚠️ GAP', 
+        color: 'bg-red-100 border-red-400 text-red-900 font-bold' 
+      }
+    } else if (youBusy) {
+      return { 
+        type: 'partner', 
+        name: partnerName, 
+        color: 'bg-purple-100 border-purple-400 text-purple-900' 
+      }
+    } else if (partnerBusy) {
+      return { 
+        type: 'you', 
+        name: 'You', 
+        color: 'bg-blue-100 border-blue-400 text-blue-900' 
+      }
+    } else {
+      return { 
+        type: 'both', 
+        name: 'Both Available', 
+        color: 'bg-gray-50 border-gray-300 text-gray-600' 
+      }
+    }
+  }
+  
+  function findCoverageGaps() {
+    const gaps = []
+    const days = getWeekDays()
+    
+    days.forEach(day => {
+      if (day.getDay() === 0 || day.getDay() === 6) return // Skip weekends
+      
+      for (let hour = 8; hour < 18; hour++) {
+        const responsible = getResponsibleParty(day, hour)
+        if (responsible.type === 'gap') {
+          const lastGap = gaps[gaps.length - 1]
+          if (lastGap && lastGap.day.toDateString() === day.toDateString() && lastGap.endHour === hour) {
+            lastGap.endHour = hour + 1
+          } else {
+            gaps.push({
+              day: day,
+              startHour: hour,
+              endHour: hour + 1
+            })
+          }
+        }
+      }
+    })
+    
+    return gaps
+  }
+  
+  async function requestCoverage(gap) {
+    if ((profile?.role === 'family' || profile?.role === 'admin') && (!nannies || nannies.length === 0)) {
+      alert('No nannies found. Please create a nanny profile first.')
+      return
+    }
+    
+    shiftForm.date = ymd(gap.day)
+    shiftForm.startTime = `${gap.startHour.toString().padStart(2, '0')}:00`
+    shiftForm.endTime = `${gap.endHour.toString().padStart(2, '0')}:00`
+    shiftForm.notes = 'Coverage gap - both parents unavailable'
+    
+    if (nannies && nannies.length === 1) {
+      shiftForm.nannyId = nannies[0].id
+    }
+    
+    showAddShift = true
+  }
+  
+  // Callback when calendars are updated
+  function handleCalendarUpdate() {
+    if (profile?.role === 'family' || profile?.role === 'admin') {
+      loadParentCalendarEvents()
+    }
+  }
 </script>
 
 <Nav currentPage="schedule" />
@@ -273,75 +611,273 @@
     <div class="card">
       <div class="header">
         <h2>📅 Weekly Schedule</h2>
-        <div class="week-nav">
-          <button on:click={() => changeWeek('prev')}>←</button>
-          <span>
-            {currentWeekStart?.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - 
-            {new Date(currentWeekStart?.getTime() + 6 * 24 * 60 * 60 * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-          </span>
-          <button on:click={() => changeWeek('next')}>→</button>
+        <div class="header-controls">
+          {#if profile?.role === 'family' || profile?.role === 'admin'}
+            <button class="btn btn-secondary" on:click={() => showCalendarManager = true}>
+              ⚙️ Manage Calendars
+            </button>
+          {/if}
+          <div class="week-nav">
+            <button on:click={() => changeWeek('prev')}>←</button>
+            <span>
+              {currentWeekStart?.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - 
+              {new Date(currentWeekStart?.getTime() + 6 * 24 * 60 * 60 * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+            </span>
+            <button on:click={() => changeWeek('next')}>→</button>
+          </div>
         </div>
       </div>
       
-      <!-- Debug info (remove in production) -->
-      {#if debugMode}
-        <div class="debug-info">
-          <details>
-            <summary>Debug Info (click to expand)</summary>
-            <pre>{JSON.stringify({ 
-              totalShifts: shifts.length,
-              weekStart: ymd(currentWeekStart),
-              shifts: shifts.map(s => ({
-                id: s.id,
-                date: s.date,
-                nanny_id: s.nanny_id,
-                start: s.start_time,
-                end: s.end_time
-              }))
-            }, null, 2)}</pre>
-          </details>
-        </div>
-      {/if}
-      
-      <div class="calendar">
-        {#each getWeekDays() as day}
-          <div class="day-column">
-            <div class="day-header">
-              <div class="day-name">{day.toLocaleDateString('en-US', { weekday: 'short' })}</div>
-              <div class="day-date">{day.getDate()}</div>
-            </div>
-            
-            <div class="day-content">
-              {#each getShiftsForDay(day) as shift}
-                <div class="shift-block">
-                  <div class="shift-nanny">{getNannyName(shift)}</div>
-                  <div class="shift-time">
-                    {formatTime(shift.start_time)} - {formatTime(shift.end_time)}
-                  </div>
-                  {#if shift.notes}
-                    <div class="shift-notes">{shift.notes}</div>
-                  {/if}
-                  {#if profile?.role === 'family' || profile?.role === 'admin'}
-                    <button class="delete-btn" on:click={() => deleteShift(shift.id)}>×</button>
-                  {/if}
+      <!-- View Toggle Buttons -->
+      <div class="view-toggle">
+        <button 
+          class="view-btn" 
+          class:active={viewMode === 'grid'}
+          on:click={() => viewMode = 'grid'}>
+          📅 Schedule Grid
+        </button>
+        {#if profile?.role === 'family' || profile?.role === 'admin'}
+          <button 
+            class="view-btn" 
+            class:active={viewMode === 'coverage'}
+            on:click={() => viewMode = 'coverage'}>
+            👶 Coverage View
+          </button>
+        {/if}
+      </div>
+
+      <!-- Planning Insights -->
+      {#if weekSummary && (profile?.role === 'family' || profile?.role === 'admin')}
+        <button class="insights-btn" on:click={() => showInsights = !showInsights}>
+          {showInsights ? '📊 Hide' : '📊 Show'} Week Summary
+        </button>
+        
+        {#if showInsights}
+          <div class="insights-box">
+            <div class="insights-row">
+              <div class="insight-item">
+                <span class="insight-label">Scheduled:</span>
+                <span class="insight-value">{weekSummary.hours_scheduled || 0} hrs</span>
+              </div>
+              <div class="insight-item">
+                <span class="insight-label">Actually Used:</span>
+                <span class="insight-value">{weekSummary.hours_worked?.toFixed(1) || 0} hrs</span>
+              </div>
+              {#if weekSummary.unscheduled_shifts > 0}
+                <div class="insight-item">
+                  <span class="insight-label">Extra Help:</span>
+                  <span class="insight-value">{weekSummary.unscheduled_shifts} times</span>
                 </div>
-              {:else}
-                <div class="no-coverage">No coverage</div>
-              {/each}
-              
-              {#if profile?.role === 'family' || profile?.role === 'admin'}
-                <button class="add-shift-btn" on:click={() => openAddShift(day)}>
-                  + Add
-                </button>
               {/if}
             </div>
           </div>
-        {/each}
-      </div>
+        {/if}
+      {/if}
+
+      <!-- Schedule Grid View -->
+      {#if viewMode === 'grid'}
+        <div class="calendar">
+          {#each getWeekDays() as day}
+            <div class="day-column">
+              <div class="day-header">
+                <div class="day-name">{day.toLocaleDateString('en-US', { weekday: 'short' })}</div>
+                <div class="day-date">{day.getDate()}</div>
+              </div>
+              
+              <div class="day-content">
+                <!-- Show parent events for context -->
+                {#if parentCalendarEvents.you.length > 0 || parentCalendarEvents.partner.length > 0}
+                  {@const dayEvents = [
+                    ...parentCalendarEvents.you.filter(e => 
+                      e.startTime.toDateString() === day.toDateString()
+                    ).map(e => ({...e, owner: 'You'})),
+                    ...parentCalendarEvents.partner.filter(e => 
+                      e.startTime.toDateString() === day.toDateString()
+                    ).map(e => ({...e, owner: familyMembers.find(m => m.id !== user.id)?.full_name || 'Partner'}))
+                  ].sort((a, b) => a.startTime - b.startTime)}
+                  
+                  {#each dayEvents as event}
+                    <div class="parent-event" style="border-left: 3px solid {event.color}">
+                      <div class="event-time">
+                        {event.startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                      <div class="event-title">{event.owner}: {event.title}</div>
+                    </div>
+                  {/each}
+                {/if}
+                
+                <!-- Nanny shifts -->
+                {#each getShiftsForDay(day) as shift}
+                  <div class="shift-block">
+                    <div class="shift-nanny">{getNannyName(shift.nanny_id)}</div>
+                    <div class="shift-time">
+                      {formatTime(shift.start_time)} - {formatTime(shift.end_time)}
+                    </div>
+                    {#if shift.notes}
+                      <div class="shift-notes">{shift.notes}</div>
+                    {/if}
+                    {#if profile?.role === 'family' || profile?.role === 'admin'}
+                      <button class="delete-btn" on:click={() => deleteShift(shift.id)}>×</button>
+                    {/if}
+                  </div>
+                {:else}
+                  <div class="no-coverage">No nanny scheduled</div>
+                {/each}
+                
+                {#if profile?.role === 'family' || profile?.role === 'admin'}
+                  <button class="add-shift-btn" on:click={() => openAddShift(day)}>
+                    + Add Nanny
+                  </button>
+                {/if}
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
+
+      <!-- Coverage View -->
+      {#if viewMode === 'coverage' && (profile?.role === 'family' || profile?.role === 'admin')}
+        {@const stats = getCoverageStats()}
+        
+        <!-- Coverage Stats -->
+        <div class="coverage-stats">
+          <div class="stat-card">
+            <div class="stat-label">Coverage Rate</div>
+            <div class="stat-value">{stats.coverageRate}%</div>
+          </div>
+          <div class="stat-card" class:warning={stats.gaps > 0}>
+            <div class="stat-label">Coverage Gaps</div>
+            <div class="stat-value">{stats.gaps}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Nanny Hours</div>
+            <div class="stat-value">{stats.nannyHours}h</div>
+            <div class="stat-detail">${stats.estimatedCost}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Your Hours</div>
+            <div class="stat-value">{stats.yourHours}h</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">
+              {familyMembers.find(m => m.id !== user.id)?.full_name || 'Partner'}'s Hours
+            </div>
+            <div class="stat-value">{stats.partnerHours}h</div>
+          </div>
+        </div>
+        
+        <!-- Gap Alerts -->
+        {#if findCoverageGaps().length > 0}
+          <div class="gap-alert">
+            <h3>⚠️ Coverage Gaps Detected</h3>
+            <p class="gap-description">Both parents have conflicts at these times:</p>
+            <div class="gap-list">
+              {#each findCoverageGaps() as gap}
+                <div class="gap-item">
+                  <div>
+                    <strong>{gap.day.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</strong>
+                    <span class="gap-time">{gap.startHour}:00 - {gap.endHour}:00</span>
+                  </div>
+                  <button class="request-btn" on:click={() => requestCoverage(gap)}>
+                    Request Nanny
+                  </button>
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/if}
+        
+        <!-- Coverage Grid -->
+        <div class="coverage-grid-container">
+          <h3>Hour-by-Hour Coverage</h3>
+          <div class="coverage-grid">
+            <!-- Header -->
+            <div class="grid-header">
+              <div class="time-label"></div>
+              {#each getWeekDays() as day}
+                <div class="day-header">
+                  {day.toLocaleDateString('en-US', { weekday: 'short' })}
+                  <div class="day-date">{day.getDate()}</div>
+                </div>
+              {/each}
+            </div>
+            
+            <!-- Hour rows -->
+            {#each getHourRange() as hour}
+              <div class="grid-row">
+                <div class="time-label">{hour > 12 ? hour - 12 : hour} {hour >= 12 ? 'PM' : 'AM'}</div>
+                {#each getWeekDays() as day}
+                  {@const responsible = getResponsibleParty(day, hour)}
+                  <div class="coverage-cell {responsible.color}">
+                    {responsible.name}
+                  </div>
+                {/each}
+              </div>
+            {/each}
+          </div>
+        </div>
+        
+        <!-- Legend -->
+        <div class="coverage-legend">
+          <div class="legend-item">
+            <div class="legend-color bg-green-100 border-green-400"></div>
+            <span>Nanny Coverage</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-color bg-blue-100 border-blue-400"></div>
+            <span>You're on duty</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-color bg-purple-100 border-purple-400"></div>
+            <span>{familyMembers.find(m => m.id !== user.id)?.full_name || 'Partner'}'s on duty</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-color bg-gray-50 border-gray-300"></div>
+            <span>Both available</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-color bg-red-100 border-red-400"></div>
+            <span><strong>Coverage Gap!</strong></span>
+          </div>
+        </div>
+      {/if}
     </div>
   {/if}
 </div>
 
+<!-- Calendar Manager Modal -->
+{#if showCalendarManager}
+  <div class="modal-overlay" on:click={() => showCalendarManager = false}>
+    <div class="modal-content large" on:click|stopPropagation>
+      <div class="modal-header">
+        <h2>Manage Your Calendars</h2>
+        <button class="close-btn" on:click={() => showCalendarManager = false}>×</button>
+      </div>
+      
+      <!-- Show calendar manager for current user -->
+      <CalendarManager 
+        userId={user.id} 
+        onUpdate={handleCalendarUpdate}
+      />
+      
+      <!-- If there's a partner, show their section too -->
+      {#if familyMembers.length > 1}
+        {@const partner = familyMembers.find(m => m.id !== user.id)}
+        {#if partner}
+          <div class="partner-section">
+            <h3>{partner.full_name}'s Calendars</h3>
+            <CalendarManager 
+              userId={partner.id} 
+              onUpdate={handleCalendarUpdate}
+            />
+          </div>
+        {/if}
+      {/if}
+    </div>
+  </div>
+{/if}
+
+<!-- Add Shift Modal -->
 {#if showAddShift}
   <div class="modal-overlay" on:click={() => showAddShift = false}>
     <div class="modal-content" on:click|stopPropagation>
@@ -409,11 +945,19 @@
     justify-content: space-between;
     align-items: center;
     margin-bottom: 30px;
+    flex-wrap: wrap;
+    gap: 15px;
   }
   
   h2 {
     margin: 0;
     color: #2d3748;
+  }
+  
+  .header-controls {
+    display: flex;
+    align-items: center;
+    gap: 15px;
   }
   
   .week-nav {
@@ -436,7 +980,35 @@
     background: #f7fafc;
     border-color: #cbd5e0;
   }
+
+  /* View Toggle */
+  .view-toggle {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+  }
   
+  .view-btn {
+    padding: 10px 20px;
+    background: white;
+    border: 2px solid #e2e8f0;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: all 0.2s;
+  }
+  
+  .view-btn.active {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border-color: #667eea;
+  }
+  
+  .view-btn:hover:not(.active) {
+    background: #f7fafc;
+  }
+  
+  /* Calendar Grid */
   .calendar {
     display: grid;
     grid-template-columns: repeat(7, 1fr);
@@ -493,6 +1065,27 @@
     min-height: 150px;
   }
   
+  /* Parent Events */
+  .parent-event {
+    background: #f7fafc;
+    border-radius: 6px;
+    padding: 8px;
+    margin-bottom: 8px;
+    font-size: 0.85em;
+  }
+  
+  .event-time {
+    font-weight: 600;
+    color: #4a5568;
+  }
+  
+  .event-title {
+    color: #718096;
+    margin-top: 2px;
+    font-size: 0.9em;
+  }
+  
+  /* Nanny Shifts */
   .shift-block {
     background: #c6f6d5;
     border: 1px solid #48bb78;
@@ -580,7 +1173,249 @@
     background: #5568d3;
     transform: translateY(-1px);
   }
+
+  /* Coverage View Styles */
+  .coverage-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 15px;
+    margin-bottom: 20px;
+  }
+
+  .stat-card {
+    background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+    border: 2px solid #0284c7;
+    border-radius: 12px;
+    padding: 20px;
+    text-align: center;
+  }
+
+  .stat-card.warning {
+    background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+    border-color: #dc2626;
+  }
+
+  .stat-label {
+    font-size: 0.85em;
+    color: #64748b;
+    margin-bottom: 8px;
+  }
+
+  .stat-value {
+    font-size: 2em;
+    font-weight: bold;
+    color: #1e293b;
+  }
+
+  .stat-detail {
+    font-size: 0.85em;
+    color: #64748b;
+    margin-top: 5px;
+  }
+
+  .gap-alert {
+    background: #fef2f2;
+    border: 2px solid #dc2626;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+
+  .gap-alert h3 {
+    color: #991b1b;
+    margin: 0 0 10px 0;
+  }
   
+  .gap-description {
+    color: #7f1d1d;
+    margin: 0 0 15px 0;
+  }
+
+  .gap-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .gap-item {
+    background: white;
+    padding: 12px;
+    border-radius: 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .gap-time {
+    font-weight: 600;
+    color: #dc2626;
+    margin-left: 10px;
+  }
+
+  .request-btn {
+    background: #dc2626;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.9em;
+    font-weight: 600;
+  }
+
+  .request-btn:hover {
+    background: #b91c1c;
+  }
+
+  .coverage-grid-container {
+    background: #f8fafc;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 20px;
+    overflow-x: auto;
+  }
+
+  .coverage-grid-container h3 {
+    margin: 0 0 15px 0;
+    color: #2d3748;
+  }
+
+  .coverage-grid {
+    min-width: 800px;
+  }
+
+  .grid-header {
+    display: grid;
+    grid-template-columns: 80px repeat(7, 1fr);
+    gap: 2px;
+    margin-bottom: 4px;
+  }
+
+  .grid-row {
+    display: grid;
+    grid-template-columns: 80px repeat(7, 1fr);
+    gap: 2px;
+    margin-bottom: 2px;
+  }
+
+  .time-label {
+    padding: 8px;
+    font-size: 0.85em;
+    color: #64748b;
+    text-align: right;
+    font-weight: 600;
+  }
+
+  .day-header {
+    background: white;
+    padding: 12px;
+    text-align: center;
+    border-radius: 8px;
+    font-weight: 600;
+    color: #2d3748;
+  }
+
+  .day-date {
+    font-size: 0.8em;
+    color: #64748b;
+    font-weight: normal;
+  }
+
+  .coverage-cell {
+    padding: 8px;
+    text-align: center;
+    border-radius: 4px;
+    font-size: 0.85em;
+    font-weight: 500;
+    border: 1px solid;
+  }
+
+  /* Cell color classes */
+  .bg-green-100 {
+    background: #dcfce7;
+    border-color: #86efac !important;
+    color: #14532d;
+  }
+
+  .bg-blue-100 {
+    background: #dbeafe;
+    border-color: #93c5fd !important;
+    color: #1e3a8a;
+  }
+
+  .bg-purple-100 {
+    background: #f3e8ff;
+    border-color: #d8b4fe !important;
+    color: #581c87;
+  }
+
+  .bg-gray-50 {
+    background: #f9fafb;
+    border-color: #e5e7eb !important;
+    color: #6b7280;
+  }
+
+  .bg-red-100 {
+    background: #fee2e2;
+    border-color: #fca5a5 !important;
+    color: #991b1b;
+    font-weight: 700;
+  }
+
+  .coverage-legend {
+    display: flex;
+    gap: 20px;
+    justify-content: center;
+    flex-wrap: wrap;
+    padding: 20px;
+    background: white;
+    border-radius: 12px;
+    border: 2px solid #e5e7eb;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .legend-color {
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    border: 2px solid;
+  }
+
+  /* Button Styles */
+  .btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  
+  .btn-primary {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+  }
+  
+  .btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+  }
+  
+  .btn-secondary {
+    background: #718096;
+    color: white;
+  }
+  
+  .btn-secondary:hover {
+    background: #5a677d;
+  }
+
+  /* Modal */
   .loading {
     text-align: center;
     padding: 60px;
@@ -616,6 +1451,47 @@
     max-height: 90vh;
     overflow-y: auto;
     animation: slideUp 0.3s ease;
+  }
+  
+  .modal-content.large {
+    max-width: 900px;
+  }
+  
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+  }
+  
+  .modal-header h2 {
+    margin: 0;
+  }
+  
+  .close-btn {
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: #718096;
+    padding: 0;
+    width: 30px;
+    height: 30px;
+  }
+  
+  .close-btn:hover {
+    color: #2d3748;
+  }
+  
+  .partner-section {
+    margin-top: 30px;
+    padding-top: 30px;
+    border-top: 2px solid #e2e8f0;
+  }
+  
+  .partner-section h3 {
+    margin: 0 0 20px 0;
+    color: #4a5568;
   }
   
   @keyframes slideUp {
@@ -674,56 +1550,58 @@
     margin-top: 20px;
   }
   
-  .btn {
+  .button-row .btn {
     flex: 1;
-    padding: 12px;
-    border: none;
+  }
+
+  /* Insights */
+  .insights-btn {
+    margin-bottom: 15px;
+    padding: 10px 20px;
+    background: white;
+    color: #667eea;
+    border: 2px solid #667eea;
     border-radius: 8px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s;
   }
-  
-  .btn-primary {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+
+  .insights-btn:hover {
+    background: #667eea;
     color: white;
   }
-  
-  .btn-primary:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
-  }
-  
-  .btn-secondary {
-    background: #718096;
-    color: white;
-  }
-  
-  .btn-secondary:hover {
-    background: #5a677d;
-  }
-  
-  /* Debug info styles */
-  .debug-info {
-    background: #f7fafc;
-    border: 1px solid #e2e8f0;
-    border-radius: 8px;
-    padding: 15px;
+
+  .insights-box {
+    background: #f8fafc;
+    border-radius: 10px;
+    padding: 20px;
     margin-bottom: 20px;
+    border: 1px solid #e2e8f0;
   }
-  
-  .debug-info summary {
-    cursor: pointer;
-    font-weight: 600;
-    color: #4a5568;
+
+  .insights-row {
+    display: flex;
+    gap: 30px;
+    flex-wrap: wrap;
   }
-  
-  .debug-info pre {
-    margin-top: 10px;
-    padding: 10px;
-    background: white;
-    border-radius: 4px;
-    overflow-x: auto;
+
+  .insight-item {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .insight-label {
     font-size: 0.85em;
+    color: #718096;
+    margin-bottom: 4px;
+  }
+
+  .insight-value {
+    font-size: 1.3em;
+    font-weight: bold;
+    color: #2d3748;
   }
 </style>
+
+

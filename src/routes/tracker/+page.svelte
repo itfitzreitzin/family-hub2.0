@@ -14,14 +14,24 @@
   let entries = []
   let payments = []
   let showClockInConfirm = false
-let clockInTime = '09:00'
+  let clockInTime = '09:00'
+  let showManualEntry = false
+  let editingEntry = null
+  let manualEntryForm = {
+    date: new Date().toISOString().split('T')[0],
+    clockIn: '09:00',
+    clockOut: '17:00',
+    notes: ''
+  }
+  
   // Week filter
   let currentWeekOffset = 0
   let currentWeekStart = null
   let currentWeekEnd = null
-  let todaySchedules = []
-  let currentSchedule = null
-
+  
+  // Mobile table view toggle
+  let mobileView = 'summary' // 'summary' or 'details'
+  
   onMount(async () => {
     const { data: { user: currentUser } } = await supabase.auth.getUser()
     
@@ -60,14 +70,12 @@ let clockInTime = '09:00'
     await checkCurrentEntry()
     await loadWeekData()
     loading = false
-    await loadTodaySchedule()
   })
   
- async function handleNannyChange() {
-  await checkCurrentEntry()
-  await loadWeekData()
-  await loadTodaySchedule() 
-}
+  async function handleNannyChange() {
+    await checkCurrentEntry()
+    await loadWeekData()
+  }
   
   $: filteredEntries = entries.filter(e => e.clock_out)
   $: weekTotal = filteredEntries.reduce((sum, e) => sum + (parseFloat(e.hours) || 0), 0)
@@ -94,105 +102,7 @@ let clockInTime = '09:00'
       stopTimer()
     }
   }
-  async function loadTodaySchedule() {
-  if (!selectedNannyId) return
   
-  const today = new Date().toISOString().split('T')[0]
-  
-  try {
-    const { data, error } = await supabase
-      .from('schedules')
-      .select('*')
-      .eq('nanny_id', selectedNannyId)
-      .eq('date', today)
-      .order('start_time')
-    
-    if (error) throw error
-    
-    todaySchedules = data || []
-    
-    // Find the current or next upcoming shift
-    const now = new Date().toTimeString().slice(0, 5)
-    currentSchedule = todaySchedules.find(s => {
-      const endTime = s.end_time.slice(0, 5)
-      return endTime > now && (s.status === 'scheduled' || s.status === 'in_progress')
-    })
-    
-    console.log('Today schedules:', todaySchedules)
-    console.log('Current/next schedule:', currentSchedule)
-  } catch (err) {
-    console.error('Error loading today schedule:', err)
-    todaySchedules = []
-    currentSchedule = null
-  }
-}
-async function clockInWithSchedule(scheduleId = null) {
-  if (!selectedNannyId) {
-    alert('Please select a nanny')
-    return
-  }
-  
-  if (profile?.role !== 'nanny' && selectedNannyId === user.id) {
-    alert('You cannot clock yourself in. Please select a nanny.')
-    return
-  }
-  
-  loading = true
-  
-  try {
-    // Check if anyone is already clocked in
-    const { data: activeEntry } = await supabase
-      .from('time_entries')
-      .select('*, profiles!time_entries_nanny_id_fkey(full_name)')
-      .is('clock_out', null)
-      .limit(1)
-      .maybeSingle()
-    
-    if (activeEntry) {
-      alert(`${activeEntry.profiles.full_name} is already clocked in. Only one nanny can be on the clock at a time.`)
-      loading = false
-      return
-    }
-    
-    // Prepare clock-in data
-    const clockInData = {
-      nanny_id: selectedNannyId,
-      clock_in: new Date().toISOString()
-    }
-    
-    // Add schedule_id if clocking in for a specific schedule
-    if (scheduleId) {
-      clockInData.schedule_id = scheduleId
-      
-      // Update schedule status to in_progress
-      await supabase
-        .from('schedules')
-        .update({ status: 'in_progress' })
-        .eq('id', scheduleId)
-    }
-    
-    const { data, error } = await supabase
-      .from('time_entries')
-      .insert(clockInData)
-      .select()
-      .single()
-    
-    if (error) throw error
-    
-    currentEntry = data
-    startTimer()
-    await loadWeekData()
-    await loadTodaySchedule()
-    
-    if (scheduleId && currentSchedule) {
-      alert(`Clocked in for scheduled shift: ${currentSchedule.start_time.slice(0,5)} - ${currentSchedule.end_time.slice(0,5)}`)
-    }
-  } catch (err) {
-    alert('Error clocking in: ' + err.message)
-  } finally {
-    loading = false
-  }
-}
   async function loadWeekData() {
     if (!selectedNannyId) return
     
@@ -209,8 +119,6 @@ async function clockInWithSchedule(scheduleId = null) {
       .order('clock_in', { ascending: false })
     
     entries = data || []
-    
-    // Load payments for this nanny
     await loadPayments()
   }
   
@@ -240,19 +148,29 @@ async function clockInWithSchedule(scheduleId = null) {
     
     return { start: weekStart, end: weekEnd }
   }
+  
   function formatTime(dateString) {
-  return new Date(dateString).toLocaleTimeString('en-US', {
-    hour: '2-digit',
-    minute: '2-digit'
-  })
-}
-function formatDate(dateString) {
-  return new Date(dateString).toLocaleDateString('en-US', {
-    month: 'numeric',
-    day: 'numeric',
-    year: 'numeric'
-  })
-}
+    return new Date(dateString).toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit'
+    })
+  }
+  
+  function formatDate(dateString) {
+    return new Date(dateString).toLocaleDateString('en-US', {
+      month: 'numeric',
+      day: 'numeric',
+      year: 'numeric'
+    })
+  }
+  
+  function formatDateShort(dateString) {
+    return new Date(dateString).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric'
+    })
+  }
+  
   function changeWeek(direction) {
     currentWeekOffset += direction
     loadWeekData()
@@ -292,132 +210,109 @@ function formatDate(dateString) {
   }
   
   async function clockIn() {
-  if (!selectedNannyId) {
-    alert('Please select a nanny')
-    return
-  }
-  
-  if (profile?.role !== 'nanny' && selectedNannyId === user.id) {
-    alert('You cannot clock yourself in. Please select a nanny.')
-    return
-  }
-  
-  // Show confirmation modal instead of immediately clocking in
-  showClockInConfirm = true
-  clockInTime = new Date().toTimeString().slice(0, 5) // HH:MM format
- 
-  // If there's a current schedule, offer to clock in for it
-  if (currentSchedule) {
-    if (confirm(`Clock in for scheduled shift ${currentSchedule.start_time.slice(0,5)} - ${currentSchedule.end_time.slice(0,5)}?`)) {
-      await clockInWithSchedule(currentSchedule.id)
-    } else {
-      await clockInWithSchedule(null) // Clock in without schedule
+    if (!selectedNannyId) {
+      alert('Please select a nanny')
+      return
     }
-  } else {
-    await clockInWithSchedule(null) // No schedule, just clock in
-  }
-}
-
-async function confirmClockIn() {
-  loading = true
-  
-  try {
-    const { data: activeEntry } = await supabase
-      .from('time_entries')
-      .select('*, profiles!time_entries_nanny_id_fkey(full_name)')
-      .is('clock_out', null)
-      .limit(1)
-      .maybeSingle()
     
-    if (activeEntry) {
-      alert(`${activeEntry.profiles.full_name} is already clocked in. Only one nanny can be on the clock at a time.`)
-      loading = false
+    if (profile?.role !== 'nanny' && selectedNannyId === user.id) {
+      alert('You cannot clock yourself in. Please select a nanny.')
+      return
+    }
+    
+    showClockInConfirm = true
+    clockInTime = new Date().toTimeString().slice(0, 5)
+  }
+
+  async function confirmClockIn() {
+    loading = true
+    
+    try {
+      const { data: activeEntry } = await supabase
+        .from('time_entries')
+        .select('*, profiles!time_entries_nanny_id_fkey(full_name)')
+        .is('clock_out', null)
+        .limit(1)
+        .maybeSingle()
+      
+      if (activeEntry) {
+        alert(`${activeEntry.profiles.full_name} is already clocked in. Only one nanny can be on the clock at a time.`)
+        loading = false
+        showClockInConfirm = false
+        return
+      }
+      
+      const today = new Date().toISOString().split('T')[0]
+      const clockInDateTime = new Date(`${today}T${clockInTime}`)
+      
+      const { data, error } = await supabase
+        .from('time_entries')
+        .insert({
+          nanny_id: selectedNannyId,
+          clock_in: clockInDateTime.toISOString()
+        })
+        .select()
+        .single()
+      
+      if (error) throw error
+      
+      currentEntry = data
+      startTimer()
+      await loadWeekData()
       showClockInConfirm = false
-      return
-    }
-    
-    // Build the clock-in timestamp from today's date + selected time
-    const today = new Date().toISOString().split('T')[0]
-    const clockInDateTime = new Date(`${today}T${clockInTime}`)
-    
-    const { data, error } = await supabase
-      .from('time_entries')
-      .insert({
-        nanny_id: selectedNannyId,
-        clock_in: clockInDateTime.toISOString()
-      })
-      .select()
-      .single()
-    
-    if (error) throw error
-    
-    currentEntry = data
-    startTimer()
-    await loadWeekData()
-    showClockInConfirm = false
-  } catch (err) {
-    alert('Error clocking in: ' + err.message)
-  } finally {
-    loading = false
-  }
-}
-  
-async function clockOut() {
-  loading = true
-  
-  try {
-    const { data: activeEntry, error: fetchError } = await supabase
-      .from('time_entries')
-      .select('*')
-      .eq('nanny_id', selectedNannyId)
-      .is('clock_out', null)
-      .maybeSingle()
-    
-    if (fetchError) throw fetchError
-    
-    if (!activeEntry) {
-      alert('No active shift found for this nanny')
+    } catch (err) {
+      alert('Error clocking in: ' + err.message)
+    } finally {
       loading = false
-      return
     }
-    
-    const clockOutTime = new Date()
-    const clockInTime = new Date(activeEntry.clock_in)
-    const hours = (clockOutTime - clockInTime) / (1000 * 60 * 60)
-    
-    const { error: updateError } = await supabase
-      .from('time_entries')
-      .update({
-        clock_out: clockOutTime.toISOString(),
-        hours: hours.toFixed(2)
-      })
-      .eq('id', activeEntry.id)
-    
-    if (updateError) throw updateError
-    
-    // If this was a scheduled shift, update its status
-    if (activeEntry.schedule_id) {
-      await supabase
-        .from('schedules')
-        .update({ status: 'completed' })
-        .eq('id', activeEntry.schedule_id)
-    }
-    
-    alert(`Clocked out! Worked ${hours.toFixed(2)} hours`)
-    
-    currentEntry = null
-    stopTimer()
-    await checkCurrentEntry()
-    await loadWeekData()
-    await loadTodaySchedule()
-  } catch (err) {
-    console.error('Clock out error:', err)
-    alert('Error clocking out: ' + err.message)
-  } finally {
-    loading = false
   }
-}
-
+  
+  async function clockOut() {
+    loading = true
+    
+    try {
+      const { data: activeEntry, error: fetchError } = await supabase
+        .from('time_entries')
+        .select('*')
+        .eq('nanny_id', selectedNannyId)
+        .is('clock_out', null)
+        .maybeSingle()
+      
+      if (fetchError) throw fetchError
+      
+      if (!activeEntry) {
+        alert('No active shift found for this nanny')
+        loading = false
+        return
+      }
+      
+      const clockOutTime = new Date()
+      const clockInTime = new Date(activeEntry.clock_in)
+      const hours = (clockOutTime - clockInTime) / (1000 * 60 * 60)
+      
+      const { error: updateError } = await supabase
+        .from('time_entries')
+        .update({
+          clock_out: clockOutTime.toISOString(),
+          hours: hours.toFixed(2)
+        })
+        .eq('id', activeEntry.id)
+      
+      if (updateError) throw updateError
+      
+      alert(`Clocked out! Worked ${hours.toFixed(2)} hours`)
+      
+      currentEntry = null
+      stopTimer()
+      await checkCurrentEntry()
+      await loadWeekData()
+    } catch (err) {
+      console.error('Clock out error:', err)
+      alert('Error clocking out: ' + err.message)
+    } finally {
+      loading = false
+    }
+  }
   
   async function generateVenmoPayment() {
     if (weekTotal === 0) {
@@ -441,7 +336,6 @@ Total: $${weekPay.toFixed(2)}`
       const venmoUrl = `venmo://paycharge?txn=pay&recipients=${venmo}&amount=${weekPay.toFixed(2)}&note=${encodeURIComponent(note)}`
       
       if (confirm(`Pay $${weekPay.toFixed(2)} to @${venmo} via Venmo?`)) {
-        // Create payment record
         await createPaymentRecord()
         window.location.href = venmoUrl
       }
@@ -450,7 +344,6 @@ Total: $${weekPay.toFixed(2)}`
         await navigator.clipboard.writeText(note)
         await createPaymentRecord()
         alert(`Payment details copied!\n\n${note}\n\nPaste into Venmo when sending to @${venmo}`)
-        // Don't auto-create payment record on desktop
       } catch {
         prompt('Copy this payment message:', note)
       }
@@ -538,169 +431,158 @@ Total: $${weekPay.toFixed(2)}`
     if (profile?.role === 'nanny') return 'You'
     return nannies.find(n => n.id === selectedNannyId)?.full_name || 'Select a nanny'
   }
+  
   async function deletePayment(paymentId) {
-  if (!confirm('Delete this payment record? This cannot be undone.')) {
-    return
-  }
-  
-  try {
-    const { error } = await supabase
-      .from('payments')
-      .delete()
-      .eq('id', paymentId)
+    if (!confirm('Delete this payment record? This cannot be undone.')) {
+      return
+    }
     
-    if (error) throw error
+    try {
+      const { error } = await supabase
+        .from('payments')
+        .delete()
+        .eq('id', paymentId)
+      
+      if (error) throw error
+      
+      await loadPayments()
+      alert('Payment record deleted')
+    } catch (err) {
+      alert('Error deleting payment: ' + err.message)
+    }
+  }
+  
+  async function requestPayment() {
+    if (weekTotal === 0) {
+      alert('No completed hours for this week')
+      return
+    }
     
-    await loadPayments()
-    alert('Payment record deleted')
-  } catch (err) {
-    alert('Error deleting payment: ' + err.message)
-  }
-}
-async function requestPayment() {
-  if (weekTotal === 0) {
-    alert('No completed hours for this week')
-    return
-  }
-  
-  const nanny = profile
-  const venmo = nanny?.venmo_username?.replace('@', '') || null
-  const rate = nanny?.hourly_rate || 20
-  
-  if (!venmo) {
-    alert('Please add your Venmo username in Settings first')
-    window.location.href = '/settings'
-    return
-  }
-  
-  // Get family members who could pay
-  const { data: familyMembers } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('role', 'family')
-  
-  const familyVenmo = familyMembers?.[0]?.venmo_username?.replace('@', '') || 'family'
-  
-  const note = `Payment request from ${nanny?.full_name}
+    const nanny = profile
+    const venmo = nanny?.venmo_username?.replace('@', '') || null
+    const rate = nanny?.hourly_rate || 20
+    
+    if (!venmo) {
+      alert('Please add your Venmo username in Settings first')
+      window.location.href = '/settings'
+      return
+    }
+    
+    const { data: familyMembers } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('role', 'family')
+    
+    const familyVenmo = familyMembers?.[0]?.venmo_username?.replace('@', '') || 'family'
+    
+    const note = `Payment request from ${nanny?.full_name}
 Week of ${currentWeekStart.toLocaleDateString()}
 Hours: ${weekTotal.toFixed(1)}
 Rate: $${rate}/hour
 Total: $${weekPay.toFixed(2)}`
-  
-  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
-  
-  if (isMobile) {
-    const venmoUrl = `venmo://paycharge?txn=charge&recipients=${familyVenmo}&amount=${weekPay.toFixed(2)}&note=${encodeURIComponent(note)}`
     
-    if (confirm(`Request $${weekPay.toFixed(2)} from @${familyVenmo} via Venmo?`)) {
-      window.location.href = venmoUrl
-    }
-  } else {
-    try {
-      await navigator.clipboard.writeText(note)
-      alert(`Payment request details copied!\n\n${note}\n\nOpen Venmo and request from your employer.`)
-    } catch {
-      prompt('Copy this payment request:', note)
-    }
-  }
-}
-// Add these variables at the top with your other state
-let showManualEntry = false
-let editingEntry = null
-let manualEntryForm = {
-  date: new Date().toISOString().split('T')[0],
-  clockIn: '09:00',
-  clockOut: '17:00',
-  notes: ''
-}
-
-// Add these functions
-function openManualEntry() {
-  editingEntry = null
-  manualEntryForm = {
-    date: new Date().toISOString().split('T')[0],
-    clockIn: '09:00',
-    clockOut: '17:00',
-    notes: ''
-  }
-  showManualEntry = true
-}
-
-function editEntry(entry) {
-  editingEntry = entry
-  manualEntryForm = {
-    date: new Date(entry.clock_in).toISOString().split('T')[0],
-    clockIn: new Date(entry.clock_in).toTimeString().slice(0, 5),
-    clockOut: entry.clock_out ? new Date(entry.clock_out).toTimeString().slice(0, 5) : '17:00',
-    notes: entry.notes || ''
-  }
-  showManualEntry = true
-}
-
-async function saveManualEntry() {
-  const clockIn = new Date(`${manualEntryForm.date}T${manualEntryForm.clockIn}`)
-  const clockOut = new Date(`${manualEntryForm.date}T${manualEntryForm.clockOut}`)
-  const hours = (clockOut - clockIn) / (1000 * 60 * 60)
-  
-  if (hours <= 0) {
-    alert('Clock out must be after clock in')
-    return
-  }
-  
-  try {
-    if (editingEntry) {
-      // Update existing
-      const { error } = await supabase
-        .from('time_entries')
-        .update({
-          clock_in: clockIn.toISOString(),
-          clock_out: clockOut.toISOString(),
-          hours: hours.toFixed(2),
-          notes: manualEntryForm.notes
-        })
-        .eq('id', editingEntry.id)
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
+    
+    if (isMobile) {
+      const venmoUrl = `venmo://paycharge?txn=charge&recipients=${familyVenmo}&amount=${weekPay.toFixed(2)}&note=${encodeURIComponent(note)}`
       
-      if (error) throw error
+      if (confirm(`Request $${weekPay.toFixed(2)} from @${familyVenmo} via Venmo?`)) {
+        window.location.href = venmoUrl
+      }
     } else {
-      // Create new
-      const { error } = await supabase
-        .from('time_entries')
-        .insert({
-          nanny_id: selectedNannyId,
-          clock_in: clockIn.toISOString(),
-          clock_out: clockOut.toISOString(),
-          hours: hours.toFixed(2),
-          notes: manualEntryForm.notes
-        })
-      
-      if (error) throw error
+      try {
+        await navigator.clipboard.writeText(note)
+        alert(`Payment request details copied!\n\n${note}\n\nOpen Venmo and request from your employer.`)
+      } catch {
+        prompt('Copy this payment request:', note)
+      }
+    }
+  }
+  
+  function openManualEntry() {
+    editingEntry = null
+    manualEntryForm = {
+      date: new Date().toISOString().split('T')[0],
+      clockIn: '09:00',
+      clockOut: '17:00',
+      notes: ''
+    }
+    showManualEntry = true
+  }
+
+  function editEntry(entry) {
+    editingEntry = entry
+    manualEntryForm = {
+      date: new Date(entry.clock_in).toISOString().split('T')[0],
+      clockIn: new Date(entry.clock_in).toTimeString().slice(0, 5),
+      clockOut: entry.clock_out ? new Date(entry.clock_out).toTimeString().slice(0, 5) : '17:00',
+      notes: entry.notes || ''
+    }
+    showManualEntry = true
+  }
+
+  async function saveManualEntry() {
+    const clockIn = new Date(`${manualEntryForm.date}T${manualEntryForm.clockIn}`)
+    const clockOut = new Date(`${manualEntryForm.date}T${manualEntryForm.clockOut}`)
+    const hours = (clockOut - clockIn) / (1000 * 60 * 60)
+    
+    if (hours <= 0) {
+      alert('Clock out must be after clock in')
+      return
     }
     
-    showManualEntry = false
-    await loadWeekData()
-    alert('Entry saved!')
-  } catch (err) {
-    alert('Error: ' + err.message)
+    try {
+      if (editingEntry) {
+        const { error } = await supabase
+          .from('time_entries')
+          .update({
+            clock_in: clockIn.toISOString(),
+            clock_out: clockOut.toISOString(),
+            hours: hours.toFixed(2),
+            notes: manualEntryForm.notes
+          })
+          .eq('id', editingEntry.id)
+        
+        if (error) throw error
+      } else {
+        const { error } = await supabase
+          .from('time_entries')
+          .insert({
+            nanny_id: selectedNannyId,
+            clock_in: clockIn.toISOString(),
+            clock_out: clockOut.toISOString(),
+            hours: hours.toFixed(2),
+            notes: manualEntryForm.notes
+          })
+        
+        if (error) throw error
+      }
+      
+      showManualEntry = false
+      await loadWeekData()
+      alert('Entry saved!')
+    } catch (err) {
+      alert('Error: ' + err.message)
+    }
   }
-}
 
-async function deleteEntry(entryId) {
-  if (!confirm('Delete this entry?')) return
-  
-  try {
-    const { error } = await supabase
-      .from('time_entries')
-      .delete()
-      .eq('id', entryId)
+  async function deleteEntry(entryId) {
+    if (!confirm('Delete this entry?')) return
     
-    if (error) throw error
-    
-    await loadWeekData()
-    alert('Entry deleted')
-  } catch (err) {
-    alert('Error deleting: ' + err.message)
+    try {
+      const { error } = await supabase
+        .from('time_entries')
+        .delete()
+        .eq('id', entryId)
+      
+      if (error) throw error
+      
+      await loadWeekData()
+      alert('Entry deleted')
+    } catch (err) {
+      alert('Error deleting: ' + err.message)
+    }
   }
-}
 </script>
 
 <Nav currentPage="tracker" />
@@ -720,49 +602,7 @@ async function deleteEntry(entryId) {
         </select>
       </div>
     {/if}
-    <!-- Today's Schedule Card (only show if there are schedules) -->
-{#if todaySchedules.length > 0}
-  <div class="card schedule-today-card">
-    <h2>📅 Today's Schedule</h2>
     
-    <div class="schedule-list">
-      {#each todaySchedules as schedule}
-        <div class="schedule-item" class:active={schedule.status === 'in_progress'} class:completed={schedule.status === 'completed'}>
-          <div class="schedule-info">
-            <div class="schedule-time">
-              <strong>{schedule.start_time.slice(0,5)} - {schedule.end_time.slice(0,5)}</strong>
-              {#if schedule.status === 'completed'}
-                <span class="status-badge completed">✅ Completed</span>
-              {:else if schedule.status === 'in_progress'}
-                <span class="status-badge active">🟢 In Progress</span>
-              {:else if schedule.id === currentSchedule?.id}
-                <span class="status-badge upcoming">⏰ Up Next</span>
-              {:else}
-                <span class="status-badge scheduled">📅 Scheduled</span>
-              {/if}
-            </div>
-            
-            {#if schedule.notes}
-              <div class="schedule-notes">{schedule.notes}</div>
-            {/if}
-          </div>
-          
-          {#if schedule.status === 'scheduled' && !currentEntry && schedule.id === currentSchedule?.id}
-            <button class="btn btn-schedule-clock" on:click={() => clockInWithSchedule(schedule.id)}>
-              Clock In for This Shift
-            </button>
-          {/if}
-        </div>
-      {/each}
-    </div>
-    
-    {#if !currentEntry && !currentSchedule}
-      <div class="no-current-schedule">
-        No upcoming shifts today. You can still clock in for unscheduled work.
-      </div>
-    {/if}
-  </div>
-{/if}
     <!-- Timer Card -->
     <div class="card">
       <h2>⏰ Time Tracking</h2>
@@ -773,7 +613,7 @@ async function deleteEntry(entryId) {
         {#if currentEntry}
           <div class="timer-info">Clocked in at {formatTime(currentEntry.clock_in)}</div>
         {:else}
-          <div class="timer-info">Not clocked in</div>
+          <div class="timer-info">Ready to start</div>
         {/if}
       </div>
       
@@ -791,15 +631,15 @@ async function deleteEntry(entryId) {
       
       <div class="quick-actions">
         <button class="btn btn-secondary" on:click={() => window.location.href = '/dashboard'}>
-          ← Back to Dashboard
+          ← Dashboard
         </button>
         {#if profile?.role === 'family' || profile?.role === 'admin'}
-    <button class="btn btn-secondary" on:click={openManualEntry}>
-      ➕ Manual Entry
-    </button>
-  {/if}
+          <button class="btn btn-secondary" on:click={openManualEntry}>
+            + Manual Entry
+          </button>
+        {/if}
         <button class="btn btn-secondary" on:click={exportCSV}>
-          📥 Export CSV
+          📥 Export
         </button>
       </div>
     </div>
@@ -807,7 +647,7 @@ async function deleteEntry(entryId) {
     <!-- This Week's Summary -->
     <div class="card">
       <div class="card-header">
-        <h2>📊 This Week's Summary</h2>
+        <h2>📊 Week Summary</h2>
         <div class="week-nav">
           <button on:click={() => changeWeek(-1)}>←</button>
           <span>{currentWeekStart && currentWeekEnd ? formatWeekDisplay(currentWeekStart, currentWeekEnd) : 'Loading...'}</span>
@@ -815,114 +655,242 @@ async function deleteEntry(entryId) {
         </div>
       </div>
       
+      <!-- Mobile view toggle -->
+      <div class="mobile-view-toggle">
+        <button class:active={mobileView === 'summary'} on:click={() => mobileView = 'summary'}>
+          Summary
+        </button>
+        <button class:active={mobileView === 'details'} on:click={() => mobileView = 'details'}>
+          Details
+        </button>
+      </div>
+      
       {#if filteredEntries.length === 0}
         <div class="empty-state">No entries for this week</div>
       {:else}
-        <table>
-          <thead>
-  <tr>
-    <th>Date</th>
-    <th>Clock In</th>
-    <th>Clock Out</th>
-    <th>Hours</th>
-    <th>Earnings</th>
-    <th>Notes</th>
-    {#if profile?.role === 'family' || profile?.role === 'admin'}
-      <th>Actions</th>
-    {/if}
-  </tr>
-</thead>
-<tbody>
-  {#each filteredEntries as entry}
-    <tr>
-      <td>{formatDate(entry.clock_in)}</td>
-      <td>{formatTime(entry.clock_in)}</td>
-      <td>{formatTime(entry.clock_out)}</td>
-      <td>{(parseFloat(entry.hours) || 0).toFixed(1)}</td>
-      <td>${((parseFloat(entry.hours) || 0) * (selectedNanny?.hourly_rate || 20)).toFixed(2)}</td>
-      <td>{entry.notes || ''}</td>
-      {#if profile?.role === 'family' || profile?.role === 'admin'}
-        <td>
-          <button class="btn-sm btn-edit" on:click={() => editEntry(entry)}>Edit</button>
-          <button class="btn-sm btn-danger" on:click={() => deleteEntry(entry.id)}>Delete</button>
-        </td>
-      {/if}
-    </tr>
-  {/each}
-</tbody>
-        </table>
-        <div class="week-total">
-            <div class="total-amount">Total: ${weekPay.toFixed(2)} ({weekTotal.toFixed(1)} hours)</div>
-            {#if profile?.role === 'family' || profile?.role === 'admin'}
-                <button class="btn btn-primary" on:click={generateVenmoPayment}>
-                    Generate Venmo Payment
-                </button>
-            {:else if profile?.role === 'nanny'}
-                <button class="btn btn-primary" on:click={requestPayment}>
-                Request Payment via Venmo
-                </button>
-            {/if}
-        </div>
-      {/if}  <!-- ADD THIS LINE - closes the {#if filteredEntries.length === 0} block -->
-    </div>  <!-- This closes the card -->
-    
-<!-- Payment History -->
-<div class="card">
-  <h2>💰 Payment History</h2>
-
-  {#if payments.length === 0}
-    <div class="empty-state">No payment records yet</div>
-  {:else}
-    <table>
-      <thead>
-        <tr>
-          <th>Week</th>
-          <th>Status</th>
-          <th>Hours</th>
-          <th>Amount</th>
-          <th>Paid Date</th>
-          <th>Method</th>
-          {#if profile?.role === 'family' || profile?.role === 'admin'}
-            <th>Actions</th>
-          {/if}
-        </tr>
-      </thead>
-      <tbody>
-        {#each payments as payment}
-          <tr>
-            <td>{formatDate(payment.week_start)} – {formatDate(payment.week_end)}</td>
-            <td>
-              <span class="status-badge" class:paid={payment.is_paid}>
-                {payment.is_paid ? 'Paid' : 'Unpaid'}
-              </span>
-            </td>
-            <td>{payment.hours?.toFixed(1) || 0}</td>
-            <td>${payment.amount?.toFixed(2) || 0}</td>
-            <td>{payment.paid_date ? formatDate(payment.paid_date) : '—'}</td>
-            <td>{payment.payment_method || 'Venmo'}</td>
-            {#if profile?.role === 'family' || profile?.role === 'admin'}
-              <td>
-                {#if payment.is_paid}
-                  <button class="btn-sm btn-warning" on:click={() => markUnpaid(payment.id)}>
-                    Mark Unpaid
-                  </button>
-                {:else}
-                  <button class="btn-sm btn-success" on:click={() => markPaid(payment.id)}>
-                    Mark Paid
-                  </button>
+        <!-- Desktop table view -->
+        <div class="desktop-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Clock In</th>
+                <th>Clock Out</th>
+                <th>Hours</th>
+                <th>Earnings</th>
+                <th>Notes</th>
+                {#if profile?.role === 'family' || profile?.role === 'admin'}
+                  <th>Actions</th>
                 {/if}
-                <button class="btn-sm btn-danger" on:click={() => deletePayment(payment.id)}>
-                  Delete
-                </button>
-              </td>
-            {/if}
-          </tr>
-        {/each}
-      </tbody>
-    </table>
+              </tr>
+            </thead>
+            <tbody>
+              {#each filteredEntries as entry}
+                <tr>
+                  <td>{formatDate(entry.clock_in)}</td>
+                  <td>{formatTime(entry.clock_in)}</td>
+                  <td>{formatTime(entry.clock_out)}</td>
+                  <td>{(parseFloat(entry.hours) || 0).toFixed(1)}</td>
+                  <td>${((parseFloat(entry.hours) || 0) * (selectedNanny?.hourly_rate || 20)).toFixed(2)}</td>
+                  <td>{entry.notes || ''}</td>
+                  {#if profile?.role === 'family' || profile?.role === 'admin'}
+                    <td>
+                      <button class="btn-sm btn-edit" on:click={() => editEntry(entry)}>Edit</button>
+                      <button class="btn-sm btn-danger" on:click={() => deleteEntry(entry.id)}>Delete</button>
+                    </td>
+                  {/if}
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+        
+        <!-- Mobile card view -->
+        <div class="mobile-cards">
+          {#if mobileView === 'summary'}
+            <!-- Summary View -->
+            <div class="summary-grid">
+              {#each filteredEntries as entry}
+                <div class="entry-card">
+                  <div class="entry-header">
+                    <span class="entry-date">{formatDateShort(entry.clock_in)}</span>
+                    <span class="entry-hours">{(parseFloat(entry.hours) || 0).toFixed(1)}h</span>
+                  </div>
+                  <div class="entry-time">
+                    {formatTime(entry.clock_in)} - {formatTime(entry.clock_out)}
+                  </div>
+                  <div class="entry-earnings">
+                    ${((parseFloat(entry.hours) || 0) * (selectedNanny?.hourly_rate || 20)).toFixed(2)}
+                  </div>
+                  {#if profile?.role === 'family' || profile?.role === 'admin'}
+                    <div class="entry-actions">
+                      <button class="btn-sm btn-edit" on:click={() => editEntry(entry)}>Edit</button>
+                      <button class="btn-sm btn-danger" on:click={() => deleteEntry(entry.id)}>Delete</button>
+                    </div>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          {:else}
+            <!-- Details View -->
+            <div class="details-list">
+              {#each filteredEntries as entry}
+                <div class="detail-card">
+                  <div class="detail-row">
+                    <span class="detail-label">Date:</span>
+                    <span class="detail-value">{formatDate(entry.clock_in)}</span>
+                  </div>
+                  <div class="detail-row">
+                    <span class="detail-label">In/Out:</span>
+                    <span class="detail-value">{formatTime(entry.clock_in)} - {formatTime(entry.clock_out)}</span>
+                  </div>
+                  <div class="detail-row">
+                    <span class="detail-label">Hours:</span>
+                    <span class="detail-value">{(parseFloat(entry.hours) || 0).toFixed(1)}</span>
+                  </div>
+                  <div class="detail-row">
+                    <span class="detail-label">Earnings:</span>
+                    <span class="detail-value">${((parseFloat(entry.hours) || 0) * (selectedNanny?.hourly_rate || 20)).toFixed(2)}</span>
+                  </div>
+                  {#if entry.notes}
+                    <div class="detail-row">
+                      <span class="detail-label">Notes:</span>
+                      <span class="detail-value">{entry.notes}</span>
+                    </div>
+                  {/if}
+                  {#if profile?.role === 'family' || profile?.role === 'admin'}
+                    <div class="detail-actions">
+                      <button class="btn-sm btn-edit" on:click={() => editEntry(entry)}>Edit</button>
+                      <button class="btn-sm btn-danger" on:click={() => deleteEntry(entry.id)}>Delete</button>
+                    </div>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
+        
+        <div class="week-total">
+          <div class="total-amount">
+            <span class="total-label">Total:</span>
+            <span class="total-value">${weekPay.toFixed(2)}</span>
+            <span class="total-hours">({weekTotal.toFixed(1)} hours)</span>
+          </div>
+          {#if profile?.role === 'family' || profile?.role === 'admin'}
+            <button class="btn btn-primary" on:click={generateVenmoPayment}>
+              Generate Venmo Payment
+            </button>
+          {:else if profile?.role === 'nanny'}
+            <button class="btn btn-primary" on:click={requestPayment}>
+              Request Payment
+            </button>
+          {/if}
+        </div>
+      {/if}
+    </div>
+    
+    <!-- Payment History -->
+    <div class="card">
+      <h2>💰 Payment History</h2>
+
+      {#if payments.length === 0}
+        <div class="empty-state">No payment records yet</div>
+      {:else}
+        <!-- Desktop table -->
+        <div class="desktop-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Week</th>
+                <th>Status</th>
+                <th>Hours</th>
+                <th>Amount</th>
+                <th>Paid Date</th>
+                <th>Method</th>
+                {#if profile?.role === 'family' || profile?.role === 'admin'}
+                  <th>Actions</th>
+                {/if}
+              </tr>
+            </thead>
+            <tbody>
+              {#each payments as payment}
+                <tr>
+                  <td>{formatDate(payment.week_start)} – {formatDate(payment.week_end)}</td>
+                  <td>
+                    <span class="status-badge" class:paid={payment.is_paid}>
+                      {payment.is_paid ? 'Paid' : 'Unpaid'}
+                    </span>
+                  </td>
+                  <td>{payment.hours?.toFixed(1) || 0}</td>
+                  <td>${payment.amount?.toFixed(2) || 0}</td>
+                  <td>{payment.paid_date ? formatDate(payment.paid_date) : '—'}</td>
+                  <td>{payment.payment_method || 'Venmo'}</td>
+                  {#if profile?.role === 'family' || profile?.role === 'admin'}
+                    <td>
+                      {#if payment.is_paid}
+                        <button class="btn-sm btn-warning" on:click={() => markUnpaid(payment.id)}>
+                          Unpaid
+                        </button>
+                      {:else}
+                        <button class="btn-sm btn-success" on:click={() => markPaid(payment.id)}>
+                          Paid
+                        </button>
+                      {/if}
+                      <button class="btn-sm btn-danger" on:click={() => deletePayment(payment.id)}>
+                        Delete
+                      </button>
+                    </td>
+                  {/if}
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+        
+        <!-- Mobile payment cards -->
+        <div class="mobile-cards">
+          {#each payments as payment}
+            <div class="payment-card" class:paid={payment.is_paid}>
+              <div class="payment-header">
+                <span class="payment-week">{formatDateShort(payment.week_start)} - {formatDateShort(payment.week_end)}</span>
+                <span class="status-badge" class:paid={payment.is_paid}>
+                  {payment.is_paid ? 'Paid' : 'Unpaid'}
+                </span>
+              </div>
+              <div class="payment-details">
+                <div class="payment-row">
+                  <span>{payment.hours?.toFixed(1) || 0} hours</span>
+                  <span class="payment-amount">${payment.amount?.toFixed(2) || 0}</span>
+                </div>
+                {#if payment.paid_date}
+                  <div class="payment-date">Paid: {formatDateShort(payment.paid_date)}</div>
+                {/if}
+              </div>
+              {#if profile?.role === 'family' || profile?.role === 'admin'}
+                <div class="payment-actions">
+                  {#if payment.is_paid}
+                    <button class="btn-sm btn-warning" on:click={() => markUnpaid(payment.id)}>
+                      Mark Unpaid
+                    </button>
+                  {:else}
+                    <button class="btn-sm btn-success" on:click={() => markPaid(payment.id)}>
+                      Mark Paid
+                    </button>
+                  {/if}
+                  <button class="btn-sm btn-danger" on:click={() => deletePayment(payment.id)}>
+                    Delete
+                  </button>
+                </div>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </div>
   {/if}
 </div>
-{/if} 
+
+<!-- Clock In Confirmation Modal -->
 {#if showClockInConfirm}
   <div class="modal-overlay" on:click={() => showClockInConfirm = false}>
     <div class="modal-content" on:click|stopPropagation>
@@ -949,7 +917,8 @@ async function deleteEntry(entryId) {
     </div>
   </div>
 {/if}
-</div>
+
+<!-- Manual Entry Modal -->
 {#if showManualEntry}
   <div class="modal-overlay" on:click={() => showManualEntry = false}>
     <div class="modal-content" on:click|stopPropagation>
@@ -985,7 +954,6 @@ async function deleteEntry(entryId) {
     </div>
   </div>
 {/if}
-
 
 <style>
   .container {
@@ -1033,6 +1001,8 @@ async function deleteEntry(entryId) {
     justify-content: space-between;
     align-items: center;
     margin-bottom: 20px;
+    flex-wrap: wrap;
+    gap: 15px;
   }
   
   h2 {
@@ -1050,7 +1020,7 @@ async function deleteEntry(entryId) {
   
   .week-nav {
     display: flex;
-    gap: 15px;
+    gap: 10px;
     align-items: center;
   }
   
@@ -1065,6 +1035,14 @@ async function deleteEntry(entryId) {
   
   .week-nav button:hover {
     background: #f7fafc;
+  }
+  
+  .week-nav span {
+    font-size: 0.95em;
+    font-weight: 600;
+    color: #4a5568;
+    min-width: 200px;
+    text-align: center;
   }
   
   .timer-card {
@@ -1142,6 +1120,7 @@ async function deleteEntry(entryId) {
     display: flex;
     gap: 10px;
     justify-content: center;
+    flex-wrap: wrap;
   }
   
   .btn-secondary {
@@ -1154,6 +1133,36 @@ async function deleteEntry(entryId) {
   .btn-primary {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
+  }
+  
+  /* Mobile view toggle */
+  .mobile-view-toggle {
+    display: none;
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+  
+  .mobile-view-toggle button {
+    flex: 1;
+    padding: 10px;
+    background: white;
+    border: 2px solid #e2e8f0;
+    border-radius: 6px;
+    font-weight: 600;
+    color: #4a5568;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  
+  .mobile-view-toggle button.active {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border-color: #667eea;
+  }
+  
+  /* Desktop table */
+  .desktop-table {
+    display: block;
   }
   
   table {
@@ -1180,6 +1189,151 @@ async function deleteEntry(entryId) {
     background: #f7fafc;
   }
   
+  /* Mobile cards - hidden by default */
+  .mobile-cards {
+    display: none;
+  }
+  
+  .summary-grid {
+    display: grid;
+    gap: 15px;
+  }
+  
+  .entry-card {
+    background: #f7fafc;
+    padding: 15px;
+    border-radius: 8px;
+    border: 1px solid #e2e8f0;
+  }
+  
+  .entry-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  
+  .entry-date {
+    font-weight: 600;
+    color: #2d3748;
+  }
+  
+  .entry-hours {
+    background: #667eea;
+    color: white;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.9em;
+    font-weight: 600;
+  }
+  
+  .entry-time {
+    color: #4a5568;
+    font-size: 0.9em;
+    margin-bottom: 8px;
+  }
+  
+  .entry-earnings {
+    font-size: 1.2em;
+    font-weight: bold;
+    color: #48bb78;
+    margin-bottom: 10px;
+  }
+  
+  .entry-actions {
+    display: flex;
+    gap: 8px;
+  }
+  
+  .detail-card {
+    background: white;
+    border: 1px solid #e2e8f0;
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 10px;
+  }
+  
+  .detail-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid #f7fafc;
+  }
+  
+  .detail-row:last-child {
+    border-bottom: none;
+  }
+  
+  .detail-label {
+    font-weight: 600;
+    color: #4a5568;
+  }
+  
+  .detail-value {
+    color: #2d3748;
+  }
+  
+  .detail-actions {
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 1px solid #e2e8f0;
+    display: flex;
+    gap: 8px;
+  }
+  
+  /* Payment cards */
+  .payment-card {
+    background: white;
+    border: 2px solid #e2e8f0;
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 10px;
+  }
+  
+  .payment-card.paid {
+    border-color: #48bb78;
+    background: #f0fff4;
+  }
+  
+  .payment-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+  
+  .payment-week {
+    font-weight: 600;
+    color: #2d3748;
+  }
+  
+  .payment-details {
+    margin-bottom: 10px;
+  }
+  
+  .payment-row {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 5px;
+  }
+  
+  .payment-amount {
+    font-weight: bold;
+    color: #2d3748;
+  }
+  
+  .payment-date {
+    font-size: 0.9em;
+    color: #4a5568;
+  }
+  
+  .payment-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid #e2e8f0;
+  }
+  
   .empty-state {
     text-align: center;
     padding: 40px;
@@ -1199,6 +1353,17 @@ async function deleteEntry(entryId) {
     font-size: 1.8em;
     font-weight: bold;
     margin-bottom: 15px;
+  }
+  
+  .total-label {
+    opacity: 0.9;
+    margin-right: 10px;
+  }
+  
+  .total-hours {
+    font-size: 0.7em;
+    opacity: 0.9;
+    margin-left: 10px;
   }
   
   .status-badge {
@@ -1222,6 +1387,7 @@ async function deleteEntry(entryId) {
     border-radius: 6px;
     cursor: pointer;
     font-weight: 600;
+    transition: all 0.2s;
   }
   
   .btn-success {
@@ -1234,198 +1400,203 @@ async function deleteEntry(entryId) {
     color: white;
   }
   
+  .btn-danger {
+    background: #f56565;
+    color: white;
+  }
+  
+  .btn-edit {
+    background: #4299e1;
+    color: white;
+  }
+  
   .loading {
     text-align: center;
     padding: 60px;
     color: #718096;
   }
-  .btn-danger {
-  background: #f56565;
-  color: white;
-}
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0,0,0,0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
-
-.modal-content {
-  background: white;
-  padding: 30px;
-  border-radius: 15px;
-  max-width: 500px;
-  width: 90%;
-}
-
-.form-group {
-  margin-bottom: 15px;
-}
-
-.form-group label {
-  display: block;
-  margin-bottom: 5px;
-  font-weight: 600;
-  color: #4a5568;
-}
-
-.form-group input {
-  width: 100%;
-  padding: 10px;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
-}
-
-.form-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 15px;
-}
-
-.button-row {
-  display: flex;
-  gap: 10px;
-  margin-top: 20px;
-}
-
-.button-row .btn {
-  flex: 1;
-  padding: 12px;
-  font-size: 1em;
-}
-
-.btn-edit {
-  background: #4299e1;
-  color: white;
-}
-.clock-in-confirm {
-  text-align: center;
-}
-
-.clock-in-confirm p {
-  margin-bottom: 20px;
-  font-size: 1.1em;
-}
-
-.clock-in-confirm small {
-  display: block;
-  margin-top: 5px;
-  color: #718096;
-  font-size: 0.85em;
-}
-
-@media (max-width: 600px) {
-  .form-row {
-    grid-template-columns: 1fr;
+  
+  /* Modals */
+  .modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0,0,0,0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 20px;
   }
-}
-
-/* Today's Schedule Styles */
-.schedule-today-card {
-  background: linear-gradient(to right, #f7fafc, white);
-  border-left: 4px solid #667eea;
-}
-
-.schedule-list {
-  display: flex;
-  flex-direction: column;
-  gap: 15px;
-}
-
-.schedule-item {
-  background: white;
-  border: 2px solid #e2e8f0;
-  border-radius: 10px;
-  padding: 15px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  transition: all 0.3s;
-}
-
-.schedule-item.active {
-  border-color: #48bb78;
-  background: #f0fff4;
-}
-
-.schedule-item.completed {
-  border-color: #9f7aea;
-  background: #faf5ff;
-  opacity: 0.8;
-}
-
-.schedule-info {
-  flex: 1;
-}
-
-.schedule-time {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 5px;
-}
-
-.status-badge {
-  padding: 4px 10px;
-  border-radius: 12px;
-  font-size: 0.8em;
-  font-weight: 600;
-}
-
-.status-badge.completed {
-  background: #c6f6d5;
-  color: #22543d;
-}
-
-.status-badge.active {
-  background: #c6f6d5;
-  color: #22543d;
-}
-
-.status-badge.upcoming {
-  background: #fef5e7;
-  color: #744210;
-}
-
-.status-badge.scheduled {
-  background: #e6f7ff;
-  color: #0050b3;
-}
-
-.schedule-notes {
-  color: #718096;
-  font-size: 0.9em;
-  margin-top: 5px;
-}
-
-.btn-schedule-clock {
-  padding: 10px 20px;
-  background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
-  color: white;
-  border: none;
-  border-radius: 8px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.btn-schedule-clock:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(72, 187, 120, 0.3);
-}
-
-.no-current-schedule {
-  text-align: center;
-  padding: 20px;
-  color: #718096;
-  background: #f7fafc;
-  border-radius: 8px;
-  margin-top: 15px;
-}
+  
+  .modal-content {
+    background: white;
+    padding: 30px;
+    border-radius: 15px;
+    max-width: 500px;
+    width: 100%;
+    max-height: 80vh;
+    overflow-y: auto;
+  }
+  
+  .modal-content h3 {
+    margin-top: 0;
+    margin-bottom: 20px;
+    color: #2d3748;
+  }
+  
+  .form-group {
+    margin-bottom: 15px;
+  }
+  
+  .form-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 600;
+    color: #4a5568;
+  }
+  
+  .form-group input {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    font-size: 16px; /* Prevent iOS zoom */
+  }
+  
+  .form-group small {
+    display: block;
+    margin-top: 5px;
+    color: #718096;
+    font-size: 0.85em;
+  }
+  
+  .form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 15px;
+  }
+  
+  .button-row {
+    display: flex;
+    gap: 10px;
+    margin-top: 20px;
+  }
+  
+  .button-row .btn {
+    flex: 1;
+    padding: 12px;
+    font-size: 1em;
+  }
+  
+  .clock-in-confirm {
+    text-align: center;
+  }
+  
+  .clock-in-confirm p {
+    margin-bottom: 20px;
+    font-size: 1.1em;
+  }
+  
+  /* Mobile responsive styles */
+  @media (max-width: 768px) {
+    .container {
+      padding: 20px 12px;
+    }
+    
+    .card {
+      padding: 20px;
+    }
+    
+    .timer-card {
+      padding: 30px 20px;
+    }
+    
+    .timer {
+      font-size: 2.5em;
+    }
+    
+    .btn {
+      padding: 14px 28px;
+      font-size: 1.1em;
+    }
+    
+    .week-nav span {
+      min-width: auto;
+      font-size: 0.85em;
+    }
+    
+    .week-nav button {
+      padding: 8px 12px;
+    }
+    
+    /* Hide desktop table, show mobile cards */
+    .desktop-table {
+      display: none;
+    }
+    
+    .mobile-cards {
+      display: block;
+    }
+    
+    .mobile-view-toggle {
+      display: flex;
+    }
+    
+    .quick-actions {
+      gap: 8px;
+    }
+    
+    .btn-secondary {
+      padding: 10px 16px;
+      font-size: 0.9em;
+    }
+    
+    .modal-content {
+      padding: 20px;
+    }
+    
+    .form-row {
+      grid-template-columns: 1fr;
+    }
+    
+    .week-total {
+      padding: 15px;
+    }
+    
+    .total-amount {
+      font-size: 1.5em;
+    }
+  }
+  
+  @media (max-width: 480px) {
+    .nanny-selector {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    
+    .card-header {
+      flex-direction: column;
+      align-items: stretch;
+      text-align: center;
+    }
+    
+    .week-nav {
+      width: 100%;
+      justify-content: space-between;
+    }
+    
+    .btn-sm {
+      font-size: 0.8em;
+      padding: 5px 10px;
+    }
+    
+    .entry-actions,
+    .detail-actions,
+    .payment-actions {
+      flex-wrap: wrap;
+    }
+  }
 </style>

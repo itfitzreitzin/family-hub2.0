@@ -1,47 +1,136 @@
 <script>
   import { onMount } from 'svelte'
   import { supabase } from '$lib/supabase'
- 
+  import { browser } from '$app/environment'
+  
   export let currentPage = ''
- 
+  
   let isAdmin = false
   let userRole = null
- 
+  let mobileMenuOpen = false
+  let isMobile = false
+  let scrollY = 0
+  let lastScrollY = 0
+  let hideNav = false
+  
   onMount(async () => {
+    // Check if mobile
+    checkMobile()
+    window.addEventListener('resize', checkMobile)
+    
     const { data: { user } } = await supabase.auth.getUser()
-    console.log('Nav: Current user:', user?.id)
-   
+    
     if (user) {
-      const { data: profile, error } = await supabase
+      const { data: profile } = await supabase
         .from('profiles')
         .select('role')
         .eq('id', user.id)
         .single()
-     
-      console.log('Nav: Profile data:', profile)
-      console.log('Nav: Profile error:', error)
-      console.log('Nav: Role:', profile?.role)
-     
+      
       isAdmin = profile?.role === 'admin'
       userRole = profile?.role || null
-      console.log('Nav: isAdmin:', isAdmin)
+    }
+    
+    // Auto-hide nav on scroll down (mobile only)
+    let ticking = false
+    function handleScroll() {
+      if (!ticking) {
+        window.requestAnimationFrame(() => {
+          scrollY = window.scrollY
+          if (isMobile && !mobileMenuOpen) {
+            hideNav = scrollY > 100 && scrollY > lastScrollY
+            lastScrollY = scrollY
+          }
+          ticking = false
+        })
+        ticking = true
+      }
+    }
+    
+    window.addEventListener('scroll', handleScroll, { passive: true })
+    
+    return () => {
+      window.removeEventListener('resize', checkMobile)
+      window.removeEventListener('scroll', handleScroll)
+      // Clean up body scroll lock if menu is open
+      if (mobileMenuOpen) {
+        document.body.style.overflow = ''
+      }
     }
   })
- 
+  
+  function checkMobile() {
+    isMobile = window.innerWidth < 768
+    // Close menu when switching to desktop
+    if (!isMobile && mobileMenuOpen) {
+      toggleMobileMenu()
+    }
+  }
+  
   async function signOut() {
+    // Haptic feedback
+    if (browser && window.navigator?.vibrate) {
+      window.navigator.vibrate(10)
+    }
     await supabase.auth.signOut()
     window.location.href = '/'
   }
+  
+  function toggleMobileMenu() {
+    mobileMenuOpen = !mobileMenuOpen
+    
+    // Lock body scroll when menu is open
+    if (browser) {
+      if (mobileMenuOpen) {
+        document.body.style.overflow = 'hidden'
+        // Store scroll position
+        document.body.style.position = 'fixed'
+        document.body.style.top = `-${scrollY}px`
+        document.body.style.width = '100%'
+      } else {
+        // Restore scroll position
+        const scrollY = document.body.style.top
+        document.body.style.overflow = ''
+        document.body.style.position = ''
+        document.body.style.top = ''
+        document.body.style.width = ''
+        window.scrollTo(0, parseInt(scrollY || '0') * -1)
+      }
+    }
+    
+    // Haptic feedback
+    if (browser && window.navigator?.vibrate) {
+      window.navigator.vibrate(10)
+    }
+  }
+  
+  function handleNavClick() {
+    if (isMobile) {
+      mobileMenuOpen = false
+      // Restore body scroll
+      document.body.style.overflow = ''
+      document.body.style.position = ''
+      document.body.style.top = ''
+      document.body.style.width = ''
+    }
+    
+    // Haptic feedback
+    if (browser && window.navigator?.vibrate) {
+      window.navigator.vibrate(10)
+    }
+  }
 </script>
 
-<nav>
+<!-- Desktop Navigation -->
+{#if !isMobile}
+<nav class="desktop-nav">
   <div class="nav-content">
     <a href="/dashboard" class="logo">👶 Family Hub</a>
     
     <div class="nav-links">
       <a href="/dashboard" class:active={currentPage === 'dashboard'}>Dashboard</a>
       <a href="/tracker" class:active={currentPage === 'tracker'}>Time Tracker</a>
-      {#if userRole === 'family' || userRole === 'admin' || userRole === 'nanny'}
+      {#if userRole === 'family' || userRole === 'admin'}
         <a href="/schedule" class:active={currentPage === 'schedule'}>Schedule</a>
       {/if}
       <a href="/history" class:active={currentPage === 'history'}>History</a>
@@ -55,8 +144,132 @@
   </div>
 </nav>
 
+<!-- Mobile Navigation -->
+{:else}
+<nav class="mobile-nav" class:hide={hideNav}>
+  <div class="mobile-nav-header safe-top">
+    <a href="/dashboard" class="mobile-logo" on:click={handleNavClick}>👶 Family Hub</a>
+    <button 
+      class="hamburger touch-target" 
+      class:open={mobileMenuOpen} 
+      on:click={toggleMobileMenu}
+      aria-label="Menu"
+      aria-expanded={mobileMenuOpen}
+    >
+      <span></span>
+      <span></span>
+      <span></span>
+    </button>
+  </div>
+</nav>
+
+<!-- Mobile Menu Overlay -->
+{#if mobileMenuOpen}
+  <div class="mobile-menu-overlay" on:click={toggleMobileMenu}></div>
+  <div class="mobile-menu safe-top">
+    <div class="mobile-menu-header">
+      <h3>Menu</h3>
+      <button class="close-menu touch-target" on:click={toggleMobileMenu} aria-label="Close menu">✕</button>
+    </div>
+    
+    <div class="mobile-menu-links">
+      <a href="/dashboard" class:active={currentPage === 'dashboard'} on:click={handleNavClick}>
+        <span class="icon">🏠</span>
+        <span>Dashboard</span>
+        {#if currentPage === 'dashboard'}
+          <span class="active-indicator">•</span>
+        {/if}
+      </a>
+      <a href="/tracker" class:active={currentPage === 'tracker'} on:click={handleNavClick}>
+        <span class="icon">⏰</span>
+        <span>Time Tracker</span>
+        {#if currentPage === 'tracker'}
+          <span class="active-indicator">•</span>
+        {/if}
+      </a>
+      {#if userRole === 'family' || userRole === 'admin'}
+        <a href="/schedule" class:active={currentPage === 'schedule'} on:click={handleNavClick}>
+          <span class="icon">📅</span>
+          <span>Schedule</span>
+          {#if currentPage === 'schedule'}
+            <span class="active-indicator">•</span>
+          {/if}
+        </a>
+      {/if}
+      <a href="/history" class:active={currentPage === 'history'} on:click={handleNavClick}>
+        <span class="icon">📊</span>
+        <span>History</span>
+        {#if currentPage === 'history'}
+          <span class="active-indicator">•</span>
+        {/if}
+      </a>
+      {#if isAdmin}
+        <a href="/admin" class:active={currentPage === 'admin'} class="admin-link-mobile" on:click={handleNavClick}>
+          <span class="icon">⚙️</span>
+          <span>Admin</span>
+          {#if currentPage === 'admin'}
+            <span class="active-indicator">•</span>
+          {/if}
+        </a>
+      {/if}
+      <a href="/settings" class:active={currentPage === 'settings'} on:click={handleNavClick}>
+        <span class="icon">👤</span>
+        <span>Settings</span>
+        {#if currentPage === 'settings'}
+          <span class="active-indicator">•</span>
+        {/if}
+      </a>
+    </div>
+    
+    <button class="mobile-sign-out touch-target" on:click={signOut}>
+      <span class="icon">🚪</span>
+      <span>Sign Out</span>
+    </button>
+  </div>
+{/if}
+
+<!-- Mobile Bottom Navigation -->
+{#if isMobile}
+<div class="mobile-bottom-nav safe-bottom">
+  <a 
+    href="/dashboard" 
+    class:active={currentPage === 'dashboard'}
+    on:click={handleNavClick}
+  >
+    <span class="bottom-icon">🏠</span>
+    <span class="bottom-label">Home</span>
+  </a>
+  <a 
+    href="/tracker" 
+    class:active={currentPage === 'tracker'}
+    on:click={handleNavClick}
+  >
+    <span class="bottom-icon">⏰</span>
+    <span class="bottom-label">Track</span>
+  </a>
+  <a 
+    href="/history" 
+    class:active={currentPage === 'history'}
+    on:click={handleNavClick}
+  >
+    <span class="bottom-icon">📊</span>
+    <span class="bottom-label">History</span>
+  </a>
+  <button 
+    class="menu-trigger touch-target" 
+    on:click={toggleMobileMenu}
+    aria-label="More options"
+  >
+    <span class="bottom-icon">☰</span>
+    <span class="bottom-label">More</span>
+  </button>
+</div>
+{/if}
+{/if}
+
 <style>
-  nav {
+  /* Desktop Navigation Styles */
+  .desktop-nav {
     background: white;
     box-shadow: 0 2px 10px rgba(0,0,0,0.1);
     position: sticky;
@@ -74,11 +287,12 @@
     gap: 20px;
   }
   
-  .logo {
+  .logo, .mobile-logo {
     font-size: 1.3em;
     font-weight: bold;
     color: #667eea;
     text-decoration: none;
+    -webkit-tap-highlight-color: transparent;
   }
   
   .nav-links {
@@ -114,10 +328,6 @@
     border-bottom: none !important;
   }
   
-  .admin-link:hover {
-    transform: translateY(-1px);
-  }
-  
   .sign-out {
     padding: 8px 16px;
     background: #f56565;
@@ -126,32 +336,300 @@
     border-radius: 6px;
     cursor: pointer;
     font-weight: 600;
+    transition: all 0.2s;
   }
   
   .sign-out:hover {
     background: #e53e3e;
   }
   
-  @media (max-width: 768px) {
-    .nav-content {
-      flex-wrap: wrap;
-    }
-    
-    .nav-links {
-      order: 3;
-      width: 100%;
-      justify-content: space-around;
-      padding-top: 10px;
-      border-top: 1px solid #e2e8f0;
-    }
-    .logo {
-      font-size: 1.1em;
-    }
-    .sign-out {
-      order: 2;
-      margin-left: auto;
-      padding: 6px 12px;
+  /* Mobile Navigation Styles */
+  .mobile-nav {
+    background: white;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+    transition: transform 0.3s ease-in-out;
+  }
+  
+  .mobile-nav.hide {
+    transform: translateY(-100%);
+  }
+  
+  .mobile-nav-header {
+    padding: 12px 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  
+  .mobile-logo {
+    font-size: 1.1em;
+    font-weight: bold;
+    color: #667eea;
+    text-decoration: none;
+  }
+  
+  /* Safe area utilities */
+  .safe-top {
+    padding-top: env(safe-area-inset-top, 0);
+  }
+  
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+  
+  /* Touch target utilities */
+  .touch-target {
+    min-height: 44px;
+    min-width: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    -webkit-tap-highlight-color: transparent;
+  }
+  
+  /* Hamburger Menu */
+  .hamburger {
+    width: 30px;
+    height: 24px;
+    position: relative;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+  }
+  
+  .hamburger span {
+    display: block;
+    position: absolute;
+    height: 3px;
+    width: 100%;
+    background: #667eea;
+    border-radius: 3px;
+    opacity: 1;
+    left: 0;
+    transform: rotate(0deg);
+    transition: 0.25s ease-in-out;
+  }
+  
+  .hamburger span:nth-child(1) {
+    top: 0;
+  }
+  
+  .hamburger span:nth-child(2) {
+    top: 10px;
+  }
+  
+  .hamburger span:nth-child(3) {
+    top: 20px;
+  }
+  
+  .hamburger.open span:nth-child(1) {
+    top: 10px;
+    transform: rotate(135deg);
+  }
+  
+  .hamburger.open span:nth-child(2) {
+    opacity: 0;
+    left: -30px;
+  }
+  
+  .hamburger.open span:nth-child(3) {
+    top: 10px;
+    transform: rotate(-135deg);
+  }
+  
+  /* Mobile Menu Overlay */
+  .mobile-menu-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 1001;
+    animation: fadeIn 0.3s ease;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+  }
+  
+  /* Mobile Slide Menu */
+  .mobile-menu {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(280px, 80vw);
+    background: white;
+    z-index: 1002;
+    animation: slideIn 0.3s ease;
+    display: flex;
+    flex-direction: column;
+    box-shadow: -5px 0 15px rgba(0,0,0,0.1);
+  }
+  
+  .mobile-menu-header {
+    padding: 20px;
+    border-bottom: 1px solid #e2e8f0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  
+  .mobile-menu-header h3 {
+    margin: 0;
+    color: #2d3748;
+  }
+  
+  .close-menu {
+    background: none;
+    border: none;
+    font-size: 24px;
+    color: #718096;
+    cursor: pointer;
+    padding: 0;
+  }
+  
+  .mobile-menu-links {
+    flex: 1;
+    padding: 20px 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  
+  .mobile-menu-links a {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding: 15px 20px;
+    color: #4a5568;
+    text-decoration: none;
+    font-weight: 500;
+    transition: all 0.2s;
+    position: relative;
+    -webkit-tap-highlight-color: transparent;
+  }
+  
+  .mobile-menu-links a:active {
+    background: #f7fafc;
+    transform: scale(0.98);
+  }
+  
+  .mobile-menu-links a.active {
+    background: linear-gradient(to right, #667eea08, transparent);
+    color: #667eea;
+    border-left: 3px solid #667eea;
+  }
+  
+  .active-indicator {
+    position: absolute;
+    right: 20px;
+    color: #667eea;
+    font-size: 1.5em;
+  }
+  
+  .mobile-menu-links .icon {
+    font-size: 1.2em;
+    width: 30px;
+    text-align: center;
+  }
+  
+  .admin-link-mobile {
+    background: linear-gradient(135deg, #f59e0b15 0%, #d9770615 100%);
+    color: #d97706 !important;
+    margin: 10px 20px;
+    border-radius: 8px;
+  }
+  
+  .mobile-sign-out {
+    margin: 20px;
+    padding: 15px;
+    background: linear-gradient(135deg, #f56565 0%, #e53e3e 100%);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 1em;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    transition: all 0.2s;
+  }
+  
+  .mobile-sign-out:active {
+    transform: scale(0.98);
+  }
+  
+  /* Mobile Bottom Navigation */
+  .mobile-bottom-nav {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: white;
+    box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
+    display: flex;
+    justify-content: space-around;
+    padding: 8px 0;
+    z-index: 999;
+  }
+  
+  .mobile-bottom-nav a,
+  .mobile-bottom-nav .menu-trigger {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 8px 0;
+    text-decoration: none;
+    color: #718096;
+    background: none;
+    border: none;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: all 0.2s;
+  }
+  
+  .mobile-bottom-nav a:active,
+  .mobile-bottom-nav .menu-trigger:active {
+    transform: scale(0.95);
+  }
+  
+  .mobile-bottom-nav a.active {
+    color: #667eea;
+  }
+  
+  .bottom-icon {
+    font-size: 1.3em;
+  }
+  
+  .bottom-label {
+    font-size: 0.75em;
+    font-weight: 600;
+  }
+  
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  
+  @keyframes slideIn {
+    from { transform: translateX(100%); }
+    to { transform: translateX(0); }
+  }
+  
+  /* Accessibility improvements */
+  @media (prefers-reduced-motion: reduce) {
+    * {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
     }
   }
 </style>
-

@@ -60,71 +60,53 @@
   }
 </script>
 
-<div class="login-page">
-  <div class="container">
-    <div class="card">
-      <h1>Family Hub</h1>
-      <h2>{mode === 'login' ? 'Welcome Back' : 'Create Account'}</h2>
+<div class="container">
+  <div class="card">
+    <h1>Family Hub</h1>
+    <h2>{mode === 'login' ? 'Welcome Back' : 'Create Account'}</h2>
+    
+    {#if error}
+      <div class="error">{error}</div>
+    {/if}
+    
+    <form on:submit|preventDefault={handleAuth}>
+      <div class="input-group">
+        <label for="email">Email</label>
+        <input
+          id="email"
+          type="email"
+          bind:value={email}
+          placeholder="you@example.com"
+          required
+        />
+      </div>
       
-      {#if error}
-        <div class="error">{error}</div>
-      {/if}
+      <div class="input-group">
+        <label for="password">Password</label>
+        <input
+          id="password"
+          type="password"
+          bind:value={password}
+          placeholder="••••••••"
+          required
+        />
+      </div>
       
-      <form on:submit|preventDefault={handleAuth}>
-        <div class="input-group">
-          <label for="email">Email</label>
-          <input
-            id="email"
-            type="email"
-            bind:value={email}
-            placeholder="you@example.com"
-            required
-          />
-        </div>
-        
-        <div class="input-group">
-          <label for="password">Password</label>
-          <input
-            id="password"
-            type="password"
-            bind:value={password}
-            placeholder="••••••••"
-            required
-          />
-        </div>
-        
-        <button type="submit" disabled={loading}>
-          {loading ? 'Loading...' : mode === 'login' ? 'Sign In' : 'Sign Up'}
-        </button>
-      </form>
-      
-      <p class="toggle">
-        {mode === 'login' ? "Don't have an account?" : 'Already have an account?'}
-        <button class="link" on:click={() => mode = mode === 'login' ? 'signup' : 'login'}>
-          {mode === 'login' ? 'Sign Up' : 'Sign In'}
-        </button>
-      </p>
-    </div>
+      <button type="submit" disabled={loading}>
+        {loading ? 'Loading...' : mode === 'login' ? 'Sign In' : 'Sign Up'}
+      </button>
+    </form>
+    
+    <p class="toggle">
+      {mode === 'login' ? "Don't have an account?" : 'Already have an account?'}
+      <button class="link" on:click={() => mode = mode === 'login' ? 'signup' : 'login'}>
+        {mode === 'login' ? 'Sign Up' : 'Sign In'}
+      </button>
+    </p>
   </div>
 </div>
 
 <style>
-  /* Override body padding for login page only */
-  :global(body) {
-    padding-top: 0 !important;
-    padding-bottom: 0 !important;
-  }
-
-  .login-page {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-
   .container {
     min-height: 100vh;
     display: flex;
@@ -226,28 +208,10 @@
     text-decoration: underline;
   }
 
-  /* Mobile adjustments */
-  @media (max-width: 768px) {
-    .card {
-      padding: 30px 24px;
-    }
-    
-    h1 {
-      font-size: 2rem;
-    }
-    
-    h2 {
-      font-size: 1.2rem;
-    }
-  }
-
-  @media (max-width: 375px) {
-    .card {
-      padding: 24px 20px;
-    }
-    
-    h1 {
-      font-size: 1.75rem;
-    }
+  @media (max-width: 480px) {
+    .card { padding: 24px; }
+    h1 { font-size: 1.8em; }
+    h2 { font-size: 1.1em; }
   }
 </style>
+

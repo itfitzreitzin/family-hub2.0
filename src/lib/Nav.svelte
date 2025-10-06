@@ -149,17 +149,6 @@
 <nav class="mobile-nav" class:hide={hideNav}>
   <div class="mobile-nav-header safe-top">
     <a href="/dashboard" class="mobile-logo" on:click={handleNavClick}>👶 Family Hub</a>
-    <button 
-      class="hamburger touch-target" 
-      class:open={mobileMenuOpen} 
-      on:click={toggleMobileMenu}
-      aria-label="Menu"
-      aria-expanded={mobileMenuOpen}
-    >
-      <span></span>
-      <span></span>
-      <span></span>
-    </button>
   </div>
 </nav>
 

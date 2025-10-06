@@ -463,3 +463,22 @@ button, .btn, a, input, select, textarea {
 *:focus:not(:focus-visible) {
   outline: none;
 }
+/* Add these to your existing app.css if you want: */
+
+/* 1. Print styles */
+@media print {
+  nav, .btn, .quick-actions, .sign-out {
+    display: none !important;
+  }
+  body { background: white; }
+  .card { box-shadow: none; border: 1px solid #e2e8f0; }
+}
+
+/* 2. Extra specific component classes (if needed) */
+@media (max-width: 768px) {
+  .nanny-status-card,
+  .filter-bar,
+  .nanny-selector {
+    /* Add any specific targeting you find you need */
+  }
+}

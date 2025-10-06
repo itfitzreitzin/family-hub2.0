@@ -60,8 +60,8 @@
   }
 </script>
 
-<div class="container">
-  <div class="card">
+<div class="auth-screen">
+  <div class="auth-card">
     <h1>Family Hub</h1>
     <h2>{mode === 'login' ? 'Welcome Back' : 'Create Account'}</h2>
     
@@ -107,98 +107,109 @@
 </div>
 
 <style>
-  .container {
+  .auth-screen {
     min-height: 100vh;
     display: flex;
     align-items: center;
     justify-content: center;
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    padding: 20px;
+    padding: clamp(1.5rem, 6vw, 3rem);
   }
-  
-  .card {
+
+  .auth-card {
     background: white;
-    padding: 40px;
-    border-radius: 15px;
+    padding: clamp(1.75rem, 6vw, 2.75rem);
+    border-radius: clamp(0.75rem, 3vw, 1.25rem);
     box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-    max-width: 400px;
+    max-width: 420px;
     width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
   }
-  
+
   h1 {
     text-align: center;
-    font-size: 2.5em;
-    margin-bottom: 10px;
+    font-size: clamp(2rem, 4vw, 2.6rem);
     color: #667eea;
   }
-  
+
   h2 {
     text-align: center;
     color: #4a5568;
-    margin-bottom: 30px;
+    font-size: clamp(1.1rem, 2vw, 1.4rem);
   }
-  
+
   .error {
     background: #fff2f0;
     border: 1px solid #ffccc7;
     color: #a8071a;
-    padding: 12px;
-    border-radius: 8px;
-    margin-bottom: 20px;
+    padding: 0.75rem;
+    border-radius: 0.75rem;
   }
-  
+
+  form {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+
   .input-group {
-    margin-bottom: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
   }
-  
+
   label {
-    display: block;
-    margin-bottom: 8px;
     color: #4a5568;
     font-weight: 500;
   }
-  
+
   input {
     width: 100%;
-    padding: 12px;
+    padding: 0.75rem;
     border: 1px solid #e2e8f0;
-    border-radius: 8px;
-    font-size: 1em;
+    border-radius: 0.75rem;
+    font-size: 1rem;
   }
-  
+
   input:focus {
     outline: none;
     border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
   }
-  
+
   button[type="submit"] {
     width: 100%;
-    padding: 14px;
+    padding: clamp(0.85rem, 3vw, 1rem);
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
     border: none;
-    border-radius: 8px;
-    font-size: 1.1em;
+    border-radius: 0.75rem;
+    font-size: clamp(1rem, 2vw, 1.15rem);
     font-weight: 600;
     cursor: pointer;
     transition: transform 0.2s;
   }
-  
+
   button[type="submit"]:hover:not(:disabled) {
     transform: translateY(-2px);
   }
-  
+
   button[type="submit"]:disabled {
     opacity: 0.6;
     cursor: not-allowed;
   }
-  
+
   .toggle {
     text-align: center;
-    margin-top: 20px;
     color: #718096;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 0.95rem;
   }
-  
+
   .link {
     background: none;
     border: none;
@@ -206,12 +217,7 @@
     cursor: pointer;
     font-weight: 600;
     text-decoration: underline;
-  }
-
-  @media (max-width: 480px) {
-    .card { padding: 24px; }
-    h1 { font-size: 1.8em; }
-    h2 { font-size: 1.1em; }
+    font-size: 1rem;
   }
 </style>
 

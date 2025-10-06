@@ -58,8 +58,8 @@
   }
 </script>
 
-<div class="container">
-  <div class="card">
+<div class="setup-screen">
+  <div class="setup-card">
     <h1>Welcome to Family Hub!</h1>
     <h2>Let's get you set up</h2>
     
@@ -131,145 +131,144 @@
 </div>
 
 <style>
-  .container {
+  .setup-screen {
     min-height: 100vh;
     display: flex;
     align-items: center;
     justify-content: center;
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    padding: 20px;
+    padding: clamp(1.5rem, 6vw, 3rem);
   }
-  
-  .card {
+
+  .setup-card {
     background: white;
-    padding: 40px;
-    border-radius: 15px;
+    padding: clamp(1.75rem, 6vw, 3rem);
+    border-radius: clamp(0.75rem, 3vw, 1.25rem);
     box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-    max-width: 500px;
+    max-width: 520px;
     width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 1.75rem;
   }
-  
+
   h1 {
     text-align: center;
-    font-size: 2em;
-    margin-bottom: 10px;
+    font-size: clamp(1.9rem, 3vw, 2.4rem);
+    margin-bottom: 0.25rem;
     color: #667eea;
   }
-  
+
   h2 {
     text-align: center;
     color: #4a5568;
-    margin-bottom: 30px;
-    font-size: 1.3em;
+    font-size: clamp(1.1rem, 2vw, 1.4rem);
   }
-  
+
   .role-selection {
-    margin-bottom: 30px;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
   }
-  
+
   .role-card {
-    display: block;
     position: relative;
-    margin-bottom: 15px;
     cursor: pointer;
   }
-  
+
   .role-card input[type="radio"] {
     position: absolute;
     opacity: 0;
   }
-  
+
   .role-content {
-    padding: 20px;
+    padding: 1.25rem;
     border: 2px solid #e2e8f0;
-    border-radius: 10px;
+    border-radius: 0.75rem;
     transition: all 0.3s;
     text-align: center;
   }
-  
+
   .role-card:hover .role-content {
     border-color: #667eea;
     background: #f7fafc;
   }
-  
+
   .role-card.selected .role-content {
     border-color: #667eea;
-    background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.12) 0%, rgba(118, 75, 162, 0.12) 100%);
   }
-  
+
   .role-icon {
-    font-size: 3em;
-    margin-bottom: 10px;
+    font-size: clamp(2.25rem, 6vw, 3rem);
+    margin-bottom: 0.75rem;
   }
-  
+
   .role-name {
-    font-size: 1.2em;
+    font-size: clamp(1.1rem, 2.5vw, 1.3rem);
     font-weight: 600;
     color: #2d3748;
-    margin-bottom: 5px;
+    margin-bottom: 0.25rem;
   }
-  
+
   .role-desc {
-    font-size: 0.9em;
+    font-size: 0.9rem;
     color: #718096;
   }
-  
+
   .details-form {
     border-top: 2px solid #e2e8f0;
-    padding-top: 30px;
+    padding-top: 1.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
   }
-  
+
   .input-group {
-    margin-bottom: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
   }
-  
+
   label {
-    display: block;
-    margin-bottom: 8px;
     color: #4a5568;
     font-weight: 500;
   }
-  
+
   input {
     width: 100%;
-    padding: 12px;
+    padding: 0.75rem;
     border: 1px solid #e2e8f0;
-    border-radius: 8px;
-    font-size: 1em;
+    border-radius: 0.75rem;
+    font-size: 1rem;
   }
-  
+
   input:focus {
     outline: none;
     border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
   }
-  
+
   button {
     width: 100%;
-    padding: 14px;
+    padding: clamp(0.85rem, 3vw, 1rem);
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
     border: none;
-    border-radius: 8px;
-    font-size: 1.1em;
+    border-radius: 0.75rem;
+    font-size: clamp(1rem, 2vw, 1.15rem);
     font-weight: 600;
     cursor: pointer;
     transition: transform 0.2s;
   }
-  
+
   button:hover:not(:disabled) {
     transform: translateY(-2px);
   }
-  
+
   button:disabled {
     opacity: 0.6;
     cursor: not-allowed;
-  }
-
-  @media (max-width: 480px) {
-    .card { padding: 24px; }
-    h1 { font-size: 1.6em; }
-    h2 { font-size: 1.05em; }
-    .role-icon { font-size: 2.2em; }
   }
 </style>
 

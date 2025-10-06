@@ -676,7 +676,7 @@
 
       <!-- Schedule Grid View -->
       {#if viewMode === 'grid'}
-        <div class="calendar">
+        <div class="calendar auto-grid">
           {#each getWeekDays() as day}
             <div class="day-column">
               <div class="day-header">
@@ -1010,27 +1010,8 @@
   
   /* Calendar Grid */
   .calendar {
-    display: grid;
-    grid-template-columns: repeat(7, 1fr);
-    gap: 15px;
-  }
-  
-  @media (max-width: 1024px) {
-    .calendar {
-      grid-template-columns: repeat(4, 1fr);
-    }
-  }
-  
-  @media (max-width: 768px) {
-    .calendar {
-      grid-template-columns: repeat(2, 1fr);
-    }
-  }
-  
-  @media (max-width: 480px) {
-    .calendar {
-      grid-template-columns: 1fr;
-    }
+    --grid-min: 160px;
+    gap: var(--grid-gap);
   }
   
   .day-column {

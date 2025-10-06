@@ -656,7 +656,7 @@ Total: $${weekPay.toFixed(2)}`
       </div>
       
       <!-- Mobile view toggle -->
-      <div class="mobile-view-toggle">
+      <div class="mobile-view-toggle mobile-only">
         <button class:active={mobileView === 'summary'} on:click={() => mobileView = 'summary'}>
           Summary
         </button>
@@ -669,7 +669,7 @@ Total: $${weekPay.toFixed(2)}`
         <div class="empty-state">No entries for this week</div>
       {:else}
         <!-- Desktop table view -->
-        <div class="desktop-table">
+        <div class="desktop-table desktop-only">
           <table>
             <thead>
               <tr>
@@ -706,68 +706,70 @@ Total: $${weekPay.toFixed(2)}`
         </div>
         
         <!-- Mobile card view -->
-        <div class="mobile-cards">
-          {#if mobileView === 'summary'}
-            <!-- Summary View -->
-            <div class="summary-grid">
-              {#each filteredEntries as entry}
-                <div class="entry-card">
-                  <div class="entry-header">
-                    <span class="entry-date">{formatDateShort(entry.clock_in)}</span>
-                    <span class="entry-hours">{(parseFloat(entry.hours) || 0).toFixed(1)}h</span>
-                  </div>
-                  <div class="entry-time">
-                    {formatTime(entry.clock_in)} - {formatTime(entry.clock_out)}
-                  </div>
-                  <div class="entry-earnings">
-                    ${((parseFloat(entry.hours) || 0) * (selectedNanny?.hourly_rate || 20)).toFixed(2)}
-                  </div>
-                  {#if profile?.role === 'family' || profile?.role === 'admin'}
-                    <div class="entry-actions">
-                      <button class="btn-sm btn-edit" on:click={() => editEntry(entry)}>Edit</button>
-                      <button class="btn-sm btn-danger" on:click={() => deleteEntry(entry.id)}>Delete</button>
+        <div class="mobile-only">
+          <div class="mobile-cards">
+            {#if mobileView === 'summary'}
+              <!-- Summary View -->
+              <div class="summary-grid">
+                {#each filteredEntries as entry}
+                  <div class="entry-card">
+                    <div class="entry-header">
+                      <span class="entry-date">{formatDateShort(entry.clock_in)}</span>
+                      <span class="entry-hours">{(parseFloat(entry.hours) || 0).toFixed(1)}h</span>
                     </div>
-                  {/if}
-                </div>
-              {/each}
-            </div>
-          {:else}
-            <!-- Details View -->
-            <div class="details-list">
-              {#each filteredEntries as entry}
-                <div class="detail-card">
-                  <div class="detail-row">
-                    <span class="detail-label">Date:</span>
-                    <span class="detail-value">{formatDate(entry.clock_in)}</span>
+                    <div class="entry-time">
+                      {formatTime(entry.clock_in)} - {formatTime(entry.clock_out)}
+                    </div>
+                    <div class="entry-earnings">
+                      ${((parseFloat(entry.hours) || 0) * (selectedNanny?.hourly_rate || 20)).toFixed(2)}
+                    </div>
+                    {#if profile?.role === 'family' || profile?.role === 'admin'}
+                      <div class="entry-actions">
+                        <button class="btn-sm btn-edit" on:click={() => editEntry(entry)}>Edit</button>
+                        <button class="btn-sm btn-danger" on:click={() => deleteEntry(entry.id)}>Delete</button>
+                      </div>
+                    {/if}
                   </div>
-                  <div class="detail-row">
-                    <span class="detail-label">In/Out:</span>
-                    <span class="detail-value">{formatTime(entry.clock_in)} - {formatTime(entry.clock_out)}</span>
-                  </div>
-                  <div class="detail-row">
-                    <span class="detail-label">Hours:</span>
-                    <span class="detail-value">{(parseFloat(entry.hours) || 0).toFixed(1)}</span>
-                  </div>
-                  <div class="detail-row">
-                    <span class="detail-label">Earnings:</span>
-                    <span class="detail-value">${((parseFloat(entry.hours) || 0) * (selectedNanny?.hourly_rate || 20)).toFixed(2)}</span>
-                  </div>
-                  {#if entry.notes}
+                {/each}
+              </div>
+            {:else}
+              <!-- Details View -->
+              <div class="details-list">
+                {#each filteredEntries as entry}
+                  <div class="detail-card">
                     <div class="detail-row">
-                      <span class="detail-label">Notes:</span>
-                      <span class="detail-value">{entry.notes}</span>
+                      <span class="detail-label">Date:</span>
+                      <span class="detail-value">{formatDate(entry.clock_in)}</span>
                     </div>
-                  {/if}
-                  {#if profile?.role === 'family' || profile?.role === 'admin'}
-                    <div class="detail-actions">
-                      <button class="btn-sm btn-edit" on:click={() => editEntry(entry)}>Edit</button>
-                      <button class="btn-sm btn-danger" on:click={() => deleteEntry(entry.id)}>Delete</button>
+                    <div class="detail-row">
+                      <span class="detail-label">In/Out:</span>
+                      <span class="detail-value">{formatTime(entry.clock_in)} - {formatTime(entry.clock_out)}</span>
                     </div>
-                  {/if}
-                </div>
-              {/each}
-            </div>
-          {/if}
+                    <div class="detail-row">
+                      <span class="detail-label">Hours:</span>
+                      <span class="detail-value">{(parseFloat(entry.hours) || 0).toFixed(1)}</span>
+                    </div>
+                    <div class="detail-row">
+                      <span class="detail-label">Earnings:</span>
+                      <span class="detail-value">${((parseFloat(entry.hours) || 0) * (selectedNanny?.hourly_rate || 20)).toFixed(2)}</span>
+                    </div>
+                    {#if entry.notes}
+                      <div class="detail-row">
+                        <span class="detail-label">Notes:</span>
+                        <span class="detail-value">{entry.notes}</span>
+                      </div>
+                    {/if}
+                    {#if profile?.role === 'family' || profile?.role === 'admin'}
+                      <div class="detail-actions">
+                        <button class="btn-sm btn-edit" on:click={() => editEntry(entry)}>Edit</button>
+                        <button class="btn-sm btn-danger" on:click={() => deleteEntry(entry.id)}>Delete</button>
+                      </div>
+                    {/if}
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </div>
         </div>
         
         <div class="week-total">
@@ -797,7 +799,7 @@ Total: $${weekPay.toFixed(2)}`
         <div class="empty-state">No payment records yet</div>
       {:else}
         <!-- Desktop table -->
-        <div class="desktop-table">
+        <div class="desktop-table desktop-only">
           <table>
             <thead>
               <tr>
@@ -848,42 +850,44 @@ Total: $${weekPay.toFixed(2)}`
         </div>
         
         <!-- Mobile payment cards -->
-        <div class="mobile-cards">
-          {#each payments as payment}
-            <div class="payment-card" class:paid={payment.is_paid}>
-              <div class="payment-header">
-                <span class="payment-week">{formatDateShort(payment.week_start)} - {formatDateShort(payment.week_end)}</span>
-                <span class="status-badge" class:paid={payment.is_paid}>
-                  {payment.is_paid ? 'Paid' : 'Unpaid'}
-                </span>
-              </div>
-              <div class="payment-details">
-                <div class="payment-row">
-                  <span>{payment.hours?.toFixed(1) || 0} hours</span>
-                  <span class="payment-amount">${payment.amount?.toFixed(2) || 0}</span>
+        <div class="mobile-only">
+          <div class="mobile-cards">
+            {#each payments as payment}
+              <div class="payment-card" class:paid={payment.is_paid}>
+                <div class="payment-header">
+                  <span class="payment-week">{formatDateShort(payment.week_start)} - {formatDateShort(payment.week_end)}</span>
+                  <span class="status-badge" class:paid={payment.is_paid}>
+                    {payment.is_paid ? 'Paid' : 'Unpaid'}
+                  </span>
                 </div>
-                {#if payment.paid_date}
-                  <div class="payment-date">Paid: {formatDateShort(payment.paid_date)}</div>
+                <div class="payment-details">
+                  <div class="payment-row">
+                    <span>{payment.hours?.toFixed(1) || 0} hours</span>
+                    <span class="payment-amount">${payment.amount?.toFixed(2) || 0}</span>
+                  </div>
+                  {#if payment.paid_date}
+                    <div class="payment-date">Paid: {formatDateShort(payment.paid_date)}</div>
+                  {/if}
+                </div>
+                {#if profile?.role === 'family' || profile?.role === 'admin'}
+                  <div class="payment-actions">
+                    {#if payment.is_paid}
+                      <button class="btn-sm btn-warning" on:click={() => markUnpaid(payment.id)}>
+                        Mark Unpaid
+                      </button>
+                    {:else}
+                      <button class="btn-sm btn-success" on:click={() => markPaid(payment.id)}>
+                        Mark Paid
+                      </button>
+                    {/if}
+                    <button class="btn-sm btn-danger" on:click={() => deletePayment(payment.id)}>
+                      Delete
+                    </button>
+                  </div>
                 {/if}
               </div>
-              {#if profile?.role === 'family' || profile?.role === 'admin'}
-                <div class="payment-actions">
-                  {#if payment.is_paid}
-                    <button class="btn-sm btn-warning" on:click={() => markUnpaid(payment.id)}>
-                      Mark Unpaid
-                    </button>
-                  {:else}
-                    <button class="btn-sm btn-success" on:click={() => markPaid(payment.id)}>
-                      Mark Paid
-                    </button>
-                  {/if}
-                  <button class="btn-sm btn-danger" on:click={() => deletePayment(payment.id)}>
-                    Delete
-                  </button>
-                </div>
-              {/if}
-            </div>
-          {/each}
+            {/each}
+          </div>
         </div>
       {/if}
     </div>
@@ -956,44 +960,30 @@ Total: $${weekPay.toFixed(2)}`
 {/if}
 
 <style>
-  .container {
-    min-height: 100vh;
-    background: #f7fafc;
-    padding: 40px 20px;
-    max-width: 1200px;
-    margin: 0 auto;
-  }
-  
   .nanny-selector {
     background: white;
-    padding: 20px;
-    border-radius: 15px;
-    margin-bottom: 20px;
+    padding: clamp(1.25rem, 4vw, 1.75rem);
+    border-radius: clamp(0.75rem, 2vw, 1rem);
+    margin-bottom: var(--section-gap);
     box-shadow: 0 2px 10px rgba(0,0,0,0.1);
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 15px;
+    gap: var(--stack-gap);
   }
-  
+
   .nanny-selector label {
     font-weight: 600;
     color: #4a5568;
+    min-width: 140px;
   }
-  
+
   .nanny-selector select {
-    flex: 1;
-    padding: 12px;
+    flex: 1 1 220px;
+    padding: 0.75rem;
     border: 2px solid #e2e8f0;
-    border-radius: 8px;
-    font-size: 1em;
-  }
-  
-  .card {
-    background: white;
-    border-radius: 15px;
-    padding: 30px;
-    margin-bottom: 20px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    border-radius: 0.75rem;
+    font-size: 1rem;
   }
   
   .card-header {
@@ -1020,38 +1010,40 @@ Total: $${weekPay.toFixed(2)}`
   
   .week-nav {
     display: flex;
-    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: center;
     align-items: center;
+    gap: var(--stack-gap);
   }
-  
+
   .week-nav button {
-    padding: 8px 16px;
+    padding: clamp(0.5rem, 2vw, 0.75rem) clamp(0.75rem, 3vw, 1.25rem);
     background: white;
     border: 2px solid #e2e8f0;
-    border-radius: 6px;
+    border-radius: 0.75rem;
     cursor: pointer;
     font-weight: 600;
   }
-  
+
   .week-nav button:hover {
     background: #f7fafc;
   }
-  
+
   .week-nav span {
     font-size: 0.95em;
     font-weight: 600;
     color: #4a5568;
-    min-width: 200px;
+    min-width: min(220px, 100%);
     text-align: center;
   }
   
   .timer-card {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
-    padding: 40px;
-    border-radius: 15px;
+    padding: clamp(2rem, 6vw, 2.75rem);
+    border-radius: clamp(0.75rem, 2vw, 1rem);
     text-align: center;
-    margin-bottom: 30px;
+    margin-bottom: 2rem;
   }
   
   .timer-label {
@@ -1062,7 +1054,7 @@ Total: $${weekPay.toFixed(2)}`
   }
   
   .timer {
-    font-size: 3.5em;
+    font-size: clamp(2.75rem, 8vw, 3.75rem);
     font-weight: bold;
     font-family: 'SF Mono', Monaco, monospace;
   }
@@ -1087,11 +1079,11 @@ Total: $${weekPay.toFixed(2)}`
   }
   
   .btn {
-    padding: 16px 40px;
-    font-size: 1.2em;
-    font-weight: bold;
+    padding: clamp(0.9rem, 3vw, 1.1rem) clamp(1.75rem, 5vw, 2.5rem);
+    font-size: clamp(1rem, 2.5vw, 1.2rem);
+    font-weight: 700;
     border: none;
-    border-radius: 10px;
+    border-radius: 0.85rem;
     cursor: pointer;
     transition: all 0.3s;
   }
@@ -1118,13 +1110,13 @@ Total: $${weekPay.toFixed(2)}`
   
   .quick-actions {
     display: flex;
-    gap: 10px;
     justify-content: center;
     flex-wrap: wrap;
+    gap: var(--stack-gap);
   }
   
   .btn-secondary {
-    padding: 10px 20px;
+    padding: clamp(0.75rem, 3vw, 0.9rem) clamp(1.25rem, 4vw, 1.75rem);
     font-size: 0.95em;
     background: #718096;
     color: white;
@@ -1137,23 +1129,23 @@ Total: $${weekPay.toFixed(2)}`
   
   /* Mobile view toggle */
   .mobile-view-toggle {
-    display: none;
-    gap: 10px;
-    margin-bottom: 20px;
+    display: flex;
+    gap: var(--stack-gap);
+    margin-bottom: var(--stack-gap);
   }
-  
+
   .mobile-view-toggle button {
     flex: 1;
-    padding: 10px;
+    padding: clamp(0.75rem, 3vw, 0.9rem);
     background: white;
     border: 2px solid #e2e8f0;
-    border-radius: 6px;
+    border-radius: 0.75rem;
     font-weight: 600;
     color: #4a5568;
     cursor: pointer;
     transition: all 0.2s;
   }
-  
+
   .mobile-view-toggle button.active {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
@@ -1189,14 +1181,17 @@ Total: $${weekPay.toFixed(2)}`
     background: #f7fafc;
   }
   
-  /* Mobile cards - hidden by default */
+  /* Mobile cards */
   .mobile-cards {
-    display: none;
+    display: flex;
+    flex-direction: column;
+    gap: var(--stack-gap);
   }
-  
+
   .summary-grid {
     display: grid;
-    gap: 15px;
+    gap: var(--grid-gap);
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   }
   
   .entry-card {
@@ -1241,7 +1236,8 @@ Total: $${weekPay.toFixed(2)}`
   
   .entry-actions {
     display: flex;
-    gap: 8px;
+    flex-wrap: wrap;
+    gap: var(--stack-gap);
   }
   
   .detail-card {
@@ -1277,7 +1273,8 @@ Total: $${weekPay.toFixed(2)}`
     padding-top: 15px;
     border-top: 1px solid #e2e8f0;
     display: flex;
-    gap: 8px;
+    flex-wrap: wrap;
+    gap: var(--stack-gap);
   }
   
   /* Payment cards */
@@ -1328,7 +1325,8 @@ Total: $${weekPay.toFixed(2)}`
   
   .payment-actions {
     display: flex;
-    gap: 8px;
+    flex-wrap: wrap;
+    gap: var(--stack-gap);
     margin-top: 10px;
     padding-top: 10px;
     border-top: 1px solid #e2e8f0;
@@ -1475,20 +1473,19 @@ Total: $${weekPay.toFixed(2)}`
   
   .form-row {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 15px;
+    gap: var(--stack-gap);
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   }
   
   .button-row {
     display: flex;
-    gap: 10px;
-    margin-top: 20px;
+    flex-wrap: wrap;
+    gap: var(--stack-gap);
+    margin-top: var(--stack-gap);
   }
-  
+
   .button-row .btn {
-    flex: 1;
-    padding: 12px;
-    font-size: 1em;
+    flex: 1 1 min(220px, 100%);
   }
   
   .clock-in-confirm {
@@ -1500,103 +1497,4 @@ Total: $${weekPay.toFixed(2)}`
     font-size: 1.1em;
   }
   
-  /* Mobile responsive styles */
-  @media (max-width: 768px) {
-    .container {
-      padding: 20px 12px;
-    }
-    
-    .card {
-      padding: 20px;
-    }
-    
-    .timer-card {
-      padding: 30px 20px;
-    }
-    
-    .timer {
-      font-size: 2.5em;
-    }
-    
-    .btn {
-      padding: 14px 28px;
-      font-size: 1.1em;
-    }
-    
-    .week-nav span {
-      min-width: auto;
-      font-size: 0.85em;
-    }
-    
-    .week-nav button {
-      padding: 8px 12px;
-    }
-    
-    /* Hide desktop table, show mobile cards */
-    .desktop-table {
-      display: none;
-    }
-    
-    .mobile-cards {
-      display: block;
-    }
-    
-    .mobile-view-toggle {
-      display: flex;
-    }
-    
-    .quick-actions {
-      gap: 8px;
-    }
-    
-    .btn-secondary {
-      padding: 10px 16px;
-      font-size: 0.9em;
-    }
-    
-    .modal-content {
-      padding: 20px;
-    }
-    
-    .form-row {
-      grid-template-columns: 1fr;
-    }
-    
-    .week-total {
-      padding: 15px;
-    }
-    
-    .total-amount {
-      font-size: 1.5em;
-    }
-  }
-  
-  @media (max-width: 480px) {
-    .nanny-selector {
-      flex-direction: column;
-      align-items: stretch;
-    }
-    
-    .card-header {
-      flex-direction: column;
-      align-items: stretch;
-      text-align: center;
-    }
-    
-    .week-nav {
-      width: 100%;
-      justify-content: space-between;
-    }
-    
-    .btn-sm {
-      font-size: 0.8em;
-      padding: 5px 10px;
-    }
-    
-    .entry-actions,
-    .detail-actions,
-    .payment-actions {
-      flex-wrap: wrap;
-    }
-  }
 </style>

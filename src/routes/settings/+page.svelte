@@ -226,11 +226,11 @@
   
   .info-box {
     background: #f7fafc;
-    padding: 15px;
-    border-radius: 8px;
-    margin-bottom: 30px;
+    padding: clamp(1rem, 3vw, 1.5rem);
+    border-radius: 0.75rem;
+    margin-bottom: 2rem;
     color: #4a5568;
-    line-height: 1.8;
+    line-height: 1.7;
   }
   
   .admin-badge {
@@ -245,27 +245,29 @@
   }
   
   .form-group {
-    margin-bottom: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
   }
-  
+
   label {
-    display: block;
-    margin-bottom: 8px;
     color: #4a5568;
     font-weight: 500;
   }
-  
+
   input, select {
     width: 100%;
-    padding: 12px;
+    padding: 0.75rem;
     border: 1px solid #e2e8f0;
-    border-radius: 8px;
-    font-size: 1em;
+    border-radius: 0.75rem;
+    font-size: 1rem;
   }
-  
+
   input:focus, select:focus {
     outline: none;
     border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
   }
   
   small {
@@ -276,9 +278,9 @@
   }
   
   .btn {
-    padding: 12px 24px;
+    padding: clamp(0.75rem, 3vw, 1rem) clamp(1.5rem, 4vw, 2rem);
     border: none;
-    border-radius: 8px;
+    border-radius: 0.75rem;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s;
@@ -288,7 +290,7 @@
     width: 100%;
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
-    font-size: 1.1em;
+    font-size: clamp(1rem, 2vw, 1.15rem);
   }
   
   .btn-primary:hover:not(:disabled) {
@@ -300,17 +302,17 @@
     opacity: 0.6;
     cursor: not-allowed;
   }
-  
+
   .btn-secondary {
     background: white;
     color: #667eea;
     border: 2px solid #667eea;
   }
-  
+
   .btn-secondary:hover {
     background: #f7fafc;
   }
-  
+
   .loading {
     min-height: 100vh;
     display: flex;
@@ -318,10 +320,5 @@
     justify-content: center;
     background: #f7fafc;
     color: #718096;
-  }
-  
-  @media (max-width: 480px) {
-    .container { padding: 20px 16px; }
-    .card { padding: 20px; }
   }
 </style>

@@ -3,7 +3,12 @@
   import { supabase } from '$lib/supabase'
   import { toast } from '$lib/stores/toast.js'
   import Nav from '$lib/Nav.svelte'
-  
+  import ConfirmModal from '$lib/components/ConfirmModal.svelte'
+
+  let showConfirm = false
+  let confirmConfig = {}
+  let deletingNanny = false
+
   let user = null
   let profile = null
   let loading = true
@@ -128,31 +133,38 @@
     }
   }
 
-  async function deleteNanny(nanny) {
-    if (!confirm(`Delete ${nanny.full_name}? This will also delete all their time entries.`)) {
-      return
+  function deleteNanny(nanny) {
+    confirmConfig = {
+      title: `Delete ${nanny.full_name}?`,
+      message: 'This will also delete all their time entries. This cannot be undone.',
+      confirmText: 'Delete',
+      danger: true,
+      onConfirm: async () => {
+        deletingNanny = true
+        try {
+          await supabase
+            .from('time_entries')
+            .delete()
+            .eq('nanny_id', nanny.id)
+
+          const { error } = await supabase
+            .from('profiles')
+            .delete()
+            .eq('id', nanny.id)
+
+          if (error) throw error
+
+          toast.success('Nanny deleted')
+          showConfirm = false
+          await loadNannies()
+        } catch (err) {
+          toast.error('Error deleting: ' + err.message)
+        } finally {
+          deletingNanny = false
+        }
+      }
     }
-    
-    try {
-      // Delete time entries first
-      await supabase
-        .from('time_entries')
-        .delete()
-        .eq('nanny_id', nanny.id)
-      
-      // Delete profile
-      const { error } = await supabase
-        .from('profiles')
-        .delete()
-        .eq('id', nanny.id)
-      
-      if (error) throw error
-      
-      toast.success('Nanny deleted')
-      await loadNannies()
-    } catch (err) {
-      toast.error('Error deleting: ' + err.message)
-    }
+    showConfirm = true
   }
   
   function cancelNannyForm() {
@@ -266,6 +278,8 @@
     </div>
   {/if}
 {/if}
+
+<ConfirmModal bind:show={showConfirm} {...confirmConfig} loading={deletingNanny} />
 
 <style>
   .container {

@@ -4,6 +4,11 @@
   import { toast } from '$lib/stores/toast.js'
   import Nav from '$lib/Nav.svelte'
   import CalendarManager from '$lib/components/CalendarManager.svelte'
+  import ConfirmModal from '$lib/components/ConfirmModal.svelte'
+
+  let showConfirm = false
+  let confirmConfig = {}
+  let confirmLoading = false
   
   let user = null
   let profile = null
@@ -422,22 +427,33 @@
     }
   }
   
-  async function deleteShift(shiftId) {
-    if (!confirm('Delete this shift?')) return
-    
-    try {
-      const { error } = await supabase
-        .from('schedules')
-        .delete()
-        .eq('id', shiftId)
-      
-      if (error) throw error
-      
-      await loadShifts()
-    } catch (err) {
-      console.error('Error deleting shift:', err)
-      toast.error('Error deleting shift')
+  function deleteShift(shiftId) {
+    confirmConfig = {
+      title: 'Delete Shift',
+      message: 'Remove this scheduled shift?',
+      confirmText: 'Delete',
+      danger: true,
+      onConfirm: async () => {
+        confirmLoading = true
+        try {
+          const { error } = await supabase
+            .from('schedules')
+            .delete()
+            .eq('id', shiftId)
+
+          if (error) throw error
+
+          showConfirm = false
+          await loadShifts()
+        } catch (err) {
+          console.error('Error deleting shift:', err)
+          toast.error('Error deleting shift')
+        } finally {
+          confirmLoading = false
+        }
+      }
     }
+    showConfirm = true
   }
 
   function getCoverageStats() {
@@ -924,6 +940,8 @@
     </div>
   </div>
 {/if}
+
+<ConfirmModal bind:show={showConfirm} {...confirmConfig} loading={confirmLoading} />
 
 <style>
   .container {

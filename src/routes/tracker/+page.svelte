@@ -3,11 +3,16 @@
   import { supabase } from '$lib/supabase'
   import { toast } from '$lib/stores/toast.js'
   import Nav from '$lib/Nav.svelte'
-  
+  import ConfirmModal from '$lib/components/ConfirmModal.svelte'
+
   // Round hours to nearest 15 minutes (0.25 hour increments)
   function roundToQuarter(hours) {
     return Math.round(hours * 4) / 4
   }
+
+  let showConfirm = false
+  let confirmConfig = {}
+  let confirmLoading = false
 
   let user = null
   let profile = null
@@ -341,18 +346,26 @@ Total: $${weekPay.toFixed(2)}`
 
     if (isMobile && venmo !== 'username') {
       const venmoUrl = `venmo://paycharge?txn=pay&recipients=${encodeURIComponent(venmo)}&amount=${weekPay.toFixed(2)}&note=${encodeURIComponent(note)}`
-      
-      if (confirm(`Pay $${weekPay.toFixed(2)} to @${venmo} via Venmo?`)) {
-        await createPaymentRecord()
-        window.location.href = venmoUrl
+
+      confirmConfig = {
+        title: 'Send Venmo Payment',
+        message: `Pay $${weekPay.toFixed(2)} to @${venmo} via Venmo?`,
+        confirmText: 'Pay Now',
+        danger: false,
+        onConfirm: async () => {
+          await createPaymentRecord()
+          showConfirm = false
+          window.location.href = venmoUrl
+        }
       }
+      showConfirm = true
     } else {
       try {
         await navigator.clipboard.writeText(note)
         await createPaymentRecord()
         toast.success(`Payment details copied! Paste into Venmo when sending to @${venmo}`)
       } catch {
-        prompt('Copy this payment message:', note)
+        toast.info(note)
       }
     }
   }
@@ -439,24 +452,33 @@ Total: $${weekPay.toFixed(2)}`
     return nannies.find(n => n.id === selectedNannyId)?.full_name || 'Select a nanny'
   }
   
-  async function deletePayment(paymentId) {
-    if (!confirm('Delete this payment record? This cannot be undone.')) {
-      return
+  function deletePayment(paymentId) {
+    confirmConfig = {
+      title: 'Delete Payment Record',
+      message: 'This cannot be undone.',
+      confirmText: 'Delete',
+      danger: true,
+      onConfirm: async () => {
+        confirmLoading = true
+        try {
+          const { error } = await supabase
+            .from('payments')
+            .delete()
+            .eq('id', paymentId)
+
+          if (error) throw error
+
+          showConfirm = false
+          await loadPayments()
+          toast.success('Payment record deleted')
+        } catch (err) {
+          toast.error('Error deleting payment: ' + err.message)
+        } finally {
+          confirmLoading = false
+        }
+      }
     }
-    
-    try {
-      const { error } = await supabase
-        .from('payments')
-        .delete()
-        .eq('id', paymentId)
-      
-      if (error) throw error
-      
-      await loadPayments()
-      toast.success('Payment record deleted')
-    } catch (err) {
-      toast.error('Error deleting payment: ' + err.message)
-    }
+    showConfirm = true
   }
   
   async function requestPayment() {
@@ -492,16 +514,24 @@ Total: $${weekPay.toFixed(2)}`
 
     if (isMobile) {
       const venmoUrl = `venmo://paycharge?txn=charge&recipients=${encodeURIComponent(familyVenmo)}&amount=${weekPay.toFixed(2)}&note=${encodeURIComponent(note)}`
-      
-      if (confirm(`Request $${weekPay.toFixed(2)} from @${familyVenmo} via Venmo?`)) {
-        window.location.href = venmoUrl
+
+      confirmConfig = {
+        title: 'Request Venmo Payment',
+        message: `Request $${weekPay.toFixed(2)} from @${familyVenmo} via Venmo?`,
+        confirmText: 'Request Now',
+        danger: false,
+        onConfirm: () => {
+          showConfirm = false
+          window.location.href = venmoUrl
+        }
       }
+      showConfirm = true
     } else {
       try {
         await navigator.clipboard.writeText(note)
         toast.success('Payment request details copied! Open Venmo and request from your employer.')
       } catch {
-        prompt('Copy this payment request:', note)
+        toast.info(note)
       }
     }
   }
@@ -574,22 +604,33 @@ Total: $${weekPay.toFixed(2)}`
     }
   }
 
-  async function deleteEntry(entryId) {
-    if (!confirm('Delete this entry?')) return
-    
-    try {
-      const { error } = await supabase
-        .from('time_entries')
-        .delete()
-        .eq('id', entryId)
-      
-      if (error) throw error
-      
-      await loadWeekData()
-      toast.success('Entry deleted')
-    } catch (err) {
-      toast.error('Error deleting: ' + err.message)
+  function deleteEntry(entryId) {
+    confirmConfig = {
+      title: 'Delete Entry',
+      message: 'Delete this time entry?',
+      confirmText: 'Delete',
+      danger: true,
+      onConfirm: async () => {
+        confirmLoading = true
+        try {
+          const { error } = await supabase
+            .from('time_entries')
+            .delete()
+            .eq('id', entryId)
+
+          if (error) throw error
+
+          showConfirm = false
+          await loadWeekData()
+          toast.success('Entry deleted')
+        } catch (err) {
+          toast.error('Error deleting: ' + err.message)
+        } finally {
+          confirmLoading = false
+        }
+      }
     }
+    showConfirm = true
   }
 </script>
 
@@ -962,6 +1003,8 @@ Total: $${weekPay.toFixed(2)}`
     </div>
   </div>
 {/if}
+
+<ConfirmModal bind:show={showConfirm} {...confirmConfig} loading={confirmLoading} />
 
 <style>
   .container {

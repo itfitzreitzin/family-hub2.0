@@ -4,7 +4,12 @@
   import { onMount } from 'svelte'
   import { supabase } from '$lib/supabase'
   import { toast } from '$lib/stores/toast.js'
-  
+  import ConfirmModal from '$lib/components/ConfirmModal.svelte'
+
+  let showConfirm = false
+  let confirmConfig = {}
+  let confirmLoading = false
+
   export let userId
   export let onUpdate = () => {}
   
@@ -122,22 +127,33 @@
     }
   }
   
-  async function deleteCalendar(calendarId) {
-    if (!confirm('Delete this calendar? All associated events will be removed.')) return
-    
-    try {
-      const { error } = await supabase
-        .from('parent_calendars')
-        .delete()
-        .eq('id', calendarId)
-      
-      if (error) throw error
-      
-      await loadCalendars()
-      onUpdate()
-    } catch (err) {
-      console.error('Error deleting calendar:', err)
+  function deleteCalendar(calendarId) {
+    confirmConfig = {
+      title: 'Delete Calendar',
+      message: 'All associated events will be removed. This cannot be undone.',
+      confirmText: 'Delete',
+      danger: true,
+      onConfirm: async () => {
+        confirmLoading = true
+        try {
+          const { error } = await supabase
+            .from('parent_calendars')
+            .delete()
+            .eq('id', calendarId)
+
+          if (error) throw error
+
+          showConfirm = false
+          await loadCalendars()
+          onUpdate()
+        } catch (err) {
+          console.error('Error deleting calendar:', err)
+        } finally {
+          confirmLoading = false
+        }
+      }
     }
+    showConfirm = true
   }
   
   async function syncCalendar(calendarId) {
@@ -514,6 +530,8 @@
     </div>
   </div>
 {/if}
+
+<ConfirmModal bind:show={showConfirm} {...confirmConfig} loading={confirmLoading} />
 
 <style>
   /* ALL THE CSS STYLES FROM THE ORIGINAL COMPONENT GO HERE */

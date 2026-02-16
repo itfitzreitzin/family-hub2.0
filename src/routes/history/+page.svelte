@@ -3,6 +3,10 @@
   import { supabase } from '$lib/supabase'
   import { toast } from '$lib/stores/toast.js'
   import Nav from '$lib/Nav.svelte'
+  import ConfirmModal from '$lib/components/ConfirmModal.svelte'
+
+  let showConfirm = false
+  let confirmConfig = {}
   
   // Round hours to nearest 15 minutes (0.25 hour increments)
   function roundToQuarter(hours) {
@@ -166,10 +170,18 @@ Total: $${weekPay.toFixed(2)}`
     
     if (isMobile) {
       const venmoUrl = `venmo://paycharge?txn=pay&recipients=${encodeURIComponent(venmo)}&amount=${weekPay.toFixed(2)}&note=${encodeURIComponent(note)}`
-      
-      if (confirm(`Pay $${weekPay.toFixed(2)} to @${venmo} via Venmo?`)) {
-        window.location.href = venmoUrl
+
+      confirmConfig = {
+        title: 'Send Venmo Payment',
+        message: `Pay $${weekPay.toFixed(2)} to @${venmo} via Venmo?`,
+        confirmText: 'Pay Now',
+        danger: false,
+        onConfirm: () => {
+          showConfirm = false
+          window.location.href = venmoUrl
+        }
       }
+      showConfirm = true
     } else {
       // Desktop - copy to clipboard
       navigator.clipboard.writeText(note).then(() => {
@@ -343,6 +355,8 @@ Total: $${weekPay.toFixed(2)}`
     {/if}
   </div>
 </div>
+
+<ConfirmModal bind:show={showConfirm} {...confirmConfig} />
 
 <style>
   .container {

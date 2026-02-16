@@ -1,6 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
   import { supabase } from '$lib/supabase'
+  import { toast } from '$lib/stores/toast.js'
   import Nav from '$lib/Nav.svelte'
   
   let user = null
@@ -30,7 +31,7 @@
   
   async function saveNanny() {
     if (!nannyName) {
-      alert('Name is required')
+      toast.warning('Name is required')
       return
     }
     
@@ -48,11 +49,11 @@
         
         if (error) throw error
         
-        alert('Nanny updated!')
+        toast.success('Nanny updated!')
       } else {
         // Create new nanny
         if (!nannyEmail || !nannyPassword) {
-          alert('Email and password required for new nanny')
+          toast.warning('Email and password required for new nanny')
           return
         }
         
@@ -76,16 +77,16 @@
         
         if (profileError) throw profileError
         
-        alert('Nanny created! They can log in with: ' + nannyEmail)
+        toast.success('Nanny created! They can log in with: ' + nannyEmail)
       }
       
       cancelNannyForm()
       await loadFamilyDashboard()
     } catch (err) {
-      alert('Error: ' + err.message)
+      toast.error('Error: ' + err.message)
     }
   }
-  
+
   async function deleteNanny(nanny) {
     if (!confirm(`Delete ${nanny.full_name}? This will also delete all their time entries.`)) {
       return
@@ -106,10 +107,10 @@
       
       if (error) throw error
       
-      alert('Nanny deleted')
+      toast.success('Nanny deleted')
       await loadFamilyDashboard()
     } catch (err) {
-      alert('Error deleting: ' + err.message)
+      toast.error('Error deleting: ' + err.message)
     }
   }
   
@@ -158,16 +159,13 @@ onMount(async () => {
   const cleanup = subscribeToShifts()
   loading = false
   
-  // Set up auto-refresh every 30 seconds for active shifts
+  // Tick every 30s to update elapsed time display for active shifts
+  // (actual data changes come through the realtime subscription above)
   const interval = setInterval(() => {
     if (activeShifts.length > 0) {
-      if (profile?.role === 'family' || profile?.role === 'admin') {
-        loadFamilyDashboard()
-      } else if (profile?.role === 'nanny') {
-        loadNannyDashboard()
-      }
+      activeShifts = [...activeShifts] // trigger reactivity for timer display
     }
-  }, 30000) // 30 seconds
+  }, 30000)
   
   // Return cleanup function
   return () => {

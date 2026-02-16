@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte'
   import { supabase } from '$lib/supabase'
+  import { toast } from '$lib/stores/toast.js'
   import Nav from '$lib/Nav.svelte'
   
   let user = null
@@ -152,7 +153,7 @@ Total: $${weekPay.toFixed(2)}`
     } else {
       // Desktop - copy to clipboard
       navigator.clipboard.writeText(note).then(() => {
-        alert(`✅ Payment details copied!\n\n${note}\n\nPaste into Venmo when sending to @${venmo}`)
+        toast.success('Payment details copied! Paste into Venmo when sending to @' + venmo)
       })
     }
   }
@@ -187,7 +188,7 @@ Total: $${weekPay.toFixed(2)}`
   }
 </script>
 <Nav currentPage="history" />
-<div class="container">=
+<div class="container">
    <!-- Nanny Filter (only show for family/admin) -->
   {#if (profile?.role === 'family' || profile?.role === 'admin') && nannies.length > 0}
     <div class="filter-bar">

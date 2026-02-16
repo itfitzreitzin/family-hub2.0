@@ -1,8 +1,9 @@
 <script>
   import { onMount } from 'svelte'
   import { supabase } from '$lib/supabase'
+  import { toast } from '$lib/stores/toast.js'
   import Nav from '$lib/Nav.svelte'
-  import CalendarManager from '$lib/components/CalendarManager.svelte' // Import the calendar manager
+  import CalendarManager from '$lib/components/CalendarManager.svelte'
   
   let user = null
   let profile = null
@@ -338,10 +339,10 @@
 
   async function saveShift() {
     if (!shiftForm.nannyId) {
-      alert('Please select a nanny')
+      toast.warning('Please select a nanny')
       return
     }
-    
+
     try {
       const { data: inserted, error } = await supabase
         .from('schedules')
@@ -372,10 +373,10 @@
       
     } catch (err) {
       console.error('Error saving:', err)
-      alert('Error: ' + err.message)
+      toast.error('Error: ' + err.message)
     }
   }
-  
+
   function getWeekDays() {
     if (!currentWeekStart) return []
     
@@ -400,7 +401,7 @@
   
   function openAddShift(date) {
     if ((profile?.role === 'family' || profile?.role === 'admin') && (!nannies || nannies.length === 0)) {
-      alert('No nannies found. Please create a nanny profile first.')
+      toast.warning('No nannies found. Please create a nanny profile first.')
       return
     }
     shiftForm.date = ymd(date)
@@ -435,7 +436,7 @@
       await loadShifts()
     } catch (err) {
       console.error('Error deleting shift:', err)
-      alert('Error deleting shift')
+      toast.error('Error deleting shift')
     }
   }
 
@@ -578,10 +579,10 @@
   
   async function requestCoverage(gap) {
     if ((profile?.role === 'family' || profile?.role === 'admin') && (!nannies || nannies.length === 0)) {
-      alert('No nannies found. Please create a nanny profile first.')
+      toast.warning('No nannies found. Please create a nanny profile first.')
       return
     }
-    
+
     shiftForm.date = ymd(gap.day)
     shiftForm.startTime = `${gap.startHour.toString().padStart(2, '0')}:00`
     shiftForm.endTime = `${gap.endHour.toString().padStart(2, '0')}:00`

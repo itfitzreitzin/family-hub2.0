@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte'
   import { supabase } from '$lib/supabase'
+  import { toast } from '$lib/stores/toast.js'
   import Nav from '$lib/Nav.svelte'
   
   let user = null
@@ -211,12 +212,12 @@
   
   async function clockIn() {
     if (!selectedNannyId) {
-      alert('Please select a nanny')
+      toast.warning('Please select a nanny')
       return
     }
     
     if (profile?.role !== 'nanny' && selectedNannyId === user.id) {
-      alert('You cannot clock yourself in. Please select a nanny.')
+      toast.warning('You cannot clock yourself in. Please select a nanny.')
       return
     }
     
@@ -236,7 +237,7 @@
         .maybeSingle()
       
       if (activeEntry) {
-        alert(`${activeEntry.profiles.full_name} is already clocked in. Only one nanny can be on the clock at a time.`)
+        toast.warning(`${activeEntry.profiles.full_name} is already clocked in. Only one nanny can be on the clock at a time.`)
         loading = false
         showClockInConfirm = false
         return
@@ -261,7 +262,7 @@
       await loadWeekData()
       showClockInConfirm = false
     } catch (err) {
-      alert('Error clocking in: ' + err.message)
+      toast.error('Error clocking in: ' + err.message)
     } finally {
       loading = false
     }
@@ -281,7 +282,7 @@
       if (fetchError) throw fetchError
       
       if (!activeEntry) {
-        alert('No active shift found for this nanny')
+        toast.warning('No active shift found for this nanny')
         loading = false
         return
       }
@@ -300,7 +301,7 @@
       
       if (updateError) throw updateError
       
-      alert(`Clocked out! Worked ${hours.toFixed(2)} hours`)
+      toast.success(`Clocked out! Worked ${hours.toFixed(2)} hours`)
       
       currentEntry = null
       stopTimer()
@@ -308,7 +309,7 @@
       await loadWeekData()
     } catch (err) {
       console.error('Clock out error:', err)
-      alert('Error clocking out: ' + err.message)
+      toast.error('Error clocking out: ' + err.message)
     } finally {
       loading = false
     }
@@ -316,10 +317,10 @@
   
   async function generateVenmoPayment() {
     if (weekTotal === 0) {
-      alert('No completed hours for this week')
+      toast.warning('No completed hours for this week')
       return
     }
-    
+
     const nanny = selectedNanny
     const venmo = nanny?.venmo_username?.replace('@', '') || 'username'
     const rate = nanny?.hourly_rate || 20
@@ -343,7 +344,7 @@ Total: $${weekPay.toFixed(2)}`
       try {
         await navigator.clipboard.writeText(note)
         await createPaymentRecord()
-        alert(`Payment details copied!\n\n${note}\n\nPaste into Venmo when sending to @${venmo}`)
+        toast.success(`Payment details copied! Paste into Venmo when sending to @${venmo}`)
       } catch {
         prompt('Copy this payment message:', note)
       }
@@ -382,7 +383,7 @@ Total: $${weekPay.toFixed(2)}`
       
       await loadPayments()
     } catch (err) {
-      alert('Error marking as paid: ' + err.message)
+      toast.error('Error marking as paid: ' + err.message)
     }
   }
   
@@ -398,7 +399,7 @@ Total: $${weekPay.toFixed(2)}`
       
       await loadPayments()
     } catch (err) {
-      alert('Error marking as unpaid: ' + err.message)
+      toast.error('Error marking as unpaid: ' + err.message)
     }
   }
   
@@ -446,24 +447,24 @@ Total: $${weekPay.toFixed(2)}`
       if (error) throw error
       
       await loadPayments()
-      alert('Payment record deleted')
+      toast.success('Payment record deleted')
     } catch (err) {
-      alert('Error deleting payment: ' + err.message)
+      toast.error('Error deleting payment: ' + err.message)
     }
   }
   
   async function requestPayment() {
     if (weekTotal === 0) {
-      alert('No completed hours for this week')
+      toast.warning('No completed hours for this week')
       return
     }
-    
+
     const nanny = profile
     const venmo = nanny?.venmo_username?.replace('@', '') || null
     const rate = nanny?.hourly_rate || 20
     
     if (!venmo) {
-      alert('Please add your Venmo username in Settings first')
+      toast.warning('Please add your Venmo username in Settings first')
       window.location.href = '/settings'
       return
     }
@@ -492,7 +493,7 @@ Total: $${weekPay.toFixed(2)}`
     } else {
       try {
         await navigator.clipboard.writeText(note)
-        alert(`Payment request details copied!\n\n${note}\n\nOpen Venmo and request from your employer.`)
+        toast.success('Payment request details copied! Open Venmo and request from your employer.')
       } catch {
         prompt('Copy this payment request:', note)
       }
@@ -527,7 +528,7 @@ Total: $${weekPay.toFixed(2)}`
     const hours = (clockOut - clockIn) / (1000 * 60 * 60)
     
     if (hours <= 0) {
-      alert('Clock out must be after clock in')
+      toast.warning('Clock out must be after clock in')
       return
     }
     
@@ -560,9 +561,9 @@ Total: $${weekPay.toFixed(2)}`
       
       showManualEntry = false
       await loadWeekData()
-      alert('Entry saved!')
+      toast.success('Entry saved!')
     } catch (err) {
-      alert('Error: ' + err.message)
+      toast.error('Error: ' + err.message)
     }
   }
 
@@ -578,9 +579,9 @@ Total: $${weekPay.toFixed(2)}`
       if (error) throw error
       
       await loadWeekData()
-      alert('Entry deleted')
+      toast.success('Entry deleted')
     } catch (err) {
-      alert('Error deleting: ' + err.message)
+      toast.error('Error deleting: ' + err.message)
     }
   }
 </script>

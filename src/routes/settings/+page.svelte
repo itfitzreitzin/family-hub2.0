@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte'
   import { supabase } from '$lib/supabase'
+  import { toast } from '$lib/stores/toast.js'
   import Nav from '$lib/Nav.svelte'
   
   let user = null
@@ -70,7 +71,7 @@
       
       if (error) throw error
       
-      alert('Settings saved successfully!')
+      toast.success('Settings saved successfully!')
       
       // Reload profile
       const { data: updatedProfile } = await supabase
@@ -81,7 +82,7 @@
       
       profile = updatedProfile
     } catch (err) {
-      alert('Error saving settings: ' + err.message)
+      toast.error('Error saving settings: ' + err.message)
     } finally {
       saving = false
     }
@@ -91,7 +92,7 @@
     const newPassword = prompt('Enter your new password (min 6 characters):')
     
     if (!newPassword || newPassword.length < 6) {
-      alert('Password must be at least 6 characters')
+      toast.warning('Password must be at least 6 characters')
       return
     }
     
@@ -102,9 +103,9 @@
       
       if (error) throw error
       
-      alert('Password changed successfully!')
+      toast.success('Password changed successfully!')
     } catch (err) {
-      alert('Error changing password: ' + err.message)
+      toast.error('Error changing password: ' + err.message)
     }
   }
 </script>

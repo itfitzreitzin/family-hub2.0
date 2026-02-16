@@ -1,6 +1,7 @@
 <script>
   import { supabase } from '$lib/supabase'
-  
+  import { toast } from '$lib/stores/toast.js'
+
   let email = ''
   let password = ''
   let loading = false
@@ -20,7 +21,7 @@
         
         if (signUpError) throw signUpError
         
-        alert('Check your email for the confirmation link!')
+        toast.success('Check your email for the confirmation link!')
       } else {
         const { data, error: signInError } = await supabase.auth.signInWithPassword({
           email,

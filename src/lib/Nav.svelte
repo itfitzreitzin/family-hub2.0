@@ -76,42 +76,40 @@
     window.location.href = '/'
   }
   
+  let savedScrollY = 0
+
   function toggleMobileMenu() {
     mobileMenuOpen = !mobileMenuOpen
-    
-    // Lock body scroll when menu is open
+
     if (browser) {
       if (mobileMenuOpen) {
+        savedScrollY = window.scrollY
         document.body.style.overflow = 'hidden'
-        // Store scroll position
         document.body.style.position = 'fixed'
-        document.body.style.top = `-${scrollY}px`
+        document.body.style.top = `-${savedScrollY}px`
         document.body.style.width = '100%'
       } else {
-        // Restore scroll position
-        const scrollY = document.body.style.top
         document.body.style.overflow = ''
         document.body.style.position = ''
         document.body.style.top = ''
         document.body.style.width = ''
-        window.scrollTo(0, parseInt(scrollY || '0') * -1)
+        window.scrollTo(0, savedScrollY)
       }
     }
-    
-    // Haptic feedback
+
     if (browser && window.navigator?.vibrate) {
       window.navigator.vibrate(10)
     }
   }
   
   function handleNavClick() {
-    if (isMobile) {
+    if (isMobile && mobileMenuOpen) {
       mobileMenuOpen = false
-      // Restore body scroll
       document.body.style.overflow = ''
       document.body.style.position = ''
       document.body.style.top = ''
       document.body.style.width = ''
+      window.scrollTo(0, savedScrollY)
     }
     
     // Haptic feedback
@@ -123,30 +121,30 @@
 
 <!-- Desktop Navigation -->
 {#if !isMobile}
-<nav class="desktop-nav">
+<nav class="desktop-nav" aria-label="Main navigation">
   <div class="nav-content">
     <a href="/dashboard" class="logo">👶 Family Hub</a>
-    
-    <div class="nav-links">
-      <a href="/dashboard" class:active={currentPage === 'dashboard'}>Dashboard</a>
-      <a href="/tracker" class:active={currentPage === 'tracker'}>Time Tracker</a>
+
+    <div class="nav-links" role="list">
+      <a href="/dashboard" class:active={currentPage === 'dashboard'} aria-current={currentPage === 'dashboard' ? 'page' : undefined}>Dashboard</a>
+      <a href="/tracker" class:active={currentPage === 'tracker'} aria-current={currentPage === 'tracker' ? 'page' : undefined}>Time Tracker</a>
       {#if userRole === 'family' || userRole === 'admin'}
-        <a href="/schedule" class:active={currentPage === 'schedule'}>Schedule</a>
+        <a href="/schedule" class:active={currentPage === 'schedule'} aria-current={currentPage === 'schedule' ? 'page' : undefined}>Schedule</a>
       {/if}
-      <a href="/history" class:active={currentPage === 'history'}>History</a>
+      <a href="/history" class:active={currentPage === 'history'} aria-current={currentPage === 'history' ? 'page' : undefined}>History</a>
       {#if isAdmin}
-        <a href="/admin" class:active={currentPage === 'admin'} class="admin-link">Admin</a>
+        <a href="/admin" class:active={currentPage === 'admin'} class="admin-link" aria-current={currentPage === 'admin' ? 'page' : undefined}>Admin</a>
       {/if}
-      <a href="/settings" class:active={currentPage === 'settings'}>Settings</a>
+      <a href="/settings" class:active={currentPage === 'settings'} aria-current={currentPage === 'settings' ? 'page' : undefined}>Settings</a>
     </div>
-    
+
     <button on:click={signOut} class="sign-out">Sign Out</button>
   </div>
 </nav>
 
 <!-- Mobile Navigation -->
 {:else}
-<nav class="mobile-nav" class:hide={hideNav}>
+<nav class="mobile-nav" class:hide={hideNav} aria-label="Main navigation">
   <div class="mobile-nav-header safe-top">
     <a href="/dashboard" class="mobile-logo" on:click={handleNavClick}>👶 Family Hub</a>
   </div>
@@ -154,8 +152,8 @@
 
 <!-- Mobile Menu Overlay -->
 {#if mobileMenuOpen}
-  <div class="mobile-menu-overlay" on:click={toggleMobileMenu}></div>
-  <div class="mobile-menu safe-top">
+  <div class="mobile-menu-overlay" on:click={toggleMobileMenu} aria-hidden="true"></div>
+  <div class="mobile-menu safe-top" role="dialog" aria-modal="true" aria-label="Navigation menu">
     <div class="mobile-menu-header">
       <h3>Menu</h3>
       <button class="close-menu touch-target" on:click={toggleMobileMenu} aria-label="Close menu">✕</button>
@@ -219,7 +217,7 @@
 
 <!-- Mobile Bottom Navigation -->
 {#if isMobile}
-<div class="mobile-bottom-nav safe-bottom">
+<div class="mobile-bottom-nav safe-bottom" role="navigation" aria-label="Quick navigation">
   <a 
     href="/dashboard" 
     class:active={currentPage === 'dashboard'}

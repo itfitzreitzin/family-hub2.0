@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte'
   import { supabase } from '$lib/supabase'
+  import { toast } from '$lib/stores/toast.js'
   import Nav from '$lib/Nav.svelte'
   
   let user = null
@@ -38,7 +39,7 @@
 
     // Only admin can access this page
     if (profile?.role !== 'admin') {
-      alert('Access denied. Admin only.')
+      toast.error('Access denied. Admin only.')
       window.location.href = '/dashboard'
       return
     }
@@ -69,7 +70,7 @@
   
   async function saveNanny() {
     if (!nannyName) {
-      alert('Name is required')
+      toast.warning('Name is required')
       return
     }
     
@@ -87,11 +88,11 @@
         
         if (error) throw error
         
-        alert('Nanny updated!')
+        toast.success('Nanny updated!')
       } else {
         // Create new nanny - need to create auth user first
         if (!nannyEmail || !nannyPassword) {
-          alert('Email and password required for new nanny')
+          toast.warning('Email and password required for new nanny')
           return
         }
         
@@ -117,16 +118,16 @@
         
         if (profileError) throw profileError
         
-        alert('Nanny created! They can log in with: ' + nannyEmail)
+        toast.success('Nanny created! They can log in with: ' + nannyEmail)
       }
       
       cancelNannyForm()
       await loadNannies()
     } catch (err) {
-      alert('Error: ' + err.message)
+      toast.error('Error: ' + err.message)
     }
   }
-  
+
   async function deleteNanny(nanny) {
     if (!confirm(`Delete ${nanny.full_name}? This will also delete all their time entries.`)) {
       return
@@ -147,10 +148,10 @@
       
       if (error) throw error
       
-      alert('Nanny deleted')
+      toast.success('Nanny deleted')
       await loadNannies()
     } catch (err) {
-      alert('Error deleting: ' + err.message)
+      toast.error('Error deleting: ' + err.message)
     }
   }
   

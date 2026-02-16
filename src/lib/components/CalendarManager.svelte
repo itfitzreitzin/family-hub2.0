@@ -3,6 +3,7 @@
 <script>
   import { onMount } from 'svelte'
   import { supabase } from '$lib/supabase'
+  import { toast } from '$lib/stores/toast.js'
   
   export let userId
   export let onUpdate = () => {}
@@ -73,7 +74,7 @@
       // For iCal URL feeds
       if (calendarForm.calendar_type === 'ical') {
         if (!calendarForm.calendar_url) {
-          alert('Please provide an iCal feed URL')
+          toast.warning('Please provide an iCal feed URL')
           return
         }
       }
@@ -94,17 +95,13 @@
       
     } catch (err) {
       console.error('Error adding calendar:', err)
-      alert('Failed to add calendar')
+      toast.error('Failed to add calendar')
     }
   }
   
   async function connectGoogleCalendar() {
     // In production, this would initiate OAuth flow
-    alert(`Google Calendar integration would happen here. 
-For now, you can:
-1. Get your calendar ID from Google Calendar settings
-2. Use the manual calendar ID option
-3. Or use an iCal feed URL from Google Calendar settings`)
+    toast.info('Google Calendar OAuth coming soon. For now, use the iCal feed URL or manual ID option.')
     
     calendarForm.calendar_type = 'manual'
   }
@@ -145,7 +142,7 @@ For now, you can:
   
   async function syncCalendar(calendarId) {
     // This would trigger a sync with the calendar source
-    alert('Sync functionality would fetch latest events from the calendar source')
+    toast.info('Syncing calendar...')
     
     try {
       const { error } = await supabase
@@ -224,7 +221,7 @@ For now, you can:
       
     } catch (err) {
       console.error('Error adding manual busy time:', err)
-      alert('Failed to add busy time')
+      toast.error('Failed to add busy time')
     }
   }
   

@@ -3,6 +3,7 @@
     import { page } from '$app/stores'
     import { supabase } from '$lib/supabase'
     import favicon from '$lib/assets/favicon.svg'
+    import Toast from '$lib/components/Toast.svelte'
 
     let { children } = $props()
 
@@ -61,4 +62,5 @@
 	<link rel="icon" href={favicon} />
 </svelte:head>
 
+<Toast />
 {@render children?.()}

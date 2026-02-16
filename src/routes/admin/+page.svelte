@@ -32,10 +32,10 @@
       .from('profiles')
       .select('*')
       .eq('id', user.id)
-      .single()
-    
+      .maybeSingle()
+
     profile = profileData
-    
+
     // Only admin can access this page
     if (profile?.role !== 'admin') {
       alert('Access denied. Admin only.')

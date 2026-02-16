@@ -275,7 +275,7 @@
 <style>
   .container {
     min-height: 100vh;
-    background: #f7fafc;
+    background: var(--surface-page, #f0f2f8);
     padding: 40px 20px;
     max-width: 1200px;
     margin: 0 auto;
@@ -297,16 +297,17 @@
   
   .card {
     background: white;
-    border-radius: 15px;
+    border-radius: 1rem;
     padding: 30px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    box-shadow: var(--shadow-md, 0 4px 6px -1px rgba(0, 0, 0, 0.07));
+    border: 1px solid rgba(0, 0, 0, 0.04);
   }
   
   h2 {
     margin: 0 0 20px 0;
-    color: #2d3748;
+    color: var(--color-gray-800, #2d3748);
     padding-bottom: 10px;
-    border-bottom: 2px solid #e2e8f0;
+    border-bottom: 1px solid var(--color-gray-200, #e2e8f0);
   }
   
   .empty-state {
@@ -322,10 +323,16 @@
   }
   
   .nanny-card {
-    background: #f7fafc;
+    background: var(--surface-sunken, #eef1f8);
     padding: 20px;
-    border-radius: 10px;
-    border: 2px solid #e2e8f0;
+    border-radius: 12px;
+    border: 1.5px solid var(--color-gray-200, #e2e8f0);
+    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .nanny-card:hover {
+    box-shadow: var(--shadow-md, 0 4px 12px rgba(0,0,0,0.08));
+    transform: translateY(-1px);
   }
   
   .nanny-info h3 {
@@ -336,7 +343,7 @@
   .rate {
     font-size: 1.2em;
     font-weight: bold;
-    color: #667eea;
+    color: var(--color-primary, #667eea);
     margin: 5px 0;
   }
   
@@ -356,7 +363,7 @@
   .btn, .btn-small {
     padding: 12px 24px;
     border: none;
-    border-radius: 8px;
+    border-radius: 10px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s;
@@ -389,7 +396,9 @@
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(0,0,0,0.5);
+    background: rgba(15, 23, 42, 0.45);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -399,11 +408,12 @@
   .modal-content {
     background: white;
     padding: 30px;
-    border-radius: 15px;
+    border-radius: 1.125rem;
     max-width: 500px;
     width: 90%;
     max-height: 80vh;
     overflow-y: auto;
+    box-shadow: var(--shadow-xl, 0 20px 40px rgba(0,0,0,0.15));
   }
   
   .form-group {
@@ -420,8 +430,8 @@
   input {
     width: 100%;
     padding: 12px;
-    border: 1px solid #e2e8f0;
-    border-radius: 8px;
+    border: 1.5px solid var(--color-gray-200, #e2e8f0);
+    border-radius: 10px;
     font-size: 1em;
   }
   
@@ -439,7 +449,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: #f7fafc;
+    background: var(--surface-page, #f0f2f8);
     color: #718096;
   }
 </style>

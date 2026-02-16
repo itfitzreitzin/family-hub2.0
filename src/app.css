@@ -1,7 +1,45 @@
 :root {
+  /* ── Color Palette ── */
+  --color-primary: #667eea;
+  --color-primary-dark: #5a6fd6;
+  --color-primary-light: #8b9ef5;
+  --color-accent: #764ba2;
+  --color-success: #48bb78;
+  --color-success-dark: #38a169;
+  --color-danger: #f56565;
+  --color-danger-dark: #e53e3e;
+  --color-warning: #ed8936;
+
+  /* ── Neutral Palette ── */
+  --color-gray-900: #1a202c;
+  --color-gray-800: #2d3748;
+  --color-gray-700: #4a5568;
+  --color-gray-500: #718096;
+  --color-gray-400: #a0aec0;
+  --color-gray-300: #cbd5e0;
+  --color-gray-200: #e2e8f0;
+  --color-gray-100: #edf2f7;
+  --color-gray-50: #f7fafc;
+
+  /* ── Surface Colors (tinted backgrounds) ── */
+  --surface-page: #f0f2f8;
+  --surface-card: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-sunken: #eef1f8;
+
+  /* ── Gradients ── */
   --gradient-primary: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   --gradient-success: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
   --gradient-danger: linear-gradient(135deg, #f56565 0%, #e53e3e 100%);
+  --gradient-subtle: linear-gradient(135deg, rgba(102, 126, 234, 0.06) 0%, rgba(118, 75, 162, 0.06) 100%);
+
+  /* ── Elevation / Shadows ── */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 2px 4px -1px rgba(0, 0, 0, 0.04);
+  --shadow-lg: 0 10px 25px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.03);
+  --shadow-xl: 0 20px 40px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.02);
+  --shadow-glow: 0 4px 14px rgba(102, 126, 234, 0.25);
 
   /* Safe area insets */
   --safe-top: env(safe-area-inset-top);
@@ -9,15 +47,21 @@
   --safe-bottom: env(safe-area-inset-bottom);
   --safe-left: env(safe-area-inset-left);
 
-  /* Global layout scales */
+  /* ── Layout Scales ── */
   --page-max-width: 1200px;
   --page-padding-y: clamp(1.75rem, 5vw, 2.75rem);
   --page-padding-x: clamp(1.25rem, 5vw, 2.5rem);
   --card-padding: clamp(1.25rem, 4vw, 2rem);
-  --card-radius: clamp(0.75rem, 2.5vw, 1rem);
+  --card-radius: clamp(0.875rem, 2.5vw, 1.125rem);
   --section-gap: clamp(1rem, 4vw, 2rem);
   --grid-gap: clamp(0.75rem, 3vw, 1.5rem);
   --stack-gap: clamp(0.75rem, 3vw, 1.25rem);
+
+  /* ── Transition ── */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-fast: 0.15s var(--ease-out-expo);
+  --transition-normal: 0.25s var(--ease-out-expo);
+  --transition-slow: 0.4s var(--ease-out-expo);
 }
 
 * {
@@ -30,7 +74,10 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
   background: var(--gradient-primary);
   min-height: 100vh;
-  line-height: 1.5;
+  line-height: 1.6;
+  color: var(--color-gray-800);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   /* Prevent horizontal scroll */
   overflow-x: hidden;
   /* Smooth scrolling on iOS */
@@ -76,16 +123,18 @@ a.action-card,
    GLOBAL CARD & CONTAINER STYLES
    ============================================ */
 .card, .summary-card, .table-card {
-  background: white;
+  background: var(--surface-card);
   border-radius: var(--card-radius);
   padding: var(--card-padding);
   margin-bottom: var(--section-gap);
-  box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+  box-shadow: var(--shadow-md);
+  border: 1px solid rgba(0, 0, 0, 0.04);
+  transition: box-shadow var(--transition-normal), transform var(--transition-normal);
 }
 
 .container {
   min-height: 100vh;
-  background: #f7fafc;
+  background: var(--surface-page);
   padding: var(--page-padding-y) var(--page-padding-x);
   width: min(100%, var(--page-max-width));
   margin: 0 auto;
@@ -118,14 +167,23 @@ a.action-card,
 
 h1 {
   font-size: clamp(1.8rem, 2vw + 1.4rem, 2.6rem);
+  letter-spacing: -0.025em;
+  font-weight: 700;
+  color: var(--color-gray-900);
 }
 
 h2 {
   font-size: clamp(1.35rem, 1.5vw + 1rem, 2rem);
+  letter-spacing: -0.02em;
+  font-weight: 600;
+  color: var(--color-gray-800);
 }
 
 h3 {
   font-size: clamp(1.1rem, 1.2vw + 0.9rem, 1.6rem);
+  letter-spacing: -0.015em;
+  font-weight: 600;
+  color: var(--color-gray-800);
 }
 
 /* ============================================
@@ -143,11 +201,14 @@ table {
 }
 
 th {
-  background: #f7fafc;
+  background: var(--surface-sunken);
   padding: 0.75rem;
   text-align: left;
-  color: #4a5568;
+  color: var(--color-gray-700);
   font-weight: 600;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
   position: sticky;
   top: 0;
   z-index: 10;
@@ -155,11 +216,12 @@ th {
 
 td {
   padding: 0.75rem;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--color-gray-200);
+  color: var(--color-gray-800);
 }
 
 tr:hover {
-  background: #f7fafc;
+  background: var(--gradient-subtle);
 }
 
 /* ============================================
@@ -172,20 +234,21 @@ tr:hover {
 }
 
 .modal-overlay {
-  background: rgba(0,0,0,0.5);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
 .modal-content {
-  background: white;
+  background: var(--surface-card);
   padding: 30px;
-  border-radius: 15px;
+  border-radius: 1.125rem;
   max-width: min(500px, calc(100vw - 2rem));
   max-height: calc(100vh - 4rem);
   margin: 2rem auto;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  box-shadow: var(--shadow-xl);
 }
 
 /* ============================================
@@ -201,16 +264,29 @@ tr:hover {
 }
 
 .spinner {
-  width: 50px;
-  height: 50px;
-  border: 4px solid rgba(102, 126, 234, 0.2);
-  border-top-color: #667eea;
+  width: 44px;
+  height: 44px;
+  border: 3px solid rgba(102, 126, 234, 0.15);
+  border-top-color: var(--color-primary);
   border-radius: 50%;
-  animation: spin 1s linear infinite;
+  animation: spin 0.8s linear infinite;
 }
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+/* ── Skeleton Loading ── */
+@keyframes shimmer {
+  0% { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, var(--color-gray-100) 0%, var(--color-gray-50) 50%, var(--color-gray-100) 100%);
+  background-size: 800px 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+  border-radius: 6px;
 }
 
 /* ============================================
@@ -232,7 +308,7 @@ tr:hover {
   /* Card adjustments */
   .card, .summary-card, .table-card {
     padding: calc(var(--card-padding) * 0.85);
-    border-radius: clamp(0.75rem, 2vw, 0.9rem);
+    border-radius: clamp(0.75rem, 2vw, 1rem);
     margin-bottom: clamp(0.75rem, 3vw, 1.25rem);
   }
   
@@ -433,15 +509,22 @@ button, .btn {
 
 /* Smooth transitions */
 button, .btn, a, input, select, textarea {
-  transition: all 0.2s ease;
+  transition: all var(--transition-fast);
 }
 
 /* Active states for mobile */
 @media (hover: none) and (pointer: coarse) {
   button:active, .btn:active, a:active {
-    transform: scale(0.98);
+    transform: scale(0.97);
     opacity: 0.9;
   }
+}
+
+/* ── Improved Focus Rings ── */
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15), var(--shadow-sm);
 }
 
 /* Accessibility - Reduced motion */
@@ -455,7 +538,7 @@ button, .btn, a, input, select, textarea {
 
 /* Focus visible for keyboard navigation */
 *:focus-visible {
-  outline: 2px solid #667eea;
+  outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
 
@@ -471,7 +554,7 @@ button, .btn, a, input, select, textarea {
     display: none !important;
   }
   body { background: white; }
-  .card { box-shadow: none; border: 1px solid #e2e8f0; }
+  .card { box-shadow: none; border: 1px solid var(--color-gray-200); }
 }
 
 /* 2. Extra specific component classes (if needed) */

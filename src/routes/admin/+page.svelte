@@ -171,7 +171,7 @@
   }
 </script>
 
-<Nav currentPage="dashboard" />
+<Nav currentPage="admin" />
 
 {#if loading}
   <div class="loading">Loading...</div>

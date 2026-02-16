@@ -14,6 +14,12 @@
   let hourlyRate = 20
   let venmoUsername = ''
   let role = 'nanny'
+
+  // Password change
+  let showPasswordForm = false
+  let newPassword = ''
+  let confirmPassword = ''
+  let changingPassword = false
   
   onMount(async () => {
     const { data: { user: currentUser } } = await supabase.auth.getUser()
@@ -89,23 +95,33 @@
   }
   
   async function changePassword() {
-    const newPassword = prompt('Enter your new password (min 6 characters):')
-    
     if (!newPassword || newPassword.length < 6) {
       toast.warning('Password must be at least 6 characters')
       return
     }
-    
+
+    if (newPassword !== confirmPassword) {
+      toast.warning('Passwords do not match')
+      return
+    }
+
+    changingPassword = true
+
     try {
       const { error } = await supabase.auth.updateUser({
         password: newPassword
       })
-      
+
       if (error) throw error
-      
+
       toast.success('Password changed successfully!')
+      showPasswordForm = false
+      newPassword = ''
+      confirmPassword = ''
     } catch (err) {
       toast.error('Error changing password: ' + err.message)
+    } finally {
+      changingPassword = false
     }
   }
 </script>
@@ -188,10 +204,45 @@
     
     <div class="card">
       <h2>Security</h2>
-      
-      <button class="btn btn-secondary" on:click={changePassword}>
-        Change Password
-      </button>
+
+      {#if !showPasswordForm}
+        <button class="btn btn-secondary" on:click={() => showPasswordForm = true}>
+          Change Password
+        </button>
+      {:else}
+        <form on:submit|preventDefault={changePassword}>
+          <div class="form-group">
+            <label for="newPassword">New Password</label>
+            <input
+              id="newPassword"
+              type="password"
+              bind:value={newPassword}
+              placeholder="Min 6 characters"
+              minlength="6"
+              required
+            />
+          </div>
+          <div class="form-group">
+            <label for="confirmPassword">Confirm Password</label>
+            <input
+              id="confirmPassword"
+              type="password"
+              bind:value={confirmPassword}
+              placeholder="Re-enter password"
+              minlength="6"
+              required
+            />
+          </div>
+          <div class="password-actions">
+            <button type="submit" class="btn btn-primary" disabled={changingPassword}>
+              {changingPassword ? 'Changing...' : 'Update Password'}
+            </button>
+            <button type="button" class="btn btn-secondary" on:click={() => { showPasswordForm = false; newPassword = ''; confirmPassword = '' }}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      {/if}
     </div>
     
     <div class="card">
@@ -312,6 +363,15 @@
 
   .btn-secondary:hover {
     background: #f7fafc;
+  }
+
+  .password-actions {
+    display: flex;
+    gap: 10px;
+  }
+
+  .password-actions .btn {
+    flex: 1;
   }
 
   .loading {

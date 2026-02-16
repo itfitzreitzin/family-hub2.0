@@ -137,8 +137,8 @@ onMount(async () => {
     .from('profiles')
     .select('*')
     .eq('id', user.id)
-    .single()
-  
+    .maybeSingle()
+
   profile = profileData
 
   // If no profile or missing role, send to setup
@@ -207,10 +207,12 @@ async function loadFamilyDashboard() {
       .is('clock_out', null)
       .order('clock_in', { ascending: false })
       .limit(1)
-      .single()
-    
+      .maybeSingle()
+
     if (shiftData) {
       activeShifts = [shiftData]
+    } else {
+      activeShifts = []
     }
   }
   // Update your subscribeToShifts function to handle cleanup properly

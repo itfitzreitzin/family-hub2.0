@@ -25,7 +25,7 @@
         .from('profiles')
         .select('role')
         .eq('id', user.id)
-        .single()
+        .maybeSingle()
       
       isAdmin = profile?.role === 'admin'
       userRole = profile?.role || null

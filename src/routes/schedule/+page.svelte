@@ -44,8 +44,8 @@
       .from('profiles')
       .select('*')
       .eq('id', user.id)
-      .single()
-    
+      .maybeSingle()
+
     profile = profileData
 
     if (profile?.role === 'family' || profile?.role === 'admin') {

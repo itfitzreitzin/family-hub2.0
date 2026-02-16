@@ -46,10 +46,10 @@
       .from('profiles')
       .select('*')
       .eq('id', user.id)
-      .single()
-    
+      .maybeSingle()
+
     profile = profileData
-    
+
     // Load nannies for family/admin
     if (profile?.role === 'family' || profile?.role === 'admin') {
       const { data: nanniesData } = await supabase

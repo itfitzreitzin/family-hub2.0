@@ -29,10 +29,10 @@
       .from('profiles')
       .select('*')
       .eq('id', user.id)
-      .single()
-    
+      .maybeSingle()
+
     profile = profileData
-    
+
     // Populate form
     if (profile) {
       fullName = profile.full_name || ''
@@ -77,7 +77,7 @@
         .from('profiles')
         .select('*')
         .eq('id', user.id)
-        .single()
+        .maybeSingle()
       
       profile = updatedProfile
     } catch (err) {

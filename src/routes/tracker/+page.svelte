@@ -852,43 +852,50 @@ Total: $${weekPay.toFixed(2)}`
           </table>
         </div>
         
-        <!-- Mobile payment cards -->
-        <div class="mobile-cards">
-          {#each payments as payment}
-            <div class="payment-card" class:paid={payment.is_paid}>
-              <div class="payment-header">
-                <span class="payment-week">{formatDateShort(payment.week_start)} - {formatDateShort(payment.week_end)}</span>
-                <span class="status-badge" class:paid={payment.is_paid}>
-                  {payment.is_paid ? 'Paid' : 'Unpaid'}
-                </span>
-              </div>
-              <div class="payment-details">
-                <div class="payment-row">
-                  <span>{payment.hours?.toFixed(1) || 0} hours</span>
-                  <span class="payment-amount">${payment.amount?.toFixed(2) || 0}</span>
-                </div>
-                {#if payment.paid_date}
-                  <div class="payment-date">Paid: {formatDateShort(payment.paid_date)}</div>
+        <!-- Mobile payment table -->
+        <div class="mobile-cards mobile-payment-table">
+          <table class="payment-table-compact">
+            <thead>
+              <tr>
+                <th>Week</th>
+                <th>Hrs</th>
+                <th>Amt</th>
+                {#if profile?.role === 'family' || profile?.role === 'admin'}
+                  <th></th>
                 {/if}
-              </div>
-              {#if profile?.role === 'family' || profile?.role === 'admin'}
-                <div class="payment-actions">
-                  {#if payment.is_paid}
-                    <button class="btn-sm btn-warning" on:click={() => markUnpaid(payment.id)}>
-                      Mark Unpaid
-                    </button>
-                  {:else}
-                    <button class="btn-sm btn-success" on:click={() => markPaid(payment.id)}>
-                      Mark Paid
-                    </button>
+              </tr>
+            </thead>
+            <tbody>
+              {#each payments as payment}
+                <tr class:paid-row={payment.is_paid}>
+                  <td class="cell-week">
+                    <span class="week-dates">{formatDateShort(payment.week_start)} – {formatDateShort(payment.week_end)}</span>
+                    {#if payment.paid_date}
+                      <span class="paid-on">Paid {formatDateShort(payment.paid_date)}</span>
+                    {/if}
+                  </td>
+                  <td class="cell-hrs">{payment.hours?.toFixed(1) || 0}</td>
+                  <td class="cell-amt">${payment.amount?.toFixed(2) || 0}</td>
+                  {#if profile?.role === 'family' || profile?.role === 'admin'}
+                    <td class="cell-actions">
+                      {#if payment.is_paid}
+                        <button class="btn-status btn-status-paid" on:click={() => markUnpaid(payment.id)} title="Mark unpaid">
+                          Paid ✓
+                        </button>
+                      {:else}
+                        <button class="btn-status btn-status-unpaid" on:click={() => markPaid(payment.id)} title="Mark paid">
+                          Pay
+                        </button>
+                      {/if}
+                      <button class="btn-delete-inline" on:click={() => deletePayment(payment.id)} title="Delete">
+                        ✕
+                      </button>
+                    </td>
                   {/if}
-                  <button class="btn-sm btn-danger" on:click={() => deletePayment(payment.id)}>
-                    Delete
-                  </button>
-                </div>
-              {/if}
-            </div>
-          {/each}
+                </tr>
+              {/each}
+            </tbody>
+          </table>
         </div>
       {/if}
     </div>
@@ -1285,58 +1292,115 @@ Total: $${weekPay.toFixed(2)}`
     gap: 8px;
   }
   
-  /* Payment cards */
-  .payment-card {
-    background: white;
-    border: 2px solid #e2e8f0;
-    padding: 15px;
-    border-radius: 8px;
-    margin-bottom: 10px;
+  /* Mobile payment compact table */
+  .payment-table-compact {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85em;
   }
-  
-  .payment-card.paid {
-    border-color: #48bb78;
+
+  .payment-table-compact thead th {
+    text-align: left;
+    padding: 8px 6px;
+    font-size: 0.8em;
+    font-weight: 600;
+    color: #718096;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    border-bottom: 2px solid #e2e8f0;
+  }
+
+  .payment-table-compact tbody tr {
+    border-bottom: 1px solid #edf2f7;
+  }
+
+  .payment-table-compact tbody tr:last-child {
+    border-bottom: none;
+  }
+
+  .payment-table-compact tbody tr.paid-row {
     background: #f0fff4;
   }
-  
-  .payment-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 10px;
+
+  .payment-table-compact td {
+    padding: 10px 6px;
+    vertical-align: middle;
   }
-  
-  .payment-week {
+
+  .cell-week {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .cell-week .week-dates {
     font-weight: 600;
     color: #2d3748;
+    font-size: 0.95em;
+    white-space: nowrap;
   }
-  
-  .payment-details {
-    margin-bottom: 10px;
+
+  .cell-week .paid-on {
+    font-size: 0.8em;
+    color: #718096;
   }
-  
-  .payment-row {
-    display: flex;
-    justify-content: space-between;
-    margin-bottom: 5px;
-  }
-  
-  .payment-amount {
-    font-weight: bold;
-    color: #2d3748;
-  }
-  
-  .payment-date {
-    font-size: 0.9em;
+
+  .cell-hrs {
+    text-align: right;
     color: #4a5568;
+    white-space: nowrap;
   }
-  
-  .payment-actions {
+
+  .cell-amt {
+    text-align: right;
+    font-weight: 700;
+    color: #2d3748;
+    white-space: nowrap;
+  }
+
+  .cell-actions {
+    text-align: right;
+    white-space: nowrap;
     display: flex;
-    gap: 8px;
-    margin-top: 10px;
-    padding-top: 10px;
-    border-top: 1px solid #e2e8f0;
+    gap: 4px;
+    justify-content: flex-end;
+    align-items: center;
+  }
+
+  .btn-status {
+    padding: 4px 10px;
+    border-radius: 12px;
+    border: none;
+    font-size: 0.85em;
+    font-weight: 600;
+    cursor: pointer;
+    line-height: 1;
+  }
+
+  .btn-status-paid {
+    background: #c6f6d5;
+    color: #22543d;
+  }
+
+  .btn-status-unpaid {
+    background: #fed7d7;
+    color: #c53030;
+  }
+
+  .btn-delete-inline {
+    padding: 4px 7px;
+    border-radius: 50%;
+    border: none;
+    background: transparent;
+    color: #a0aec0;
+    font-size: 0.9em;
+    cursor: pointer;
+    line-height: 1;
+  }
+
+  .btn-delete-inline:hover {
+    background: #fed7d7;
+    color: #c53030;
   }
   
   .empty-state {
@@ -1599,9 +1663,20 @@ Total: $${weekPay.toFixed(2)}`
     }
     
     .entry-actions,
-    .detail-actions,
-    .payment-actions {
+    .detail-actions {
       flex-wrap: wrap;
+    }
+
+    .payment-table-compact {
+      font-size: 0.8em;
+    }
+
+    .payment-table-compact td {
+      padding: 8px 4px;
+    }
+
+    .cell-week .week-dates {
+      font-size: 0.85em;
     }
   }
 </style>

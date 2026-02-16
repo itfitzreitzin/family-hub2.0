@@ -4,6 +4,11 @@
   import { toast } from '$lib/stores/toast.js'
   import Nav from '$lib/Nav.svelte'
   
+  // Round hours to nearest 15 minutes (0.25 hour increments)
+  function roundToQuarter(hours) {
+    return Math.round(hours * 4) / 4
+  }
+
   let user = null
   let profile = null
   let nannies = []
@@ -289,8 +294,9 @@
       
       const clockOutTime = new Date()
       const clockInTime = new Date(activeEntry.clock_in)
-      const hours = (clockOutTime - clockInTime) / (1000 * 60 * 60)
-      
+      const rawHours = (clockOutTime - clockInTime) / (1000 * 60 * 60)
+      const hours = roundToQuarter(rawHours)
+
       const { error: updateError } = await supabase
         .from('time_entries')
         .update({
@@ -298,9 +304,9 @@
           hours: hours.toFixed(2)
         })
         .eq('id', activeEntry.id)
-      
+
       if (updateError) throw updateError
-      
+
       toast.success(`Clocked out! Worked ${hours.toFixed(2)} hours`)
       
       currentEntry = null
@@ -325,9 +331,9 @@
     const venmo = (nanny?.venmo_username || '').replace(/@/g, '').trim().split(/[\s,;]+/)[0] || 'username'
     const rate = nanny?.hourly_rate || 20
 
-    const note = `Weekly payment for ${nanny?.full_name}
+    const note = `Weekly childcare payment for ${nanny?.full_name}
 Week of ${currentWeekStart.toLocaleDateString()}
-Hours: ${weekTotal.toFixed(1)}
+Hours: ${weekTotal.toFixed(2)}
 Rate: $${rate}/hour
 Total: $${weekPay.toFixed(2)}`
 
@@ -476,9 +482,9 @@ Total: $${weekPay.toFixed(2)}`
 
     const familyVenmo = (familyMembers?.[0]?.venmo_username || '').replace(/@/g, '').trim().split(/[\s,;]+/)[0] || 'family'
 
-    const note = `Payment request from ${nanny?.full_name}
+    const note = `Childcare payment request from ${nanny?.full_name}
 Week of ${currentWeekStart.toLocaleDateString()}
-Hours: ${weekTotal.toFixed(1)}
+Hours: ${weekTotal.toFixed(2)}
 Rate: $${rate}/hour
 Total: $${weekPay.toFixed(2)}`
 
@@ -525,8 +531,9 @@ Total: $${weekPay.toFixed(2)}`
   async function saveManualEntry() {
     const clockIn = new Date(`${manualEntryForm.date}T${manualEntryForm.clockIn}`)
     const clockOut = new Date(`${manualEntryForm.date}T${manualEntryForm.clockOut}`)
-    const hours = (clockOut - clockIn) / (1000 * 60 * 60)
-    
+    const rawHours = (clockOut - clockIn) / (1000 * 60 * 60)
+    const hours = roundToQuarter(rawHours)
+
     if (hours <= 0) {
       toast.warning('Clock out must be after clock in')
       return

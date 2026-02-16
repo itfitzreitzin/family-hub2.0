@@ -151,9 +151,9 @@
     const weekStart = new Date()
     weekStart.setDate(weekStart.getDate() - weekStart.getDay())
 
-    const note = `Weekly payment for ${nannyName}
+    const note = `Weekly childcare payment for ${nannyName}
 Week of ${weekStart.toLocaleDateString()}
-Hours: ${weekTotal.toFixed(1)}
+Hours: ${weekTotal.toFixed(2)}
 Total: $${weekPay.toFixed(2)}`
     
     // Check if mobile

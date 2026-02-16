@@ -2,19 +2,19 @@
   import { onMount } from 'svelte'
   import { supabase } from '$lib/supabase'
   import Nav from '$lib/Nav.svelte'
-  import CalendarManager from '$lib/components/CalendarManager.svelte' // Import the calendar manager
+  import CalendarManager from '$lib/components/CalendarManager.svelte'
   import { goto } from '$app/navigation'
   import { toast, confirm as confirmModal } from '$lib/stores/toast.js'
-  
+
   let user = null
   let profile = null
   let currentWeekStart = null
   let shifts = []
   let loading = true
   let showAddShift = false
-  let showCalendarManager = false // New state for calendar manager modal
+  let showCalendarManager = false
   let nannies = []
-  
+
   let shiftForm = {
     nannyId: null,
     date: '',
@@ -23,25 +23,29 @@
     notes: ''
   }
   let weekSummary = null
-  let showInsights = false
-  let viewMode = 'grid' // 'grid' or 'coverage'
-  
-  // Real calendar data
+
+  // Calendar data
   let parentCalendarEvents = {
     you: [],
     partner: []
   }
-  let familyMembers = [] // Store family member profiles
-  
+  let familyMembers = []
+
+  // Time grid config
+  const DAY_START_HOUR = 7
+  const DAY_END_HOUR = 20
+  const TOTAL_HOURS = DAY_END_HOUR - DAY_START_HOUR
+  const HOUR_HEIGHT = 60 // px per hour
+
   onMount(async () => {
     const { data: { user: currentUser } } = await supabase.auth.getUser()
     if (!currentUser) {
       goto('/')
       return
     }
-    
+
     user = currentUser
-    
+
     const { data: profileData } = await supabase
       .from('profiles')
       .select('*')
@@ -52,13 +56,13 @@
 
     if (profile?.role === 'family' || profile?.role === 'admin') {
       await loadFamilyMembers()
-      
+
       const { data: nanniesData } = await supabase
         .from('profiles')
         .select('*')
         .eq('role', 'nanny')
         .order('full_name')
-      
+
       nannies = nanniesData || []
       if (nannies.length > 0) {
         shiftForm.nannyId = nannies[0].id
@@ -71,29 +75,25 @@
     setCurrentWeek(0)
     loading = false
   })
-  
+
   async function loadFamilyMembers() {
     const { data, error } = await supabase
       .from('profiles')
       .select('*')
       .eq('role', 'family')
       .order('created_at')
-    
-    if (error) {
-      return
-    }
 
+    if (error) return
     familyMembers = data || []
   }
-  
+
   async function loadParentCalendarEvents() {
     if (!currentWeekStart || familyMembers.length === 0) return
-    
+
     const weekEnd = new Date(currentWeekStart)
     weekEnd.setDate(weekEnd.getDate() + 6)
-    
+
     try {
-      // Load calendar events for all family members
       const { data: events, error } = await supabase
         .from('calendar_events')
         .select(`
@@ -110,33 +110,25 @@
         .eq('is_busy', true)
         .eq('parent_calendars.sync_enabled', true)
         .order('start_time')
-      
+
       if (error) throw error
-      
-      // Also load manual busy times
+
       const { data: manualTimes, error: manualError } = await supabase
         .from('manual_busy_times')
         .select('*')
         .gte('start_time', currentWeekStart.toISOString())
         .lte('start_time', weekEnd.toISOString())
-      
+
       if (manualError) throw manualError
-      
-      // Process recurring manual times
+
       const recurringEvents = await processRecurringEvents(manualTimes || [], currentWeekStart, weekEnd)
-      
-      // Organize events by family member
-      parentCalendarEvents = {
-        you: [],
-        partner: []
-      }
-      
-      // Determine which user is "you" and which is "partner"
+
+      parentCalendarEvents = { you: [], partner: [] }
+
       const youId = user.id
       const partnerId = familyMembers.find(m => m.id !== youId)?.id
-      
-      // Sort calendar events
-      (events || []).forEach(event => {
+
+      ;(events || []).forEach(event => {
         const eventData = {
           title: event.title,
           startTime: new Date(event.start_time),
@@ -144,15 +136,14 @@
           color: event.parent_calendars.color,
           calendarName: event.parent_calendars.calendar_name
         }
-        
+
         if (event.parent_calendars.user_id === youId) {
           parentCalendarEvents.you.push(eventData)
         } else if (event.parent_calendars.user_id === partnerId) {
           parentCalendarEvents.partner.push(eventData)
         }
       })
-      
-      // Add recurring manual events
+
       recurringEvents.forEach(event => {
         const eventData = {
           title: event.title,
@@ -161,55 +152,48 @@
           color: '#718096',
           calendarName: 'Manual Entry'
         }
-        
+
         if (event.user_id === youId) {
           parentCalendarEvents.you.push(eventData)
         } else if (event.user_id === partnerId) {
           parentCalendarEvents.partner.push(eventData)
         }
       })
-      
     } catch (err) {
+      // silently fail — calendar events are supplementary
     }
   }
-  
+
   async function processRecurringEvents(manualTimes, weekStart, weekEnd) {
     const recurringEvents = []
-    
     for (const manual of manualTimes.filter(m => m.recurring)) {
-      // Generate instances for this week
       const instances = generateRecurringInstances(manual, weekStart, weekEnd)
       recurringEvents.push(...instances)
     }
-    
     return recurringEvents
   }
-  
+
   function generateRecurringInstances(event, weekStart, weekEnd) {
     const instances = []
     const startDate = new Date(event.start_time)
     const endDate = new Date(event.end_time)
     const duration = endDate - startDate
-    
-    // For weekly/biweekly patterns
+
     if (event.recurring_pattern === 'weekly' || event.recurring_pattern === 'biweekly') {
-      const interval = event.recurring_pattern === 'weekly' ? 7 : 14
-      
-      for (let d = new Date(weekStart); d <= weekEnd; d.setDate(d.getDate() + 1)) {
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(weekStart)
+        d.setDate(d.getDate() + i)
         const dayName = d.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase()
-        
+
         if (event.recurring_days && event.recurring_days.includes(dayName)) {
-          // Check if this instance should occur based on the pattern
           const weeksDiff = Math.floor((d - startDate) / (7 * 24 * 60 * 60 * 1000))
-          
+
           if (event.recurring_pattern === 'weekly' || weeksDiff % 2 === 0) {
-            // Check if within recurring period
             if (!event.recurring_until || d <= new Date(event.recurring_until)) {
               const instanceStart = new Date(d)
               instanceStart.setHours(startDate.getHours(), startDate.getMinutes(), 0)
-              
               const instanceEnd = new Date(instanceStart.getTime() + duration)
-              
+
               instances.push({
                 ...event,
                 start_time: instanceStart.toISOString(),
@@ -220,10 +204,10 @@
         }
       }
     }
-    
+
     return instances
   }
-  
+
   function setCurrentWeek(offset) {
     const now = new Date()
     const weekStart = new Date(now)
@@ -232,7 +216,7 @@
     currentWeekStart = weekStart
     loadShifts()
     if (profile?.role === 'family' || profile?.role === 'admin') {
-      loadParentCalendarEvents() // Load calendar events when week changes
+      loadParentCalendarEvents()
     }
   }
 
@@ -245,13 +229,8 @@
 
   function normalizeDateValue(value) {
     if (!value) return ''
-    if (value instanceof Date) {
-      return ymd(value)
-    }
-    if (typeof value === 'string') {
-      return value.length > 10 ? value.slice(0, 10) : value
-    }
-
+    if (value instanceof Date) return ymd(value)
+    if (typeof value === 'string') return value.length > 10 ? value.slice(0, 10) : value
     const parsed = new Date(value)
     return Number.isNaN(parsed.getTime()) ? '' : ymd(parsed)
   }
@@ -259,23 +238,19 @@
   function getNannyName(id) {
     const nanny = nannies.find(x => x.id === id)
     if (nanny) {
-      if (profile?.role === 'nanny' && nanny.id === profile?.id) {
-        return nanny.full_name || 'You'
-      }
+      if (profile?.role === 'nanny' && nanny.id === profile?.id) return nanny.full_name || 'You'
       return nanny.full_name
     }
-    if (profile?.role === 'nanny' && id === profile?.id) {
-      return profile.full_name || 'You'
-    }
+    if (profile?.role === 'nanny' && id === profile?.id) return profile.full_name || 'You'
     return 'Nanny'
   }
 
   async function loadShifts() {
     if (!currentWeekStart) return
-    
+
     const weekEnd = new Date(currentWeekStart)
     weekEnd.setDate(weekEnd.getDate() + 6)
-    
+
     try {
       let query = supabase
         .from('schedules')
@@ -284,28 +259,24 @@
         .lte('date', ymd(weekEnd))
         .order('date', { ascending: true })
         .order('start_time', { ascending: true })
-      
+
       if (profile?.role === 'nanny') {
         query = query.eq('nanny_id', user.id)
       }
-      
-      const { data, error } = await query
 
-      if (error) {
-        throw error
-      }
-      
+      const { data, error } = await query
+      if (error) throw error
+
       shifts = (data || []).map((shift) => ({
         ...shift,
         date: normalizeDateValue(shift.date)
       }))
-      
+
       if (profile?.role === 'family' || profile?.role === 'admin') {
         await loadWeekSummary()
       } else {
         weekSummary = null
       }
-
     } catch (err) {
       shifts = []
     }
@@ -313,21 +284,18 @@
 
   async function loadWeekSummary() {
     if (!currentWeekStart) return
-    
+
     const weekStartDate = new Date(currentWeekStart)
     weekStartDate.setHours(0, 0, 0, 0)
-    
+
     const { data, error } = await supabase
       .from('weekly_coverage_summary')
       .select('*')
       .gte('week_start', weekStartDate.toISOString())
       .lt('week_start', new Date(weekStartDate.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString())
       .maybeSingle()
-    
-    if (error) {
-    }
-    
-    weekSummary = data
+
+    if (!error) weekSummary = data
   }
 
   async function saveShift() {
@@ -335,9 +303,14 @@
       toast.error('Please select a nanny')
       return
     }
-    
+
+    if (shiftForm.startTime >= shiftForm.endTime) {
+      toast.error('End time must be after start time')
+      return
+    }
+
     try {
-      const { data: inserted, error } = await supabase
+      const { error } = await supabase
         .from('schedules')
         .insert({
           nanny_id: shiftForm.nannyId,
@@ -349,10 +322,9 @@
         })
         .select('*')
         .single()
-      
+
       if (error) throw error
-      
-      // Reset form
+
       shiftForm = {
         nannyId: nannies.length > 0 ? nannies[0].id : null,
         date: '',
@@ -360,18 +332,16 @@
         endTime: '17:00',
         notes: ''
       }
-      
+
       showAddShift = false
       await loadShifts()
-      
     } catch (err) {
       toast.error('Error: ' + err.message)
     }
   }
-  
+
   function getWeekDays() {
     if (!currentWeekStart) return []
-    
     const days = []
     for (let i = 0; i < 7; i++) {
       const day = new Date(currentWeekStart)
@@ -380,29 +350,43 @@
     }
     return days
   }
-  
+
   function getShiftsForDay(date) {
     const dateStr = ymd(date)
     return shifts.filter(s => normalizeDateValue(s.date) === dateStr)
   }
-  
+
   function formatTime(timeStr) {
     if (!timeStr) return ''
-    return timeStr.slice(0, 5)
+    const [h, m] = timeStr.slice(0, 5).split(':')
+    const hour = parseInt(h)
+    const ampm = hour >= 12 ? 'pm' : 'am'
+    const display = hour > 12 ? hour - 12 : hour === 0 ? 12 : hour
+    return `${display}:${m}${ampm}`
   }
-  
-  function openAddShift(date) {
+
+  function formatHour(hour) {
+    const ampm = hour >= 12 ? 'PM' : 'AM'
+    const display = hour > 12 ? hour - 12 : hour === 0 ? 12 : hour
+    return `${display} ${ampm}`
+  }
+
+  function openAddShift(date, hour) {
     if ((profile?.role === 'family' || profile?.role === 'admin') && (!nannies || nannies.length === 0)) {
       toast.error('No nannies found. Please create a nanny profile first.')
       return
     }
     shiftForm.date = ymd(date)
+    if (hour !== undefined) {
+      shiftForm.startTime = `${String(hour).padStart(2, '0')}:00`
+      shiftForm.endTime = `${String(Math.min(hour + 2, DAY_END_HOUR)).padStart(2, '0')}:00`
+    }
     if (!shiftForm.nannyId && nannies && nannies.length === 1) {
       shiftForm.nannyId = nannies[0].id
     }
     showAddShift = true
   }
-  
+
   function changeWeek(direction) {
     const offset = direction === 'prev' ? -1 : 1
     const newStart = new Date(currentWeekStart)
@@ -410,428 +394,300 @@
     currentWeekStart = newStart
     loadShifts()
     if (profile?.role === 'family' || profile?.role === 'admin') {
-      loadParentCalendarEvents() // Reload calendar events for new week
+      loadParentCalendarEvents()
     }
   }
-  
+
   async function deleteShift(shiftId) {
-    const confirmed = await confirmModal.show({ title: 'Delete Shift', message: 'Delete this shift?', confirmText: 'Delete', danger: true }); if (!confirmed) return
-    
+    const confirmed = await confirmModal.show({ title: 'Delete Shift', message: 'Delete this shift?', confirmText: 'Delete', danger: true })
+    if (!confirmed) return
+
     try {
       const { error } = await supabase
         .from('schedules')
         .delete()
         .eq('id', shiftId)
-      
       if (error) throw error
-      
       await loadShifts()
     } catch (err) {
       toast.error('Error deleting shift')
     }
   }
 
-  function getCoverageStats() {
-    let totalHours = 0
-    let coveredHours = 0
-    let nannyHours = 0
-    let yourHours = 0
-    let partnerHours = 0
-    
-    const days = getWeekDays()
-    
-    days.forEach(day => {
-      if (day.getDay() === 0 || day.getDay() === 6) return // Skip weekends
-      
-      for (let hour = 8; hour < 18; hour++) {
-        totalHours++
-        const responsible = getResponsibleParty(day, hour)
-        
-        if (responsible.type !== 'gap') {
-          coveredHours++
-        }
-        
-        if (responsible.type === 'nanny') nannyHours++
-        else if (responsible.type === 'you') yourHours++
-        else if (responsible.type === 'partner') partnerHours++
-      }
-    })
-    
-    return {
-      coverageRate: Math.round((coveredHours / totalHours) * 100),
-      nannyHours,
-      yourHours,
-      partnerHours,
-      gaps: findCoverageGaps().length,
-      estimatedCost: nannyHours * 20
-    }
+  // --- Time grid positioning helpers ---
+
+  function timeToMinutes(timeStr) {
+    const [h, m] = timeStr.split(':').map(Number)
+    return h * 60 + m
   }
-  
-  function getHourRange() {
-    const hours = []
-    for (let h = 7; h <= 19; h++) {
-      hours.push(h)
-    }
-    return hours
+
+  function eventTop(startTime) {
+    const minutes = startTime instanceof Date
+      ? startTime.getHours() * 60 + startTime.getMinutes()
+      : timeToMinutes(startTime)
+    return ((minutes - DAY_START_HOUR * 60) / 60) * HOUR_HEIGHT
   }
-  
-  function getResponsibleParty(day, hour) {
-    // Check if nanny is scheduled
-    const nannyShift = shifts.find(s => {
-      const shiftDate = new Date(s.date)
-      if (shiftDate.toDateString() !== day.toDateString()) return false
-      
-      const start = parseInt(s.start_time.split(':')[0])
-      const end = parseInt(s.end_time.split(':')[0])
-      return hour >= start && hour < end
-    })
-    
-    if (nannyShift) {
-      return { 
-        type: 'nanny', 
-        name: getNannyName(nannyShift.nanny_id), 
-        color: 'bg-green-100 border-green-400 text-green-900' 
-      }
-    }
-    
-    // Check real calendar data for parent availability
-    const checkTime = new Date(day)
-    checkTime.setHours(hour, 0, 0, 0)
-    const checkTimeEnd = new Date(day)
-    checkTimeEnd.setHours(hour + 1, 0, 0, 0)
-    
-    // Check if "you" are busy
-    const youBusy = parentCalendarEvents.you.some(event => {
-      return checkTime < event.endTime && checkTimeEnd > event.startTime
-    })
-    
-    // Check if partner is busy
-    const partnerBusy = parentCalendarEvents.partner.some(event => {
-      return checkTime < event.endTime && checkTimeEnd > event.startTime
-    })
-    
-    // Get partner name
-    const partnerName = familyMembers.find(m => m.id !== user.id)?.full_name || 'Partner'
-    
-    // Determine who's responsible
-    if (youBusy && partnerBusy) {
-      return { 
-        type: 'gap', 
-        name: '⚠️ GAP', 
-        color: 'bg-red-100 border-red-400 text-red-900 font-bold' 
-      }
-    } else if (youBusy) {
-      return { 
-        type: 'partner', 
-        name: partnerName, 
-        color: 'bg-purple-100 border-purple-400 text-purple-900' 
-      }
-    } else if (partnerBusy) {
-      return { 
-        type: 'you', 
-        name: 'You', 
-        color: 'bg-blue-100 border-blue-400 text-blue-900' 
-      }
+
+  function eventHeight(startTime, endTime) {
+    let startMin, endMin
+    if (startTime instanceof Date) {
+      startMin = startTime.getHours() * 60 + startTime.getMinutes()
+      endMin = endTime.getHours() * 60 + endTime.getMinutes()
     } else {
-      return { 
-        type: 'both', 
-        name: 'Both Available', 
-        color: 'bg-gray-50 border-gray-300 text-gray-600' 
-      }
+      startMin = timeToMinutes(startTime)
+      endMin = timeToMinutes(endTime)
     }
+    return Math.max(((endMin - startMin) / 60) * HOUR_HEIGHT, 20)
   }
-  
-  function findCoverageGaps() {
+
+  function getEventsForDay(day) {
+    const youEvents = parentCalendarEvents.you
+      .filter(e => e.startTime.toDateString() === day.toDateString())
+      .map(e => ({ ...e, owner: 'you' }))
+
+    const partnerEvents = parentCalendarEvents.partner
+      .filter(e => e.startTime.toDateString() === day.toDateString())
+      .map(e => ({ ...e, owner: 'partner' }))
+
+    return [...youEvents, ...partnerEvents]
+  }
+
+  function getPartnerName() {
+    return familyMembers.find(m => m.id !== user?.id)?.full_name || 'Partner'
+  }
+
+  function isToday(date) {
+    const today = new Date()
+    return date.toDateString() === today.toDateString()
+  }
+
+  function getCurrentTimePosition() {
+    const now = new Date()
+    const minutes = now.getHours() * 60 + now.getMinutes()
+    return ((minutes - DAY_START_HOUR * 60) / 60) * HOUR_HEIGHT
+  }
+
+  function getCoverageGaps() {
     const gaps = []
     const days = getWeekDays()
-    
+
     days.forEach(day => {
-      if (day.getDay() === 0 || day.getDay() === 6) return // Skip weekends
-      
+      if (day.getDay() === 0 || day.getDay() === 6) return
+      const dayShifts = getShiftsForDay(day)
+      const dayEvents = getEventsForDay(day)
+
       for (let hour = 8; hour < 18; hour++) {
-        const responsible = getResponsibleParty(day, hour)
-        if (responsible.type === 'gap') {
-          const lastGap = gaps[gaps.length - 1]
-          if (lastGap && lastGap.day.toDateString() === day.toDateString() && lastGap.endHour === hour) {
-            lastGap.endHour = hour + 1
+        const hasNanny = dayShifts.some(s => {
+          const start = parseInt(s.start_time.split(':')[0])
+          const end = parseInt(s.end_time.split(':')[0])
+          return hour >= start && hour < end
+        })
+
+        if (hasNanny) continue
+
+        const checkTime = new Date(day)
+        checkTime.setHours(hour, 0, 0, 0)
+        const checkEnd = new Date(day)
+        checkEnd.setHours(hour + 1, 0, 0, 0)
+
+        const youBusy = parentCalendarEvents.you.some(e =>
+          checkTime < e.endTime && checkEnd > e.startTime
+        )
+        const partnerBusy = parentCalendarEvents.partner.some(e =>
+          checkTime < e.endTime && checkEnd > e.startTime
+        )
+
+        if (youBusy && partnerBusy) {
+          const last = gaps[gaps.length - 1]
+          if (last && last.day.toDateString() === day.toDateString() && last.endHour === hour) {
+            last.endHour = hour + 1
           } else {
-            gaps.push({
-              day: day,
-              startHour: hour,
-              endHour: hour + 1
-            })
+            gaps.push({ day, startHour: hour, endHour: hour + 1 })
           }
         }
       }
     })
-    
+
     return gaps
   }
-  
-  async function requestCoverage(gap) {
-    if ((profile?.role === 'family' || profile?.role === 'admin') && (!nannies || nannies.length === 0)) {
-      toast.error('No nannies found. Please create a nanny profile first.')
-      return
-    }
-    
-    shiftForm.date = ymd(gap.day)
-    shiftForm.startTime = `${gap.startHour.toString().padStart(2, '0')}:00`
-    shiftForm.endTime = `${gap.endHour.toString().padStart(2, '0')}:00`
-    shiftForm.notes = 'Coverage gap - both parents unavailable'
-    
-    if (nannies && nannies.length === 1) {
-      shiftForm.nannyId = nannies[0].id
-    }
-    
-    showAddShift = true
-  }
-  
-  // Callback when calendars are updated
+
   function handleCalendarUpdate() {
     if (profile?.role === 'family' || profile?.role === 'admin') {
       loadParentCalendarEvents()
     }
   }
+
+  function goToToday() {
+    setCurrentWeek(0)
+  }
 </script>
 
 <Nav currentPage="schedule" />
 
-<div class="container">
+<div class="schedule-page">
   {#if loading}
-    <div class="loading">Loading...</div>
+    <div class="loading">
+      <div class="loading-spinner"></div>
+      <span>Loading schedule...</span>
+    </div>
   {:else}
-    <div class="card">
-      <div class="header">
-        <h2>📅 Weekly Schedule</h2>
-        <div class="header-controls">
-          {#if profile?.role === 'family' || profile?.role === 'admin'}
-            <button class="btn btn-secondary" on:click={() => showCalendarManager = true}>
-              ⚙️ Manage Calendars
-            </button>
-          {/if}
-          <div class="week-nav">
-            <button on:click={() => changeWeek('prev')}>←</button>
-            <span>
-              {currentWeekStart?.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - 
-              {new Date(currentWeekStart?.getTime() + 6 * 24 * 60 * 60 * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-            </span>
-            <button on:click={() => changeWeek('next')}>→</button>
-          </div>
-        </div>
+    <!-- Top Bar -->
+    <div class="top-bar">
+      <div class="top-left">
+        <h1>Schedule</h1>
+        <span class="week-label">
+          {currentWeekStart?.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+        </span>
       </div>
-      
-      <!-- View Toggle Buttons -->
-      <div class="view-toggle">
-        <button 
-          class="view-btn" 
-          class:active={viewMode === 'grid'}
-          on:click={() => viewMode = 'grid'}>
-          📅 Schedule Grid
-        </button>
+      <div class="top-right">
         {#if profile?.role === 'family' || profile?.role === 'admin'}
-          <button 
-            class="view-btn" 
-            class:active={viewMode === 'coverage'}
-            on:click={() => viewMode = 'coverage'}>
-            👶 Coverage View
+          <button class="top-btn" on:click={() => showCalendarManager = true}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            Calendars
           </button>
         {/if}
+        <div class="week-nav">
+          <button class="nav-btn" on:click={() => changeWeek('prev')}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+          </button>
+          <button class="today-btn" on:click={goToToday}>Today</button>
+          <button class="nav-btn" on:click={() => changeWeek('next')}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+          </button>
+        </div>
       </div>
+    </div>
 
-      <!-- Planning Insights -->
-      {#if weekSummary && (profile?.role === 'family' || profile?.role === 'admin')}
-        <button class="insights-btn" on:click={() => showInsights = !showInsights}>
-          {showInsights ? '📊 Hide' : '📊 Show'} Week Summary
-        </button>
-        
-        {#if showInsights}
-          <div class="insights-box">
-            <div class="insights-row">
-              <div class="insight-item">
-                <span class="insight-label">Scheduled:</span>
-                <span class="insight-value">{weekSummary.hours_scheduled || 0} hrs</span>
-              </div>
-              <div class="insight-item">
-                <span class="insight-label">Actually Used:</span>
-                <span class="insight-value">{weekSummary.hours_worked?.toFixed(1) || 0} hrs</span>
-              </div>
-              {#if weekSummary.unscheduled_shifts > 0}
-                <div class="insight-item">
-                  <span class="insight-label">Extra Help:</span>
-                  <span class="insight-value">{weekSummary.unscheduled_shifts} times</span>
-                </div>
-              {/if}
-            </div>
-          </div>
-        {/if}
-      {/if}
+    <!-- Coverage Gap Alert -->
+    {#if (profile?.role === 'family' || profile?.role === 'admin') && getCoverageGaps().length > 0}
+      <div class="gap-banner">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <span><strong>{getCoverageGaps().length} coverage gap{getCoverageGaps().length > 1 ? 's' : ''}</strong> this week &mdash; both parents busy with no nanny scheduled</span>
+      </div>
+    {/if}
 
-      <!-- Schedule Grid View -->
-      {#if viewMode === 'grid'}
-        <div class="calendar">
+    <!-- Time Grid Calendar -->
+    <div class="calendar-wrapper">
+      <div class="time-grid">
+        <!-- Day Headers -->
+        <div class="grid-header">
+          <div class="time-gutter-header"></div>
           {#each getWeekDays() as day}
-            <div class="day-column">
-              <div class="day-header">
-                <div class="day-name">{day.toLocaleDateString('en-US', { weekday: 'short' })}</div>
-                <div class="day-date">{day.getDate()}</div>
-              </div>
-              
-              <div class="day-content">
-                <!-- Show parent events for context -->
-                {#if parentCalendarEvents.you.length > 0 || parentCalendarEvents.partner.length > 0}
-                  {@const dayEvents = [
-                    ...parentCalendarEvents.you.filter(e => 
-                      e.startTime.toDateString() === day.toDateString()
-                    ).map(e => ({...e, owner: 'You'})),
-                    ...parentCalendarEvents.partner.filter(e => 
-                      e.startTime.toDateString() === day.toDateString()
-                    ).map(e => ({...e, owner: familyMembers.find(m => m.id !== user.id)?.full_name || 'Partner'}))
-                  ].sort((a, b) => a.startTime - b.startTime)}
-                  
-                  {#each dayEvents as event}
-                    <div class="parent-event" style="border-left: 3px solid {event.color}">
-                      <div class="event-time">
-                        {event.startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </div>
-                      <div class="event-title">{event.owner}: {event.title}</div>
-                    </div>
-                  {/each}
-                {/if}
-                
-                <!-- Nanny shifts -->
-                {#each getShiftsForDay(day) as shift}
-                  <div class="shift-block">
-                    <div class="shift-nanny">{getNannyName(shift.nanny_id)}</div>
-                    <div class="shift-time">
-                      {formatTime(shift.start_time)} - {formatTime(shift.end_time)}
-                    </div>
-                    {#if shift.notes}
-                      <div class="shift-notes">{shift.notes}</div>
-                    {/if}
-                    {#if profile?.role === 'family' || profile?.role === 'admin'}
-                      <button class="delete-btn" on:click={() => deleteShift(shift.id)}>×</button>
-                    {/if}
-                  </div>
-                {:else}
-                  <div class="no-coverage">No nanny scheduled</div>
-                {/each}
-                
-                {#if profile?.role === 'family' || profile?.role === 'admin'}
-                  <button class="add-shift-btn" on:click={() => openAddShift(day)}>
-                    + Add Nanny
-                  </button>
-                {/if}
-              </div>
+            <div class="day-col-header" class:today={isToday(day)}>
+              <span class="day-label">{day.toLocaleDateString('en-US', { weekday: 'short' })}</span>
+              <span class="day-num" class:today-num={isToday(day)}>{day.getDate()}</span>
             </div>
           {/each}
         </div>
-      {/if}
 
-      <!-- Coverage View -->
-      {#if viewMode === 'coverage' && (profile?.role === 'family' || profile?.role === 'admin')}
-        {@const stats = getCoverageStats()}
-        
-        <!-- Coverage Stats -->
-        <div class="coverage-stats">
-          <div class="stat-card">
-            <div class="stat-label">Coverage Rate</div>
-            <div class="stat-value">{stats.coverageRate}%</div>
-          </div>
-          <div class="stat-card" class:warning={stats.gaps > 0}>
-            <div class="stat-label">Coverage Gaps</div>
-            <div class="stat-value">{stats.gaps}</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-label">Nanny Hours</div>
-            <div class="stat-value">{stats.nannyHours}h</div>
-            <div class="stat-detail">${stats.estimatedCost}</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-label">Your Hours</div>
-            <div class="stat-value">{stats.yourHours}h</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-label">
-              {familyMembers.find(m => m.id !== user.id)?.full_name || 'Partner'}'s Hours
-            </div>
-            <div class="stat-value">{stats.partnerHours}h</div>
-          </div>
-        </div>
-        
-        <!-- Gap Alerts -->
-        {#if findCoverageGaps().length > 0}
-          <div class="gap-alert">
-            <h3>⚠️ Coverage Gaps Detected</h3>
-            <p class="gap-description">Both parents have conflicts at these times:</p>
-            <div class="gap-list">
-              {#each findCoverageGaps() as gap}
-                <div class="gap-item">
-                  <div>
-                    <strong>{gap.day.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</strong>
-                    <span class="gap-time">{gap.startHour}:00 - {gap.endHour}:00</span>
-                  </div>
-                  <button class="request-btn" on:click={() => requestCoverage(gap)}>
-                    Request Nanny
-                  </button>
-                </div>
-              {/each}
-            </div>
-          </div>
-        {/if}
-        
-        <!-- Coverage Grid -->
-        <div class="coverage-grid-container">
-          <h3>Hour-by-Hour Coverage</h3>
-          <div class="coverage-grid">
-            <!-- Header -->
-            <div class="grid-header">
-              <div class="time-label"></div>
-              {#each getWeekDays() as day}
-                <div class="day-header">
-                  {day.toLocaleDateString('en-US', { weekday: 'short' })}
-                  <div class="day-date">{day.getDate()}</div>
-                </div>
-              {/each}
-            </div>
-            
-            <!-- Hour rows -->
-            {#each getHourRange() as hour}
-              <div class="grid-row">
-                <div class="time-label">{hour > 12 ? hour - 12 : hour} {hour >= 12 ? 'PM' : 'AM'}</div>
-                {#each getWeekDays() as day}
-                  {@const responsible = getResponsibleParty(day, hour)}
-                  <div class="coverage-cell {responsible.color}">
-                    {responsible.name}
-                  </div>
-                {/each}
+        <!-- Scrollable Grid Body -->
+        <div class="grid-body">
+          <!-- Time Gutter -->
+          <div class="time-gutter">
+            {#each Array(TOTAL_HOURS) as _, i}
+              <div class="time-slot" style="height: {HOUR_HEIGHT}px">
+                <span class="time-text">{formatHour(DAY_START_HOUR + i)}</span>
               </div>
             {/each}
           </div>
+
+          <!-- Day Columns -->
+          {#each getWeekDays() as day, dayIdx}
+            <div
+              class="day-col"
+              class:today-col={isToday(day)}
+              on:dblclick={(e) => {
+                if (profile?.role !== 'family' && profile?.role !== 'admin') return
+                const rect = e.currentTarget.getBoundingClientRect()
+                const y = e.clientY - rect.top + e.currentTarget.parentElement.scrollTop
+                const hour = Math.floor(y / HOUR_HEIGHT) + DAY_START_HOUR
+                openAddShift(day, hour)
+              }}
+            >
+              <!-- Hour grid lines -->
+              {#each Array(TOTAL_HOURS) as _, i}
+                <div class="hour-line" style="top: {i * HOUR_HEIGHT}px"></div>
+              {/each}
+
+              <!-- Current time indicator -->
+              {#if isToday(day)}
+                <div class="now-line" style="top: {getCurrentTimePosition()}px">
+                  <div class="now-dot"></div>
+                </div>
+              {/if}
+
+              <!-- Parent calendar events (semi-transparent background) -->
+              {#each getEventsForDay(day) as event}
+                <div
+                  class="cal-event"
+                  class:cal-event-you={event.owner === 'you'}
+                  class:cal-event-partner={event.owner === 'partner'}
+                  style="
+                    top: {Math.max(eventTop(event.startTime), 0)}px;
+                    height: {eventHeight(event.startTime, event.endTime)}px;
+                    border-left-color: {event.color};
+                  "
+                  title="{event.owner === 'you' ? 'You' : getPartnerName()}: {event.title}"
+                >
+                  <span class="cal-event-owner">{event.owner === 'you' ? 'You' : getPartnerName()}</span>
+                  <span class="cal-event-title">{event.title}</span>
+                </div>
+              {/each}
+
+              <!-- Nanny shifts (solid green blocks) -->
+              {#each getShiftsForDay(day) as shift}
+                <div
+                  class="shift-block"
+                  style="
+                    top: {eventTop(shift.start_time)}px;
+                    height: {eventHeight(shift.start_time, shift.end_time)}px;
+                  "
+                >
+                  <div class="shift-content">
+                    <span class="shift-name">{getNannyName(shift.nanny_id)}</span>
+                    <span class="shift-time">{formatTime(shift.start_time)} - {formatTime(shift.end_time)}</span>
+                    {#if shift.notes}
+                      <span class="shift-note">{shift.notes}</span>
+                    {/if}
+                  </div>
+                  {#if profile?.role === 'family' || profile?.role === 'admin'}
+                    <button class="shift-delete" on:click|stopPropagation={() => deleteShift(shift.id)} title="Remove shift">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                  {/if}
+                </div>
+              {/each}
+
+              <!-- "Add" click hint on hover (family only) -->
+              {#if profile?.role === 'family' || profile?.role === 'admin'}
+                <button class="add-hint" on:click={() => openAddShift(day)}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                </button>
+              {/if}
+            </div>
+          {/each}
         </div>
-        
-        <!-- Legend -->
-        <div class="coverage-legend">
-          <div class="legend-item">
-            <div class="legend-color bg-green-100 border-green-400"></div>
-            <span>Nanny Coverage</span>
-          </div>
-          <div class="legend-item">
-            <div class="legend-color bg-blue-100 border-blue-400"></div>
-            <span>You're on duty</span>
-          </div>
-          <div class="legend-item">
-            <div class="legend-color bg-purple-100 border-purple-400"></div>
-            <span>{familyMembers.find(m => m.id !== user.id)?.full_name || 'Partner'}'s on duty</span>
-          </div>
-          <div class="legend-item">
-            <div class="legend-color bg-gray-50 border-gray-300"></div>
-            <span>Both available</span>
-          </div>
-          <div class="legend-item">
-            <div class="legend-color bg-red-100 border-red-400"></div>
-            <span><strong>Coverage Gap!</strong></span>
-          </div>
+      </div>
+    </div>
+
+    <!-- Legend -->
+    <div class="legend">
+      <div class="legend-item">
+        <span class="legend-swatch shift-swatch"></span>
+        <span>Nanny shift</span>
+      </div>
+      <div class="legend-item">
+        <span class="legend-swatch you-swatch"></span>
+        <span>Your busy time</span>
+      </div>
+      {#if familyMembers.length > 1}
+        <div class="legend-item">
+          <span class="legend-swatch partner-swatch"></span>
+          <span>{getPartnerName()}'s busy time</span>
         </div>
+      {/if}
+      {#if profile?.role === 'family' || profile?.role === 'admin'}
+        <span class="legend-hint">Double-click a time slot to add a shift</span>
       {/if}
     </div>
   {/if}
@@ -840,26 +696,26 @@
 <!-- Calendar Manager Modal -->
 {#if showCalendarManager}
   <div class="modal-overlay" on:click={() => showCalendarManager = false}>
-    <div class="modal-content large" on:click|stopPropagation>
-      <div class="modal-header">
-        <h2>Manage Your Calendars</h2>
-        <button class="close-btn" on:click={() => showCalendarManager = false}>×</button>
+    <div class="modal-panel" on:click|stopPropagation>
+      <div class="modal-top">
+        <h2>Manage Calendars</h2>
+        <button class="modal-close" on:click={() => showCalendarManager = false}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
       </div>
-      
-      <!-- Show calendar manager for current user -->
-      <CalendarManager 
-        userId={user.id} 
+
+      <CalendarManager
+        userId={user.id}
         onUpdate={handleCalendarUpdate}
       />
-      
-      <!-- If there's a partner, show their section too -->
+
       {#if familyMembers.length > 1}
         {@const partner = familyMembers.find(m => m.id !== user.id)}
         {#if partner}
           <div class="partner-section">
             <h3>{partner.full_name}'s Calendars</h3>
-            <CalendarManager 
-              userId={partner.id} 
+            <CalendarManager
+              userId={partner.id}
               onUpdate={handleCalendarUpdate}
             />
           </div>
@@ -872,11 +728,16 @@
 <!-- Add Shift Modal -->
 {#if showAddShift}
   <div class="modal-overlay" on:click={() => showAddShift = false}>
-    <div class="modal-content" on:click|stopPropagation>
-      <h3>Add Shift</h3>
-      
+    <div class="modal-panel compact" on:click|stopPropagation>
+      <div class="modal-top">
+        <h2>Add Nanny Shift</h2>
+        <button class="modal-close" on:click={() => showAddShift = false}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+
       <form on:submit|preventDefault={saveShift}>
-        <div class="form-group">
+        <div class="form-field">
           <label>Nanny</label>
           <select bind:value={shiftForm.nannyId} required>
             <option value={null} disabled>Select a nanny</option>
@@ -885,31 +746,31 @@
             {/each}
           </select>
         </div>
-        
-        <div class="form-group">
+
+        <div class="form-field">
           <label>Date</label>
           <input type="date" bind:value={shiftForm.date} required />
         </div>
-        
-        <div class="form-row">
-          <div class="form-group">
+
+        <div class="form-row-2">
+          <div class="form-field">
             <label>Start</label>
             <input type="time" bind:value={shiftForm.startTime} required />
           </div>
-          <div class="form-group">
+          <div class="form-field">
             <label>End</label>
             <input type="time" bind:value={shiftForm.endTime} required />
           </div>
         </div>
-        
-        <div class="form-group">
-          <label>Notes</label>
-          <input type="text" bind:value={shiftForm.notes} placeholder="Optional" />
+
+        <div class="form-field">
+          <label>Notes <span class="optional">(optional)</span></label>
+          <input type="text" bind:value={shiftForm.notes} placeholder="e.g., Park day, early pickup" />
         </div>
-        
-        <div class="button-row">
-          <button type="submit" class="btn btn-primary">Save</button>
-          <button type="button" class="btn btn-secondary" on:click={() => showAddShift = false}>Cancel</button>
+
+        <div class="form-actions">
+          <button type="submit" class="btn-save">Save Shift</button>
+          <button type="button" class="btn-cancel" on:click={() => showAddShift = false}>Cancel</button>
         </div>
       </form>
     </div>
@@ -917,683 +778,710 @@
 {/if}
 
 <style>
-  .container {
+  /* === Page Layout === */
+  .schedule-page {
     min-height: 100vh;
-    background: #f7fafc;
-    padding: 40px 20px;
-    max-width: 1400px;
-    margin: 0 auto;
+    background: #f8fafc;
+    padding: 0;
   }
-  
-  .card {
-    background: white;
-    border-radius: 15px;
-    padding: 30px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+
+  .loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 80px 20px;
+    color: #718096;
   }
-  
-  .header {
+
+  .loading-spinner {
+    width: 24px;
+    height: 24px;
+    border: 2.5px solid #e2e8f0;
+    border-top-color: #667eea;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  /* === Top Bar === */
+  .top-bar {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 30px;
-    flex-wrap: wrap;
-    gap: 15px;
-  }
-  
-  h2 {
-    margin: 0;
-    color: #2d3748;
-  }
-  
-  .header-controls {
-    display: flex;
-    align-items: center;
-    gap: 15px;
-  }
-  
-  .week-nav {
-    display: flex;
-    gap: 15px;
-    align-items: center;
-  }
-  
-  .week-nav button {
-    padding: 8px 16px;
+    padding: 16px 24px;
     background: white;
-    border: 2px solid #e2e8f0;
-    border-radius: 6px;
-    cursor: pointer;
-    font-weight: 600;
-    transition: all 0.2s;
-  }
-  
-  .week-nav button:hover {
-    background: #f7fafc;
-    border-color: #cbd5e0;
+    border-bottom: 1px solid #e2e8f0;
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    flex-wrap: wrap;
+    gap: 12px;
   }
 
-  /* View Toggle */
-  .view-toggle {
+  .top-left h1 {
+    margin: 0;
+    font-size: 1.3em;
+    font-weight: 700;
+    color: #1a202c;
+  }
+
+  .week-label {
+    font-size: 0.85em;
+    color: #a0aec0;
+    font-weight: 500;
+  }
+
+  .top-right {
     display: flex;
+    align-items: center;
     gap: 10px;
-    margin-bottom: 20px;
   }
-  
-  .view-btn {
-    padding: 10px 20px;
-    background: white;
-    border: 2px solid #e2e8f0;
+
+  .top-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    background: #f1f5f9;
+    border: none;
     border-radius: 8px;
+    font-size: 0.85em;
+    font-weight: 600;
+    color: #4a5568;
     cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .top-btn:hover {
+    background: #e2e8f0;
+  }
+
+  .week-nav {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    background: #f1f5f9;
+    border-radius: 8px;
+    padding: 2px;
+  }
+
+  .nav-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    color: #4a5568;
+    transition: all 0.15s;
+  }
+
+  .nav-btn:hover {
+    background: #e2e8f0;
+  }
+
+  .today-btn {
+    padding: 6px 14px;
+    background: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.85em;
     font-weight: 600;
-    transition: all 0.2s;
+    color: #4a5568;
+    cursor: pointer;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+    transition: all 0.15s;
   }
-  
-  .view-btn.active {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    border-color: #667eea;
+
+  .today-btn:hover {
+    background: #f8fafc;
   }
-  
-  .view-btn:hover:not(.active) {
-    background: #f7fafc;
-  }
-  
-  /* Calendar Grid */
-  .calendar {
-    display: grid;
-    grid-template-columns: repeat(7, 1fr);
-    gap: 15px;
-  }
-  
-  @media (max-width: 1024px) {
-    .calendar {
-      grid-template-columns: repeat(4, 1fr);
-    }
-  }
-  
-  @media (max-width: 768px) {
-    .calendar {
-      grid-template-columns: repeat(2, 1fr);
-    }
-  }
-  
-  @media (max-width: 480px) {
-    .calendar {
-      grid-template-columns: 1fr;
-    }
-  }
-  
-  .day-column {
-    border: 2px solid #e2e8f0;
-    border-radius: 10px;
-    overflow: hidden;
-    min-height: 250px;
-  }
-  
-  .day-header {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    padding: 15px;
-    text-align: center;
-  }
-  
-  .day-name {
-    font-weight: 600;
+
+  /* === Gap Banner === */
+  .gap-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 24px;
+    background: #fef2f2;
+    border-bottom: 1px solid #fecaca;
+    color: #991b1b;
     font-size: 0.9em;
+  }
+
+  /* === Calendar Grid === */
+  .calendar-wrapper {
+    flex: 1;
+    overflow: hidden;
+  }
+
+  .time-grid {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 130px);
+  }
+
+  /* Day Headers */
+  .grid-header {
+    display: grid;
+    grid-template-columns: 60px repeat(7, 1fr);
+    border-bottom: 1px solid #e2e8f0;
+    background: white;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+
+  .time-gutter-header {
+    border-right: 1px solid #e2e8f0;
+  }
+
+  .day-col-header {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 10px 4px;
+    border-right: 1px solid #f1f5f9;
+  }
+
+  .day-col-header.today {
+    background: #f0f4ff;
+  }
+
+  .day-label {
+    font-size: 0.75em;
+    font-weight: 600;
+    color: #94a3b8;
     text-transform: uppercase;
     letter-spacing: 0.5px;
   }
-  
-  .day-date {
-    font-size: 1.5em;
-    font-weight: bold;
-    margin-top: 5px;
-  }
-  
-  .day-content {
-    padding: 15px;
-    min-height: 150px;
-  }
-  
-  /* Parent Events */
-  .parent-event {
-    background: #f7fafc;
-    border-radius: 6px;
-    padding: 8px;
-    margin-bottom: 8px;
-    font-size: 0.85em;
-  }
-  
-  .event-time {
-    font-weight: 600;
-    color: #4a5568;
-  }
-  
-  .event-title {
-    color: #718096;
+
+  .day-num {
+    font-size: 1.3em;
+    font-weight: 700;
+    color: #334155;
     margin-top: 2px;
-    font-size: 0.9em;
-  }
-  
-  /* Nanny Shifts */
-  .shift-block {
-    background: #c6f6d5;
-    border: 1px solid #48bb78;
-    border-radius: 8px;
-    padding: 10px;
-    margin-bottom: 10px;
-    position: relative;
-    animation: slideIn 0.3s ease;
-  }
-  
-  @keyframes slideIn {
-    from {
-      opacity: 0;
-      transform: translateY(-10px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-  
-  .shift-nanny {
-    font-weight: 600;
-    color: #22543d;
-    margin-bottom: 5px;
-  }
-  
-  .shift-time {
-    font-size: 0.9em;
-    color: #2d3748;
-  }
-  
-  .shift-notes {
-    font-size: 0.85em;
-    color: #718096;
-    margin-top: 5px;
-    font-style: italic;
-  }
-  
-  .delete-btn {
-    position: absolute;
-    top: 5px;
-    right: 5px;
-    width: 20px;
-    height: 20px;
-    border: none;
-    background: rgba(239, 68, 68, 0.8);
-    color: white;
-    border-radius: 50%;
-    cursor: pointer;
-    font-size: 16px;
-    line-height: 1;
+    width: 36px;
+    height: 36px;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.2s;
+    border-radius: 50%;
   }
-  
-  .delete-btn:hover {
-    background: rgba(239, 68, 68, 1);
-    transform: scale(1.1);
-  }
-  
-  .no-coverage {
-    color: #a0aec0;
-    font-style: italic;
-    text-align: center;
-    padding: 20px 0;
-  }
-  
-  .add-shift-btn {
-    width: 100%;
-    padding: 8px;
+
+  .day-num.today-num {
     background: #667eea;
     color: white;
-    border: none;
-    border-radius: 6px;
-    cursor: pointer;
-    font-weight: 600;
-    margin-top: 10px;
-    transition: all 0.2s;
-  }
-  
-  .add-shift-btn:hover {
-    background: #5568d3;
-    transform: translateY(-1px);
   }
 
-  /* Coverage View Styles */
-  .coverage-stats {
+  /* Grid Body */
+  .grid-body {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 15px;
-    margin-bottom: 20px;
+    grid-template-columns: 60px repeat(7, 1fr);
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    position: relative;
   }
 
-  .stat-card {
-    background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
-    border: 2px solid #0284c7;
-    border-radius: 12px;
-    padding: 20px;
-    text-align: center;
+  /* Time Gutter */
+  .time-gutter {
+    border-right: 1px solid #e2e8f0;
+    background: white;
+    position: sticky;
+    left: 0;
+    z-index: 5;
   }
 
-  .stat-card.warning {
-    background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
-    border-color: #dc2626;
+  .time-slot {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-end;
+    padding-right: 8px;
   }
 
-  .stat-label {
-    font-size: 0.85em;
-    color: #64748b;
-    margin-bottom: 8px;
+  .time-text {
+    font-size: 0.7em;
+    font-weight: 500;
+    color: #94a3b8;
+    transform: translateY(-7px);
   }
 
-  .stat-value {
-    font-size: 2em;
-    font-weight: bold;
-    color: #1e293b;
+  /* Day Columns */
+  .day-col {
+    position: relative;
+    border-right: 1px solid #f1f5f9;
+    height: calc(var(--total-hours) * var(--hour-height));
+    min-height: calc(13 * 60px);
+    cursor: default;
   }
 
-  .stat-detail {
-    font-size: 0.85em;
-    color: #64748b;
-    margin-top: 5px;
+  .day-col.today-col {
+    background: #fafbff;
   }
 
-  .gap-alert {
-    background: #fef2f2;
-    border: 2px solid #dc2626;
-    border-radius: 12px;
-    padding: 20px;
-    margin-bottom: 20px;
+  .hour-line {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: #f1f5f9;
   }
 
-  .gap-alert h3 {
-    color: #991b1b;
-    margin: 0 0 10px 0;
-  }
-  
-  .gap-description {
-    color: #7f1d1d;
-    margin: 0 0 15px 0;
+  /* Current Time Line */
+  .now-line {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: #ef4444;
+    z-index: 8;
+    pointer-events: none;
   }
 
-  .gap-list {
+  .now-dot {
+    position: absolute;
+    left: -4px;
+    top: -4px;
+    width: 10px;
+    height: 10px;
+    background: #ef4444;
+    border-radius: 50%;
+  }
+
+  /* Calendar Events */
+  .cal-event {
+    position: absolute;
+    left: 2px;
+    right: 50%;
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 0.7em;
+    overflow: hidden;
+    z-index: 2;
+    border-left: 3px solid #667eea;
+    cursor: default;
+  }
+
+  .cal-event-you {
+    background: rgba(102, 126, 234, 0.1);
+    right: 50%;
+    left: 2px;
+  }
+
+  .cal-event-partner {
+    background: rgba(159, 122, 234, 0.1);
+    left: 50%;
+    right: 2px;
+  }
+
+  .cal-event-owner {
+    font-weight: 600;
+    color: #4a5568;
+    display: block;
+    line-height: 1.3;
+  }
+
+  .cal-event-title {
+    color: #718096;
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Nanny Shift Blocks */
+  .shift-block {
+    position: absolute;
+    left: 3px;
+    right: 3px;
+    background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
+    border: 1.5px solid #34d399;
+    border-radius: 6px;
+    padding: 6px 8px;
+    z-index: 4;
+    cursor: default;
+    overflow: hidden;
+    transition: box-shadow 0.15s;
+  }
+
+  .shift-block:hover {
+    box-shadow: 0 2px 8px rgba(52, 211, 153, 0.3);
+  }
+
+  .shift-content {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 1px;
   }
 
-  .gap-item {
-    background: white;
-    padding: 12px;
-    border-radius: 8px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+  .shift-name {
+    font-weight: 700;
+    font-size: 0.8em;
+    color: #065f46;
   }
 
-  .gap-time {
-    font-weight: 600;
-    color: #dc2626;
-    margin-left: 10px;
+  .shift-time {
+    font-size: 0.7em;
+    color: #047857;
+    font-weight: 500;
   }
 
-  .request-btn {
-    background: #dc2626;
-    color: white;
+  .shift-note {
+    font-size: 0.65em;
+    color: #059669;
+    font-style: italic;
+    margin-top: 2px;
+  }
+
+  .shift-delete {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 22px;
+    height: 22px;
+    background: rgba(255,255,255,0.8);
     border: none;
-    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    color: #ef4444;
+    transition: all 0.15s;
+  }
+
+  .shift-block:hover .shift-delete {
+    display: flex;
+  }
+
+  .shift-delete:hover {
+    background: #fee2e2;
+  }
+
+  /* Add Hint */
+  .add-hint {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    width: 28px;
+    height: 28px;
+    background: white;
+    border: 1.5px solid #e2e8f0;
     border-radius: 6px;
     cursor: pointer;
-    font-size: 0.9em;
-    font-weight: 600;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    color: #667eea;
+    z-index: 6;
+    transition: all 0.15s;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
   }
 
-  .request-btn:hover {
-    background: #b91c1c;
+  .day-col:hover .add-hint {
+    display: flex;
   }
 
-  .coverage-grid-container {
-    background: #f8fafc;
-    border-radius: 12px;
-    padding: 20px;
-    margin-bottom: 20px;
-    overflow-x: auto;
+  .add-hint:hover {
+    background: #667eea;
+    color: white;
+    border-color: #667eea;
   }
 
-  .coverage-grid-container h3 {
-    margin: 0 0 15px 0;
-    color: #2d3748;
-  }
-
-  .coverage-grid {
-    min-width: 800px;
-  }
-
-  .grid-header {
-    display: grid;
-    grid-template-columns: 80px repeat(7, 1fr);
-    gap: 2px;
-    margin-bottom: 4px;
-  }
-
-  .grid-row {
-    display: grid;
-    grid-template-columns: 80px repeat(7, 1fr);
-    gap: 2px;
-    margin-bottom: 2px;
-  }
-
-  .time-label {
-    padding: 8px;
-    font-size: 0.85em;
-    color: #64748b;
-    text-align: right;
-    font-weight: 600;
-  }
-
-  .day-header {
+  /* === Legend === */
+  .legend {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 10px 24px;
     background: white;
-    padding: 12px;
-    text-align: center;
-    border-radius: 8px;
-    font-weight: 600;
-    color: #2d3748;
-  }
-
-  .day-date {
+    border-top: 1px solid #e2e8f0;
     font-size: 0.8em;
     color: #64748b;
-    font-weight: normal;
-  }
-
-  .coverage-cell {
-    padding: 8px;
-    text-align: center;
-    border-radius: 4px;
-    font-size: 0.85em;
-    font-weight: 500;
-    border: 1px solid;
-  }
-
-  /* Cell color classes */
-  .bg-green-100 {
-    background: #dcfce7;
-    border-color: #86efac !important;
-    color: #14532d;
-  }
-
-  .bg-blue-100 {
-    background: #dbeafe;
-    border-color: #93c5fd !important;
-    color: #1e3a8a;
-  }
-
-  .bg-purple-100 {
-    background: #f3e8ff;
-    border-color: #d8b4fe !important;
-    color: #581c87;
-  }
-
-  .bg-gray-50 {
-    background: #f9fafb;
-    border-color: #e5e7eb !important;
-    color: #6b7280;
-  }
-
-  .bg-red-100 {
-    background: #fee2e2;
-    border-color: #fca5a5 !important;
-    color: #991b1b;
-    font-weight: 700;
-  }
-
-  .coverage-legend {
-    display: flex;
-    gap: 20px;
-    justify-content: center;
     flex-wrap: wrap;
-    padding: 20px;
-    background: white;
-    border-radius: 12px;
-    border: 2px solid #e5e7eb;
   }
 
   .legend-item {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
   }
 
-  .legend-color {
-    width: 24px;
-    height: 24px;
-    border-radius: 4px;
-    border: 2px solid;
+  .legend-swatch {
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
   }
 
-  /* Button Styles */
-  .btn {
-    padding: 10px 20px;
-    border: none;
-    border-radius: 8px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-  
-  .btn-primary {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-  }
-  
-  .btn-primary:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
-  }
-  
-  .btn-secondary {
-    background: #718096;
-    color: white;
-  }
-  
-  .btn-secondary:hover {
-    background: #5a677d;
+  .shift-swatch {
+    background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
+    border: 1px solid #34d399;
   }
 
-  /* Modal */
-  .loading {
-    text-align: center;
-    padding: 60px;
-    color: #718096;
-    font-size: 1.1em;
+  .you-swatch {
+    background: rgba(102, 126, 234, 0.15);
+    border: 1px solid rgba(102, 126, 234, 0.4);
   }
-  
+
+  .partner-swatch {
+    background: rgba(159, 122, 234, 0.15);
+    border: 1px solid rgba(159, 122, 234, 0.4);
+  }
+
+  .legend-hint {
+    margin-left: auto;
+    color: #a0aec0;
+    font-style: italic;
+  }
+
+  /* === Modals === */
   .modal-overlay {
     position: fixed;
     top: 0;
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(0,0,0,0.5);
+    background: rgba(0,0,0,0.4);
+    backdrop-filter: blur(4px);
     display: flex;
     align-items: center;
     justify-content: center;
     z-index: 1000;
     animation: fadeIn 0.2s ease;
   }
-  
+
   @keyframes fadeIn {
     from { opacity: 0; }
     to { opacity: 1; }
   }
-  
-  .modal-content {
+
+  .modal-panel {
     background: white;
-    padding: 30px;
-    border-radius: 15px;
-    max-width: 500px;
-    width: 90%;
-    max-height: 90vh;
+    border-radius: 16px;
+    padding: 24px;
+    max-width: 800px;
+    width: 92%;
+    max-height: 85vh;
     overflow-y: auto;
-    animation: slideUp 0.3s ease;
+    animation: modalIn 0.25s ease;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.15);
   }
-  
-  .modal-content.large {
-    max-width: 900px;
+
+  .modal-panel.compact {
+    max-width: 440px;
   }
-  
-  .modal-header {
+
+  @keyframes modalIn {
+    from { opacity: 0; transform: scale(0.96) translateY(10px); }
+    to { opacity: 1; transform: scale(1) translateY(0); }
+  }
+
+  .modal-top {
     display: flex;
     justify-content: space-between;
     align-items: center;
     margin-bottom: 20px;
   }
-  
-  .modal-header h2 {
+
+  .modal-top h2 {
     margin: 0;
+    font-size: 1.15em;
+    font-weight: 700;
+    color: #1a202c;
   }
-  
-  .close-btn {
-    background: none;
+
+  .modal-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    background: #f1f5f9;
     border: none;
-    font-size: 24px;
+    border-radius: 8px;
     cursor: pointer;
-    color: #718096;
-    padding: 0;
-    width: 30px;
-    height: 30px;
+    color: #64748b;
+    transition: all 0.15s;
   }
-  
-  .close-btn:hover {
-    color: #2d3748;
+
+  .modal-close:hover {
+    background: #e2e8f0;
+    color: #1a202c;
   }
-  
+
   .partner-section {
-    margin-top: 30px;
-    padding-top: 30px;
-    border-top: 2px solid #e2e8f0;
+    margin-top: 24px;
+    padding-top: 24px;
+    border-top: 1px solid #e2e8f0;
   }
-  
+
   .partner-section h3 {
-    margin: 0 0 20px 0;
-    color: #4a5568;
-  }
-  
-  @keyframes slideUp {
-    from {
-      opacity: 0;
-      transform: translateY(20px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-  
-  .modal-content h3 {
-    margin-top: 0;
-    margin-bottom: 20px;
-    color: #2d3748;
-  }
-  
-  .form-group {
-    margin-bottom: 15px;
-  }
-  
-  .form-group label {
-    display: block;
-    margin-bottom: 5px;
+    margin: 0 0 16px 0;
+    font-size: 1em;
     font-weight: 600;
     color: #4a5568;
   }
-  
-  .form-group input,
-  .form-group select {
-    width: 100%;
-    padding: 10px;
-    border: 1px solid #e2e8f0;
-    border-radius: 6px;
-    font-size: 1em;
+
+  /* Modal Form Fields */
+  .form-field {
+    margin-bottom: 14px;
   }
-  
-  .form-group input:focus,
-  .form-group select:focus {
+
+  .form-field label {
+    display: block;
+    font-size: 0.85em;
+    font-weight: 600;
+    color: #4a5568;
+    margin-bottom: 5px;
+  }
+
+  .form-field .optional {
+    font-weight: 400;
+    color: #a0aec0;
+  }
+
+  .form-field input,
+  .form-field select {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1.5px solid #e2e8f0;
+    border-radius: 8px;
+    font-size: 0.95em;
+    color: #1a202c;
+    background: white;
+    transition: border-color 0.15s;
+  }
+
+  .form-field input:focus,
+  .form-field select:focus {
     outline: none;
     border-color: #667eea;
     box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
   }
-  
-  .form-row {
+
+  .form-field input::placeholder {
+    color: #cbd5e0;
+  }
+
+  .form-row-2 {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 15px;
+    gap: 12px;
   }
-  
-  .button-row {
+
+  .form-actions {
     display: flex;
     gap: 10px;
     margin-top: 20px;
   }
-  
-  .button-row .btn {
+
+  .btn-save {
     flex: 1;
-  }
-
-  /* Insights */
-  .insights-btn {
-    margin-bottom: 15px;
-    padding: 10px 20px;
-    background: white;
-    color: #667eea;
-    border: 2px solid #667eea;
-    border-radius: 8px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .insights-btn:hover {
+    padding: 11px 20px;
     background: #667eea;
     color: white;
-  }
-
-  .insights-box {
-    background: #f8fafc;
+    border: none;
     border-radius: 10px;
-    padding: 20px;
-    margin-bottom: 20px;
-    border: 1px solid #e2e8f0;
+    font-size: 0.95em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
   }
 
-  .insights-row {
-    display: flex;
-    gap: 30px;
-    flex-wrap: wrap;
+  .btn-save:hover {
+    background: #5a6fd6;
   }
 
-  .insight-item {
-    display: flex;
-    flex-direction: column;
+  .btn-cancel {
+    padding: 11px 20px;
+    background: transparent;
+    color: #64748b;
+    border: none;
+    border-radius: 10px;
+    font-size: 0.95em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
   }
 
-  .insight-label {
-    font-size: 0.85em;
-    color: #718096;
-    margin-bottom: 4px;
+  .btn-cancel:hover {
+    background: #f1f5f9;
   }
 
-  .insight-value {
-    font-size: 1.3em;
-    font-weight: bold;
-    color: #2d3748;
+  /* === Responsive === */
+  @media (max-width: 768px) {
+    .top-bar {
+      padding: 12px 16px;
+    }
+
+    .top-left h1 {
+      font-size: 1.1em;
+    }
+
+    .grid-header {
+      grid-template-columns: 44px repeat(7, 1fr);
+    }
+
+    .grid-body {
+      grid-template-columns: 44px repeat(7, 1fr);
+    }
+
+    .time-text {
+      font-size: 0.6em;
+    }
+
+    .day-label {
+      font-size: 0.65em;
+    }
+
+    .day-num {
+      font-size: 1em;
+      width: 28px;
+      height: 28px;
+    }
+
+    .cal-event {
+      font-size: 0.6em;
+      padding: 1px 3px;
+    }
+
+    .cal-event-owner {
+      display: none;
+    }
+
+    .shift-name {
+      font-size: 0.7em;
+    }
+
+    .shift-time {
+      font-size: 0.6em;
+    }
+
+    .shift-note {
+      display: none;
+    }
+
+    .legend {
+      padding: 8px 16px;
+      font-size: 0.75em;
+    }
+
+    .legend-hint {
+      display: none;
+    }
+
+    .gap-banner {
+      padding: 8px 16px;
+      font-size: 0.8em;
+    }
   }
 </style>
-
-

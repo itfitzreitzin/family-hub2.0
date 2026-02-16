@@ -1,26 +1,25 @@
-<!-- This file goes in: src/lib/components/CalendarManager.svelte -->
-
 <script>
   import { onMount } from 'svelte'
   import { supabase } from '$lib/supabase'
   import { toast, confirm as confirmModal } from '$lib/stores/toast.js'
-  
+
   export let userId
   export let onUpdate = () => {}
-  
+
   let calendars = []
   let showAddCalendar = false
   let showManualEntry = false
   let loading = false
-  
+  let syncingId = null
+
   let calendarForm = {
     calendar_name: '',
-    calendar_type: 'google',
+    calendar_type: 'ical',
     calendar_url: '',
     calendar_id: '',
     color: '#667eea'
   }
-  
+
   let manualForm = {
     title: '',
     date: '',
@@ -31,20 +30,20 @@
     recurringDays: [],
     recurringUntil: ''
   }
-  
+
   const calendarColors = [
-    '#667eea', '#f56565', '#48bb78', '#ed8936', 
+    '#667eea', '#f56565', '#48bb78', '#ed8936',
     '#9f7aea', '#38b2ac', '#fc8181', '#4299e1'
   ]
-  
+
   const weekDays = [
     'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'
   ]
-  
+
   onMount(() => {
     loadCalendars()
   })
-  
+
   async function loadCalendars() {
     loading = true
     try {
@@ -53,7 +52,7 @@
         .select('*')
         .eq('user_id', userId)
         .order('created_at')
-      
+
       if (error) throw error
       calendars = data || []
     } catch (err) {
@@ -61,109 +60,143 @@
     }
     loading = false
   }
-  
+
   async function addCalendar() {
+    if (!calendarForm.calendar_name.trim()) {
+      toast.error('Please enter a calendar name')
+      return
+    }
+
+    if (calendarForm.calendar_type === 'ical' && !calendarForm.calendar_url.trim()) {
+      toast.error('Please provide an iCal feed URL')
+      return
+    }
+
     try {
-      // For Google Calendar integration
-      if (calendarForm.calendar_type === 'google') {
-        // This would trigger OAuth flow in production
-        await connectGoogleCalendar()
-        return
-      }
-      
-      // For iCal URL feeds
-      if (calendarForm.calendar_type === 'ical') {
-        if (!calendarForm.calendar_url) {
-          toast.error('Please provide an iCal feed URL')
-          return
-        }
-      }
-      
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('parent_calendars')
         .insert({
           user_id: userId,
-          ...calendarForm
+          calendar_name: calendarForm.calendar_name,
+          calendar_type: calendarForm.calendar_type,
+          calendar_url: calendarForm.calendar_url || null,
+          calendar_id: calendarForm.calendar_id || null,
+          color: calendarForm.color,
+          sync_enabled: true
         })
-      
+        .select()
+        .single()
+
       if (error) throw error
-      
+
       showAddCalendar = false
       resetCalendarForm()
       await loadCalendars()
+
+      // Auto-sync if it has a URL
+      if (data && data.calendar_url) {
+        await syncCalendar(data.id)
+      }
+
       onUpdate()
-      
     } catch (err) {
-      toast.error('Failed to add calendar')
+      toast.error('Failed to add calendar: ' + err.message)
     }
   }
-  
-  async function connectGoogleCalendar() {
-    // In production, this would initiate OAuth flow
-    toast.info('Google Calendar integration coming soon. For now, use a manual calendar ID or iCal feed URL from your calendar settings.', 8000)
-    
-    calendarForm.calendar_type = 'manual'
-  }
-  
+
   async function toggleCalendar(calendarId, enabled) {
     try {
       const { error } = await supabase
         .from('parent_calendars')
         .update({ sync_enabled: enabled })
         .eq('id', calendarId)
-      
+
       if (error) throw error
-      
+
       await loadCalendars()
       onUpdate()
     } catch (err) {
       toast.error('Failed to toggle calendar')
     }
   }
-  
+
   async function deleteCalendar(calendarId) {
     const confirmed = await confirmModal.show({ title: 'Delete Calendar', message: 'Delete this calendar? All associated events will be removed.', confirmText: 'Delete', danger: true })
     if (!confirmed) return
-    
+
     try {
       const { error } = await supabase
         .from('parent_calendars')
         .delete()
         .eq('id', calendarId)
-      
+
       if (error) throw error
-      
+
       await loadCalendars()
       onUpdate()
     } catch (err) {
       toast.error('Failed to delete calendar')
     }
   }
-  
+
   async function syncCalendar(calendarId) {
-    // This would trigger a sync with the calendar source
-    toast.info('Sync functionality would fetch latest events from the calendar source')
-    
+    syncingId = calendarId
+
     try {
-      const { error } = await supabase
-        .from('parent_calendars')
-        .update({ last_synced: new Date().toISOString() })
-        .eq('id', calendarId)
-      
-      if (error) throw error
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        toast.error('Not authenticated')
+        return
+      }
+
+      const response = await fetch('/api/calendar/sync', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({ calendarId })
+      })
+
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Sync failed')
+      }
+
+      toast.success(`Synced ${result.synced} events`)
       await loadCalendars()
+      onUpdate()
     } catch (err) {
-      toast.error('Failed to sync calendar')
+      toast.error('Sync failed: ' + err.message)
+    } finally {
+      syncingId = null
     }
   }
-  
+
+  async function syncAllCalendars() {
+    const syncable = calendars.filter(c => c.calendar_url && c.sync_enabled)
+    if (syncable.length === 0) {
+      toast.info('No calendars with feed URLs to sync')
+      return
+    }
+
+    for (const cal of syncable) {
+      await syncCalendar(cal.id)
+    }
+  }
+
   async function addManualBusyTime() {
+    if (!manualForm.title.trim()) {
+      toast.error('Please enter a title')
+      return
+    }
+
     try {
       const startDateTime = `${manualForm.date}T${manualForm.startTime}:00`
       const endDateTime = `${manualForm.date}T${manualForm.endTime}:00`
-      
+
       if (manualForm.recurring) {
-        // Handle recurring events
         const { error } = await supabase
           .from('manual_busy_times')
           .insert({
@@ -176,13 +209,12 @@
             recurring_days: manualForm.recurringDays,
             recurring_until: manualForm.recurringUntil || null
           })
-        
+
         if (error) throw error
       } else {
-        // Single event - add to calendar_events
+        // Single event — add to calendar_events via a manual calendar
         let manualCalendar = calendars.find(c => c.calendar_type === 'manual')
-        
-        // Create manual calendar if doesn't exist
+
         if (!manualCalendar) {
           const { data, error } = await supabase
             .from('parent_calendars')
@@ -194,12 +226,12 @@
             })
             .select()
             .single()
-          
+
           if (error) throw error
           manualCalendar = data
           await loadCalendars()
         }
-        
+
         const { error } = await supabase
           .from('calendar_events')
           .insert({
@@ -211,29 +243,29 @@
             end_time: endDateTime,
             is_busy: true
           })
-        
+
         if (error) throw error
       }
-      
+
       showManualEntry = false
       resetManualForm()
       onUpdate()
-      
+      toast.success('Busy time added')
     } catch (err) {
       toast.error('Failed to add busy time')
     }
   }
-  
+
   function resetCalendarForm() {
     calendarForm = {
       calendar_name: '',
-      calendar_type: 'google',
+      calendar_type: 'ical',
       calendar_url: '',
       calendar_id: '',
       color: '#667eea'
     }
   }
-  
+
   function resetManualForm() {
     manualForm = {
       title: '',
@@ -246,73 +278,117 @@
       recurringUntil: ''
     }
   }
-  
-  function getCalendarTypeIcon(type) {
+
+  function getCalendarTypeLabel(type) {
     switch(type) {
-      case 'google': return '🗓️'
-      case 'outlook': return '📅'
-      case 'ical': return '📆'
-      case 'manual': return '✏️'
-      default: return '📅'
+      case 'google': return 'Google'
+      case 'outlook': return 'Outlook'
+      case 'ical': return 'iCal Feed'
+      case 'manual': return 'Manual'
+      default: return type
     }
+  }
+
+  function getEventCount(calendarId) {
+    // This is a display hint — we load counts async
+    return ''
+  }
+
+  function timeSince(dateStr) {
+    if (!dateStr) return 'Never synced'
+    const d = new Date(dateStr)
+    const now = new Date()
+    const diff = Math.floor((now - d) / 1000)
+    if (diff < 60) return 'Just now'
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
+    return `${Math.floor(diff / 86400)}d ago`
   }
 </script>
 
-<div class="calendar-manager">
-  <div class="header">
-    <h3>📅 Your Calendars</h3>
-    <div class="header-buttons">
-      <button class="btn btn-primary" on:click={() => showAddCalendar = true}>
-        + Add Calendar
+<div class="cal-mgr">
+  <!-- Header -->
+  <div class="mgr-header">
+    <div class="mgr-title">
+      <h3>Calendars</h3>
+      <span class="cal-count">{calendars.length} connected</span>
+    </div>
+    <div class="mgr-actions">
+      {#if calendars.some(c => c.calendar_url && c.sync_enabled)}
+        <button class="action-btn sync-all" on:click={syncAllCalendars}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          Sync All
+        </button>
+      {/if}
+      <button class="action-btn add-cal" on:click={() => showAddCalendar = true}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Add Calendar
       </button>
-      <button class="btn btn-secondary" on:click={() => showManualEntry = true}>
-        + Add Busy Time
+      <button class="action-btn add-busy" on:click={() => showManualEntry = true}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        Add Busy Time
       </button>
     </div>
   </div>
-  
+
   {#if loading}
-    <div class="loading">Loading calendars...</div>
+    <div class="loading-state">
+      <div class="spinner"></div>
+      <span>Loading calendars...</span>
+    </div>
   {:else if calendars.length === 0}
     <div class="empty-state">
-      <p>No calendars connected yet</p>
-      <p class="hint">Add your work, personal, and other calendars to automatically detect when you're busy</p>
+      <div class="empty-icon">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#a0aec0" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      </div>
+      <p class="empty-title">No calendars connected</p>
+      <p class="empty-hint">Connect your Google Calendar, Outlook, or any iCal feed to automatically detect when you're busy and find coverage gaps.</p>
+      <button class="action-btn add-cal" on:click={() => showAddCalendar = true}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Add Your First Calendar
+      </button>
     </div>
   {:else}
     <div class="calendar-list">
       {#each calendars as calendar}
-        <div class="calendar-item" style="border-left: 4px solid {calendar.color}">
-          <div class="calendar-info">
-            <div class="calendar-header">
-              <span class="calendar-icon">{getCalendarTypeIcon(calendar.calendar_type)}</span>
-              <span class="calendar-name">{calendar.calendar_name}</span>
-              <span class="calendar-type">{calendar.calendar_type}</span>
+        <div class="cal-card" class:disabled={!calendar.sync_enabled}>
+          <div class="cal-color" style="background: {calendar.color}"></div>
+          <div class="cal-info">
+            <div class="cal-name">{calendar.calendar_name}</div>
+            <div class="cal-meta">
+              <span class="cal-type-badge">{getCalendarTypeLabel(calendar.calendar_type)}</span>
+              {#if calendar.last_synced}
+                <span class="cal-synced">Synced {timeSince(calendar.last_synced)}</span>
+              {:else if calendar.calendar_url}
+                <span class="cal-synced never">Not yet synced</span>
+              {/if}
             </div>
-            {#if calendar.last_synced}
-              <div class="sync-info">
-                Last synced: {new Date(calendar.last_synced).toLocaleString()}
-              </div>
-            {/if}
           </div>
-          
-          <div class="calendar-actions">
-            <label class="toggle">
-              <input 
-                type="checkbox" 
+          <div class="cal-controls">
+            <label class="toggle" title={calendar.sync_enabled ? 'Enabled' : 'Disabled'}>
+              <input
+                type="checkbox"
                 checked={calendar.sync_enabled}
                 on:change={(e) => toggleCalendar(calendar.id, e.target.checked)}
               />
-              <span class="toggle-slider"></span>
+              <span class="toggle-track">
+                <span class="toggle-thumb"></span>
+              </span>
             </label>
-            
-            {#if calendar.calendar_type !== 'manual'}
-              <button class="icon-btn" on:click={() => syncCalendar(calendar.id)} title="Sync now">
-                🔄
+
+            {#if calendar.calendar_url}
+              <button
+                class="icon-btn"
+                on:click={() => syncCalendar(calendar.id)}
+                title="Sync now"
+                disabled={syncingId === calendar.id}
+              >
+                <svg class="sync-icon" class:spinning={syncingId === calendar.id} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
               </button>
             {/if}
-            
-            <button class="icon-btn delete" on:click={() => deleteCalendar(calendar.id)} title="Delete">
-              🗑️
+
+            <button class="icon-btn delete" on:click={() => deleteCalendar(calendar.id)} title="Remove">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
             </button>
           </div>
         </div>
@@ -321,99 +397,116 @@
   {/if}
 </div>
 
-<!-- Add Calendar Modal -->
+<!-- Add Calendar Sheet -->
 {#if showAddCalendar}
-  <div class="modal-overlay" on:click={() => showAddCalendar = false}>
-    <div class="modal-content" on:click|stopPropagation>
-      <h3>Add Calendar</h3>
-      
-      <div class="form-group">
-        <label>Calendar Name</label>
-        <input 
-          type="text" 
+  <div class="sheet-overlay" on:click={() => showAddCalendar = false}>
+    <div class="sheet" on:click|stopPropagation>
+      <div class="sheet-handle"></div>
+      <h3>Connect a Calendar</h3>
+      <p class="sheet-desc">Add an iCal feed URL to automatically sync your busy times. You can find this in your calendar app's sharing settings.</p>
+
+      <div class="form-field">
+        <label>Name</label>
+        <input
+          type="text"
           bind:value={calendarForm.calendar_name}
-          placeholder="e.g., Work Calendar, Personal, EMBA"
-          required
+          placeholder="e.g., Work, Personal, School"
         />
       </div>
-      
-      <div class="form-group">
-        <label>Calendar Type</label>
-        <div class="calendar-type-grid">
-          <button 
-            class="type-btn" 
-            class:selected={calendarForm.calendar_type === 'google'}
-            on:click={() => calendarForm.calendar_type = 'google'}>
-            <span>🗓️</span>
-            Google Calendar
-          </button>
-          <button 
-            class="type-btn" 
-            class:selected={calendarForm.calendar_type === 'outlook'}
-            on:click={() => calendarForm.calendar_type = 'outlook'}>
-            <span>📅</span>
-            Outlook
-          </button>
-          <button 
-            class="type-btn" 
-            class:selected={calendarForm.calendar_type === 'ical'}
+
+      <div class="form-field">
+        <label>Source</label>
+        <div class="source-tabs">
+          <button
+            class="source-tab"
+            class:active={calendarForm.calendar_type === 'ical'}
             on:click={() => calendarForm.calendar_type = 'ical'}>
-            <span>📆</span>
-            iCal URL
+            iCal Feed
           </button>
-          <button 
-            class="type-btn" 
-            class:selected={calendarForm.calendar_type === 'manual'}
-            on:click={() => calendarForm.calendar_type = 'manual'}>
-            <span>✏️</span>
-            Manual ID
+          <button
+            class="source-tab"
+            class:active={calendarForm.calendar_type === 'google'}
+            on:click={() => calendarForm.calendar_type = 'google'}>
+            Google
+          </button>
+          <button
+            class="source-tab"
+            class:active={calendarForm.calendar_type === 'outlook'}
+            on:click={() => calendarForm.calendar_type = 'outlook'}>
+            Outlook
           </button>
         </div>
       </div>
-      
+
       {#if calendarForm.calendar_type === 'ical'}
-        <div class="form-group">
+        <div class="form-field">
           <label>iCal Feed URL</label>
-          <input 
-            type="url" 
+          <input
+            type="url"
             bind:value={calendarForm.calendar_url}
             placeholder="https://calendar.google.com/calendar/ical/..."
           />
-          <small>You can find this in your calendar settings under "Secret address in iCal format"</small>
+          <span class="field-hint">Paste the secret iCal URL from your calendar's sharing settings</span>
+        </div>
+      {:else if calendarForm.calendar_type === 'google'}
+        <div class="setup-guide">
+          <p><strong>To get your Google Calendar iCal URL:</strong></p>
+          <ol>
+            <li>Open <strong>Google Calendar</strong> on the web</li>
+            <li>Click the gear icon, then <strong>Settings</strong></li>
+            <li>Select your calendar on the left</li>
+            <li>Scroll to <strong>"Secret address in iCal format"</strong></li>
+            <li>Copy the URL and paste it below</li>
+          </ol>
+          <div class="form-field">
+            <label>iCal Feed URL</label>
+            <input
+              type="url"
+              bind:value={calendarForm.calendar_url}
+              placeholder="https://calendar.google.com/calendar/ical/..."
+            />
+          </div>
+        </div>
+      {:else if calendarForm.calendar_type === 'outlook'}
+        <div class="setup-guide">
+          <p><strong>To get your Outlook Calendar iCal URL:</strong></p>
+          <ol>
+            <li>Open <strong>Outlook Calendar</strong> on the web</li>
+            <li>Click the gear icon, then <strong>View all Outlook settings</strong></li>
+            <li>Go to <strong>Calendar > Shared calendars</strong></li>
+            <li>Under "Publish a calendar", select your calendar and click <strong>Publish</strong></li>
+            <li>Copy the <strong>ICS link</strong></li>
+          </ol>
+          <div class="form-field">
+            <label>iCal Feed URL</label>
+            <input
+              type="url"
+              bind:value={calendarForm.calendar_url}
+              placeholder="https://outlook.live.com/owa/calendar/..."
+            />
+          </div>
         </div>
       {/if}
-      
-      {#if calendarForm.calendar_type === 'manual'}
-        <div class="form-group">
-          <label>Calendar ID</label>
-          <input 
-            type="text" 
-            bind:value={calendarForm.calendar_id}
-            placeholder="your-email@gmail.com or calendar ID"
-          />
-          <small>For Google Calendar, find this in Settings → Calendar ID</small>
-        </div>
-      {/if}
-      
-      <div class="form-group">
-        <label>Display Color</label>
-        <div class="color-picker">
+
+      <div class="form-field">
+        <label>Color</label>
+        <div class="color-row">
           {#each calendarColors as color}
-            <button 
-              class="color-btn" 
+            <button
+              class="color-dot"
               style="background: {color}"
-              class:selected={calendarForm.color === color}
+              class:active={calendarForm.color === color}
               on:click={() => calendarForm.color = color}
             ></button>
           {/each}
         </div>
       </div>
-      
-      <div class="button-row">
-        <button class="btn btn-primary" on:click={addCalendar}>
-          Add Calendar
+
+      <div class="sheet-buttons">
+        <button class="btn-primary" on:click={addCalendar}>
+          Connect Calendar
         </button>
-        <button class="btn btn-secondary" on:click={() => showAddCalendar = false}>
+        <button class="btn-ghost" on:click={() => showAddCalendar = false}>
           Cancel
         </button>
       </div>
@@ -421,92 +514,95 @@
   </div>
 {/if}
 
-<!-- Manual Busy Time Modal -->
+<!-- Manual Busy Time Sheet -->
 {#if showManualEntry}
-  <div class="modal-overlay" on:click={() => showManualEntry = false}>
-    <div class="modal-content" on:click|stopPropagation>
+  <div class="sheet-overlay" on:click={() => showManualEntry = false}>
+    <div class="sheet" on:click|stopPropagation>
+      <div class="sheet-handle"></div>
       <h3>Add Busy Time</h3>
-      
-      <div class="form-group">
-        <label>Title</label>
-        <input 
-          type="text" 
+      <p class="sheet-desc">Block off time when you're unavailable for childcare.</p>
+
+      <div class="form-field">
+        <label>What's happening?</label>
+        <input
+          type="text"
           bind:value={manualForm.title}
-          placeholder="e.g., Client Meeting, Doctor Appointment"
-          required
+          placeholder="e.g., Client meeting, Doctor appointment"
         />
       </div>
-      
-      <div class="form-group">
+
+      <div class="form-field">
         <label>Date</label>
-        <input type="date" bind:value={manualForm.date} required />
+        <input type="date" bind:value={manualForm.date} />
       </div>
-      
-      <div class="form-row">
-        <div class="form-group">
-          <label>Start Time</label>
-          <input type="time" bind:value={manualForm.startTime} required />
+
+      <div class="form-row-inline">
+        <div class="form-field">
+          <label>Start</label>
+          <input type="time" bind:value={manualForm.startTime} />
         </div>
-        <div class="form-group">
-          <label>End Time</label>
-          <input type="time" bind:value={manualForm.endTime} required />
+        <div class="time-dash">-</div>
+        <div class="form-field">
+          <label>End</label>
+          <input type="time" bind:value={manualForm.endTime} />
         </div>
       </div>
-      
-      <div class="form-group">
-        <label class="checkbox-label">
-          <input type="checkbox" bind:checked={manualForm.recurring} />
-          Recurring event
+
+      <div class="form-field">
+        <label class="toggle-label">
+          <span>Repeats</span>
+          <label class="toggle small">
+            <input type="checkbox" bind:checked={manualForm.recurring} />
+            <span class="toggle-track">
+              <span class="toggle-thumb"></span>
+            </span>
+          </label>
         </label>
       </div>
-      
+
       {#if manualForm.recurring}
-        <div class="recurring-options">
-          <div class="form-group">
-            <label>Repeat Pattern</label>
+        <div class="recurring-section">
+          <div class="form-field">
+            <label>Frequency</label>
             <select bind:value={manualForm.recurringPattern}>
-              <option value="weekly">Weekly</option>
-              <option value="biweekly">Biweekly</option>
-              <option value="monthly">Monthly</option>
+              <option value="weekly">Every week</option>
+              <option value="biweekly">Every 2 weeks</option>
             </select>
           </div>
-          
-          {#if manualForm.recurringPattern === 'weekly' || manualForm.recurringPattern === 'biweekly'}
-            <div class="form-group">
-              <label>Repeat on days</label>
-              <div class="day-selector">
-                {#each weekDays as day}
-                  <label class="day-checkbox">
-                    <input 
-                      type="checkbox" 
-                      value={day}
-                      on:change={(e) => {
-                        if (e.target.checked) {
-                          manualForm.recurringDays = [...manualForm.recurringDays, day]
-                        } else {
-                          manualForm.recurringDays = manualForm.recurringDays.filter(d => d !== day)
-                        }
-                      }}
-                    />
-                    <span>{day.slice(0, 3)}</span>
-                  </label>
-                {/each}
-              </div>
+
+          <div class="form-field">
+            <label>On these days</label>
+            <div class="day-pills">
+              {#each weekDays as day}
+                <button
+                  class="day-pill"
+                  class:active={manualForm.recurringDays.includes(day)}
+                  on:click={() => {
+                    if (manualForm.recurringDays.includes(day)) {
+                      manualForm.recurringDays = manualForm.recurringDays.filter(d => d !== day)
+                    } else {
+                      manualForm.recurringDays = [...manualForm.recurringDays, day]
+                    }
+                  }}
+                >
+                  {day.slice(0, 1).toUpperCase()}
+                </button>
+              {/each}
             </div>
-          {/if}
-          
-          <div class="form-group">
-            <label>End recurring on (optional)</label>
+          </div>
+
+          <div class="form-field">
+            <label>Until (optional)</label>
             <input type="date" bind:value={manualForm.recurringUntil} />
           </div>
         </div>
       {/if}
-      
-      <div class="button-row">
-        <button class="btn btn-primary" on:click={addManualBusyTime}>
+
+      <div class="sheet-buttons">
+        <button class="btn-primary" on:click={addManualBusyTime}>
           Add Busy Time
         </button>
-        <button class="btn btn-secondary" on:click={() => showManualEntry = false}>
+        <button class="btn-ghost" on:click={() => showManualEntry = false}>
           Cancel
         </button>
       </div>
@@ -515,372 +611,602 @@
 {/if}
 
 <style>
-  /* ALL THE CSS STYLES FROM THE ORIGINAL COMPONENT GO HERE */
-  .calendar-manager {
-    background: white;
-    border-radius: 12px;
-    padding: 20px;
-    margin-bottom: 20px;
+  .cal-mgr {
+    padding: 4px 0;
   }
-  
-  .header {
+
+  /* Header */
+  .mgr-header {
     display: flex;
     justify-content: space-between;
-    align-items: center;
+    align-items: flex-start;
     margin-bottom: 20px;
+    gap: 12px;
+    flex-wrap: wrap;
   }
-  
-  .header h3 {
+
+  .mgr-title h3 {
     margin: 0;
-    color: #2d3748;
+    font-size: 1.1em;
+    font-weight: 700;
+    color: #1a202c;
   }
-  
-  .header-buttons {
+
+  .cal-count {
+    font-size: 0.8em;
+    color: #a0aec0;
+    font-weight: 500;
+  }
+
+  .mgr-actions {
     display: flex;
-    gap: 10px;
+    gap: 8px;
+    flex-wrap: wrap;
   }
-  
-  .btn {
-    padding: 10px 20px;
+
+  .action-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
     border: none;
     border-radius: 8px;
+    font-size: 0.85em;
     font-weight: 600;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.15s;
   }
-  
-  .btn-primary {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+
+  .action-btn.add-cal {
+    background: #667eea;
     color: white;
   }
-  
-  .btn-primary:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+
+  .action-btn.add-cal:hover {
+    background: #5a6fd6;
   }
-  
-  .btn-secondary {
-    background: #718096;
-    color: white;
+
+  .action-btn.add-busy {
+    background: #edf2f7;
+    color: #4a5568;
   }
-  
-  .btn-secondary:hover {
-    background: #5a677d;
+
+  .action-btn.add-busy:hover {
+    background: #e2e8f0;
   }
-  
-  .loading {
-    text-align: center;
+
+  .action-btn.sync-all {
+    background: #edf2f7;
+    color: #4a5568;
+  }
+
+  .action-btn.sync-all:hover {
+    background: #e2e8f0;
+  }
+
+  /* Loading */
+  .loading-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
     padding: 40px;
     color: #718096;
   }
-  
+
+  .spinner {
+    width: 20px;
+    height: 20px;
+    border: 2px solid #e2e8f0;
+    border-top-color: #667eea;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  /* Empty State */
   .empty-state {
     text-align: center;
-    padding: 40px;
-    color: #718096;
+    padding: 40px 20px;
   }
-  
-  .empty-state .hint {
+
+  .empty-icon {
+    margin-bottom: 16px;
+    opacity: 0.5;
+  }
+
+  .empty-title {
+    font-size: 1em;
+    font-weight: 600;
+    color: #4a5568;
+    margin: 0 0 8px 0;
+  }
+
+  .empty-hint {
     font-size: 0.9em;
-    margin-top: 10px;
     color: #a0aec0;
+    margin: 0 0 20px 0;
+    max-width: 360px;
+    margin-left: auto;
+    margin-right: auto;
+    line-height: 1.5;
   }
-  
+
+  /* Calendar Cards */
   .calendar-list {
     display: flex;
     flex-direction: column;
-    gap: 15px;
+    gap: 8px;
   }
-  
-  .calendar-item {
+
+  .cal-card {
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    padding: 15px;
-    background: #f7fafc;
-    border-radius: 8px;
-    transition: all 0.2s;
+    gap: 12px;
+    padding: 12px 16px;
+    background: #f8fafc;
+    border-radius: 10px;
+    transition: all 0.15s;
   }
-  
-  .calendar-item:hover {
-    background: #edf2f7;
+
+  .cal-card:hover {
+    background: #f1f5f9;
   }
-  
-  .calendar-info {
+
+  .cal-card.disabled {
+    opacity: 0.5;
+  }
+
+  .cal-color {
+    width: 4px;
+    height: 36px;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+
+  .cal-info {
     flex: 1;
+    min-width: 0;
   }
-  
-  .calendar-header {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 5px;
-  }
-  
-  .calendar-icon {
-    font-size: 1.2em;
-  }
-  
-  .calendar-name {
+
+  .cal-name {
     font-weight: 600;
-    color: #2d3748;
+    font-size: 0.95em;
+    color: #1a202c;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
-  
-  .calendar-type {
-    font-size: 0.85em;
-    padding: 2px 8px;
-    background: white;
-    border-radius: 12px;
-    color: #718096;
-  }
-  
-  .sync-info {
-    font-size: 0.85em;
-    color: #718096;
-    margin-left: 35px;
-  }
-  
-  .calendar-actions {
+
+  .cal-meta {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
+    margin-top: 2px;
   }
-  
+
+  .cal-type-badge {
+    font-size: 0.75em;
+    padding: 1px 8px;
+    background: #e2e8f0;
+    border-radius: 10px;
+    color: #64748b;
+    font-weight: 500;
+  }
+
+  .cal-synced {
+    font-size: 0.75em;
+    color: #a0aec0;
+  }
+
+  .cal-synced.never {
+    color: #ed8936;
+  }
+
+  .cal-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
   /* Toggle Switch */
   .toggle {
     position: relative;
     display: inline-block;
-    width: 50px;
-    height: 24px;
+    cursor: pointer;
   }
-  
+
   .toggle input {
+    position: absolute;
     opacity: 0;
     width: 0;
     height: 0;
   }
-  
-  .toggle-slider {
-    position: absolute;
-    cursor: pointer;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: #cbd5e0;
-    transition: 0.3s;
-    border-radius: 24px;
+
+  .toggle-track {
+    display: block;
+    width: 40px;
+    height: 22px;
+    background: #cbd5e0;
+    border-radius: 11px;
+    transition: background 0.2s;
+    position: relative;
   }
-  
-  .toggle-slider:before {
+
+  .toggle input:checked + .toggle-track {
+    background: #48bb78;
+  }
+
+  .toggle-thumb {
     position: absolute;
-    content: "";
-    height: 18px;
+    top: 2px;
+    left: 2px;
     width: 18px;
-    left: 3px;
-    bottom: 3px;
-    background-color: white;
-    transition: 0.3s;
+    height: 18px;
+    background: white;
     border-radius: 50%;
+    transition: transform 0.2s;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.15);
   }
-  
-  .toggle input:checked + .toggle-slider {
-    background-color: #48bb78;
+
+  .toggle input:checked + .toggle-track .toggle-thumb {
+    transform: translateX(18px);
   }
-  
-  .toggle input:checked + .toggle-slider:before {
-    transform: translateX(26px);
+
+  .toggle.small .toggle-track {
+    width: 36px;
+    height: 20px;
   }
-  
+
+  .toggle.small .toggle-thumb {
+    width: 16px;
+    height: 16px;
+  }
+
+  .toggle.small input:checked + .toggle-track .toggle-thumb {
+    transform: translateX(16px);
+  }
+
+  /* Icon Buttons */
   .icon-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
     background: none;
     border: none;
-    font-size: 1.2em;
+    border-radius: 6px;
     cursor: pointer;
-    padding: 5px;
-    transition: all 0.2s;
+    color: #a0aec0;
+    transition: all 0.15s;
   }
-  
+
   .icon-btn:hover {
-    transform: scale(1.1);
+    background: #edf2f7;
+    color: #4a5568;
   }
-  
+
   .icon-btn.delete:hover {
-    filter: grayscale(0%) saturate(2);
+    background: #fed7d7;
+    color: #e53e3e;
   }
-  
-  /* Modal */
-  .modal-overlay {
+
+  .icon-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .sync-icon.spinning {
+    animation: spin 0.8s linear infinite;
+  }
+
+  /* Sheet Overlay (modal replacement) */
+  .sheet-overlay {
     position: fixed;
     top: 0;
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(0,0,0,0.5);
+    background: rgba(0,0,0,0.4);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    z-index: 1100;
+    animation: fadeIn 0.2s ease;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  .sheet {
+    background: white;
+    width: 100%;
+    max-width: 480px;
+    max-height: 85vh;
+    border-radius: 20px 20px 0 0;
+    padding: 20px 24px 30px;
+    overflow-y: auto;
+    animation: slideUp 0.3s ease;
+  }
+
+  @media (min-width: 640px) {
+    .sheet-overlay {
+      align-items: center;
+    }
+    .sheet {
+      border-radius: 20px;
+      max-height: 80vh;
+    }
+  }
+
+  @keyframes slideUp {
+    from { transform: translateY(100%); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+
+  .sheet-handle {
+    width: 36px;
+    height: 4px;
+    background: #e2e8f0;
+    border-radius: 2px;
+    margin: 0 auto 16px;
+  }
+
+  @media (min-width: 640px) {
+    .sheet-handle { display: none; }
+  }
+
+  .sheet h3 {
+    margin: 0 0 4px 0;
+    font-size: 1.2em;
+    font-weight: 700;
+    color: #1a202c;
+  }
+
+  .sheet-desc {
+    margin: 0 0 20px 0;
+    font-size: 0.9em;
+    color: #718096;
+    line-height: 1.5;
+  }
+
+  /* Form Fields */
+  .form-field {
+    margin-bottom: 16px;
+  }
+
+  .form-field label {
+    display: block;
+    font-size: 0.85em;
+    font-weight: 600;
+    color: #4a5568;
+    margin-bottom: 6px;
+  }
+
+  .form-field input,
+  .form-field select {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1.5px solid #e2e8f0;
+    border-radius: 8px;
+    font-size: 0.95em;
+    color: #1a202c;
+    transition: border-color 0.15s;
+    background: white;
+  }
+
+  .form-field input:focus,
+  .form-field select:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+  }
+
+  .form-field input::placeholder {
+    color: #cbd5e0;
+  }
+
+  .field-hint {
+    display: block;
+    margin-top: 4px;
+    font-size: 0.8em;
+    color: #a0aec0;
+  }
+
+  .form-row-inline {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+
+  .form-row-inline .form-field {
+    flex: 1;
+    margin-bottom: 0;
+  }
+
+  .time-dash {
+    padding-bottom: 10px;
+    color: #a0aec0;
+    font-weight: 600;
+  }
+
+  /* Source Tabs */
+  .source-tabs {
+    display: flex;
+    gap: 4px;
+    background: #f1f5f9;
+    border-radius: 8px;
+    padding: 3px;
+  }
+
+  .source-tab {
+    flex: 1;
+    padding: 8px 12px;
+    border: none;
+    background: transparent;
+    border-radius: 6px;
+    font-size: 0.85em;
+    font-weight: 600;
+    color: #64748b;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .source-tab.active {
+    background: white;
+    color: #1a202c;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+
+  .source-tab:hover:not(.active) {
+    color: #4a5568;
+  }
+
+  /* Setup Guide */
+  .setup-guide {
+    background: #f8fafc;
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+
+  .setup-guide p {
+    margin: 0 0 10px 0;
+    font-size: 0.9em;
+    color: #4a5568;
+  }
+
+  .setup-guide ol {
+    margin: 0 0 16px 0;
+    padding-left: 20px;
+    font-size: 0.85em;
+    color: #64748b;
+    line-height: 1.8;
+  }
+
+  .setup-guide .form-field {
+    margin-bottom: 0;
+  }
+
+  /* Color Picker */
+  .color-row {
+    display: flex;
+    gap: 8px;
+  }
+
+  .color-dot {
+    width: 32px;
+    height: 32px;
+    border: 2px solid transparent;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .color-dot:hover {
+    transform: scale(1.15);
+  }
+
+  .color-dot.active {
+    border-color: #1a202c;
+    box-shadow: 0 0 0 2px white, 0 0 0 4px #1a202c;
+  }
+
+  /* Toggle Label Row */
+  .toggle-label {
+    display: flex !important;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  /* Recurring Section */
+  .recurring-section {
+    background: #f8fafc;
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 16px;
+    animation: fadeIn 0.2s ease;
+  }
+
+  .day-pills {
+    display: flex;
+    gap: 6px;
+  }
+
+  .day-pill {
+    width: 36px;
+    height: 36px;
+    border: 1.5px solid #e2e8f0;
+    border-radius: 50%;
+    background: white;
+    font-size: 0.85em;
+    font-weight: 600;
+    color: #64748b;
+    cursor: pointer;
+    transition: all 0.15s;
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 1000;
   }
-  
-  .modal-content {
-    background: white;
-    padding: 30px;
-    border-radius: 15px;
-    max-width: 500px;
-    width: 90%;
-    max-height: 90vh;
-    overflow-y: auto;
-  }
-  
-  .modal-content h3 {
-    margin-top: 0;
-    margin-bottom: 20px;
-    color: #2d3748;
-  }
-  
-  .form-group {
-    margin-bottom: 20px;
-  }
-  
-  .form-group label {
-    display: block;
-    margin-bottom: 5px;
-    font-weight: 600;
-    color: #4a5568;
-  }
-  
-  .form-group input,
-  .form-group select {
-    width: 100%;
-    padding: 10px;
-    border: 1px solid #e2e8f0;
-    border-radius: 6px;
-    font-size: 1em;
-  }
-  
-  .form-group small {
-    display: block;
-    margin-top: 5px;
-    color: #718096;
-    font-size: 0.85em;
-  }
-  
-  .form-row {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 15px;
-  }
-  
-  .calendar-type-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-  }
-  
-  .type-btn {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 5px;
-    padding: 15px;
-    background: #f7fafc;
-    border: 2px solid #e2e8f0;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-  
-  .type-btn span {
-    font-size: 1.5em;
-  }
-  
-  .type-btn:hover {
-    background: #edf2f7;
-  }
-  
-  .type-btn.selected {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
+
+  .day-pill:hover {
     border-color: #667eea;
-  }
-  
-  .color-picker {
-    display: flex;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
-  
-  .color-btn {
-    width: 40px;
-    height: 40px;
-    border: 2px solid transparent;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-  
-  .color-btn:hover {
-    transform: scale(1.1);
-  }
-  
-  .color-btn.selected {
-    border-color: #2d3748;
-    box-shadow: 0 0 0 2px white, 0 0 0 4px #2d3748;
-  }
-  
-  .checkbox-label {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    cursor: pointer;
-  }
-  
-  .checkbox-label input {
-    width: auto;
-  }
-  
-  .recurring-options {
-    padding: 15px;
-    background: #f7fafc;
-    border-radius: 8px;
-    margin-bottom: 15px;
-  }
-  
-  .day-selector {
-    display: flex;
-    gap: 5px;
-    flex-wrap: wrap;
-  }
-  
-  .day-checkbox {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 8px;
-    background: white;
-    border: 2px solid #e2e8f0;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-  
-  .day-checkbox:hover {
-    background: #f7fafc;
-  }
-  
-  .day-checkbox input:checked + span {
     color: #667eea;
-    font-weight: 600;
   }
-  
-  .button-row {
+
+  .day-pill.active {
+    background: #667eea;
+    border-color: #667eea;
+    color: white;
+  }
+
+  /* Sheet Buttons */
+  .sheet-buttons {
     display: flex;
     gap: 10px;
-    margin-top: 20px;
+    margin-top: 24px;
   }
-  
-  .button-row .btn {
+
+  .btn-primary {
     flex: 1;
+    padding: 12px 20px;
+    background: #667eea;
+    color: white;
+    border: none;
+    border-radius: 10px;
+    font-size: 0.95em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .btn-primary:hover {
+    background: #5a6fd6;
+  }
+
+  .btn-ghost {
+    padding: 12px 20px;
+    background: transparent;
+    color: #64748b;
+    border: none;
+    border-radius: 10px;
+    font-size: 0.95em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .btn-ghost:hover {
+    background: #f1f5f9;
+    color: #4a5568;
   }
 </style>

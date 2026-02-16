@@ -666,28 +666,28 @@
         {/if}
       {/if}
 
-      <!-- Schedule Grid View -->
+      <!-- Schedule Grid View (Desktop) -->
       {#if viewMode === 'grid'}
-        <div class="calendar">
+        <div class="calendar desktop-calendar">
           {#each getWeekDays() as day}
             <div class="day-column">
               <div class="day-header">
                 <div class="day-name">{day.toLocaleDateString('en-US', { weekday: 'short' })}</div>
                 <div class="day-date">{day.getDate()}</div>
               </div>
-              
+
               <div class="day-content">
                 <!-- Show parent events for context -->
                 {#if parentCalendarEvents.you.length > 0 || parentCalendarEvents.partner.length > 0}
                   {@const dayEvents = [
-                    ...parentCalendarEvents.you.filter(e => 
+                    ...parentCalendarEvents.you.filter(e =>
                       e.startTime.toDateString() === day.toDateString()
                     ).map(e => ({...e, owner: 'You'})),
-                    ...parentCalendarEvents.partner.filter(e => 
+                    ...parentCalendarEvents.partner.filter(e =>
                       e.startTime.toDateString() === day.toDateString()
                     ).map(e => ({...e, owner: familyMembers.find(m => m.id !== user.id)?.full_name || 'Partner'}))
                   ].sort((a, b) => a.startTime - b.startTime)}
-                  
+
                   {#each dayEvents as event}
                     <div class="parent-event" style="border-left: 3px solid {event.color}">
                       <div class="event-time">
@@ -697,7 +697,7 @@
                     </div>
                   {/each}
                 {/if}
-                
+
                 <!-- Nanny shifts -->
                 {#each getShiftsForDay(day) as shift}
                   <div class="shift-block">
@@ -715,13 +715,62 @@
                 {:else}
                   <div class="no-coverage">No nanny scheduled</div>
                 {/each}
-                
+
                 {#if profile?.role === 'family' || profile?.role === 'admin'}
                   <button class="add-shift-btn" on:click={() => openAddShift(day)}>
                     + Add Nanny
                   </button>
                 {/if}
               </div>
+            </div>
+          {/each}
+        </div>
+
+        <!-- Schedule List View (Mobile) -->
+        <div class="mobile-schedule-list">
+          {#each getWeekDays() as day}
+            {@const dayShifts = getShiftsForDay(day)}
+            {@const dayEvents = [
+              ...parentCalendarEvents.you.filter(e =>
+                e.startTime.toDateString() === day.toDateString()
+              ).map(e => ({...e, owner: 'You'})),
+              ...parentCalendarEvents.partner.filter(e =>
+                e.startTime.toDateString() === day.toDateString()
+              ).map(e => ({...e, owner: familyMembers.find(m => m.id !== user.id)?.full_name || 'Partner'}))
+            ].sort((a, b) => a.startTime - b.startTime)}
+            <div class="mobile-day-row" class:has-shift={dayShifts.length > 0} class:is-today={day.toDateString() === new Date().toDateString()}>
+              <div class="mobile-day-label">
+                <span class="mobile-day-name">{day.toLocaleDateString('en-US', { weekday: 'short' })}</span>
+                <span class="mobile-day-date">{day.getDate()}</span>
+              </div>
+              <div class="mobile-day-info">
+                {#if dayShifts.length > 0}
+                  {#each dayShifts as shift}
+                    <div class="mobile-shift-row">
+                      <span class="mobile-shift-badge">{getNannyName(shift.nanny_id)}</span>
+                      <span class="mobile-shift-time">{formatTime(shift.start_time)}–{formatTime(shift.end_time)}</span>
+                      {#if profile?.role === 'family' || profile?.role === 'admin'}
+                        <button class="btn-delete-inline" on:click={() => deleteShift(shift.id)} title="Delete">✕</button>
+                      {/if}
+                    </div>
+                    {#if shift.notes}
+                      <div class="mobile-shift-note">{shift.notes}</div>
+                    {/if}
+                  {/each}
+                {:else}
+                  <span class="mobile-no-shift">No nanny</span>
+                {/if}
+                {#each dayEvents as event}
+                  <div class="mobile-event-row" style="border-left: 3px solid {event.color}">
+                    <span class="mobile-event-owner">{event.owner}</span>
+                    <span class="mobile-event-title">{event.title}</span>
+                    <span class="mobile-event-time">{event.startTime.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
+                  </div>
+                {/each}
+              </div>
+              {#if profile?.role === 'family' || profile?.role === 'admin'}
+                <button class="mobile-add-btn" on:click={() => openAddShift(day)} title="Add shift">+</button>
+              {/if}
             </div>
           {/each}
         </div>
@@ -779,8 +828,8 @@
           </div>
         {/if}
         
-        <!-- Coverage Grid -->
-        <div class="coverage-grid-container">
+        <!-- Coverage Grid (Desktop) -->
+        <div class="coverage-grid-container desktop-coverage">
           <h3>Hour-by-Hour Coverage</h3>
           <div class="coverage-grid">
             <!-- Header -->
@@ -793,7 +842,7 @@
                 </div>
               {/each}
             </div>
-            
+
             <!-- Hour rows -->
             {#each getHourRange() as hour}
               <div class="grid-row">
@@ -807,6 +856,26 @@
               </div>
             {/each}
           </div>
+        </div>
+
+        <!-- Coverage Grid (Mobile) - Day-by-day stacked -->
+        <div class="mobile-coverage">
+          {#each getWeekDays() as day}
+            <div class="mobile-cov-day">
+              <div class="mobile-cov-day-header">
+                {day.toLocaleDateString('en-US', { weekday: 'short' })} {day.getDate()}
+              </div>
+              <div class="mobile-cov-hours">
+                {#each getHourRange() as hour}
+                  {@const responsible = getResponsibleParty(day, hour)}
+                  <div class="mobile-cov-hour {responsible.color}">
+                    <span class="mobile-cov-time">{hour > 12 ? hour - 12 : hour}{hour >= 12 ? 'p' : 'a'}</span>
+                    <span class="mobile-cov-who">{responsible.name}</span>
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {/each}
         </div>
         
         <!-- Legend -->
@@ -1010,18 +1079,6 @@
   @media (max-width: 1024px) {
     .calendar {
       grid-template-columns: repeat(4, 1fr);
-    }
-  }
-  
-  @media (max-width: 768px) {
-    .calendar {
-      grid-template-columns: repeat(2, 1fr);
-    }
-  }
-  
-  @media (max-width: 480px) {
-    .calendar {
-      grid-template-columns: 1fr;
     }
   }
   
@@ -1593,6 +1650,438 @@
     font-size: 1.3em;
     font-weight: bold;
     color: #2d3748;
+  }
+
+  /* ========================================
+     Mobile Schedule List (hidden on desktop)
+     ======================================== */
+  .mobile-schedule-list {
+    display: none;
+  }
+
+  .mobile-coverage {
+    display: none;
+  }
+
+  /* ========================================
+     Mobile-specific delete button
+     ======================================== */
+  .btn-delete-inline {
+    padding: 2px 6px;
+    border-radius: 50%;
+    border: none;
+    background: transparent;
+    color: #a0aec0;
+    font-size: 0.85em;
+    cursor: pointer;
+    line-height: 1;
+    flex-shrink: 0;
+  }
+
+  .btn-delete-inline:hover {
+    background: #fed7d7;
+    color: #c53030;
+  }
+
+  /* ========================================
+     Responsive: 768px and below
+     ======================================== */
+  @media (max-width: 768px) {
+    .container {
+      padding: 16px 12px;
+    }
+
+    .card {
+      padding: 16px;
+      border-radius: 10px;
+    }
+
+    /* Header: stack vertically, compact */
+    .header {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .header h2 {
+      font-size: 1.2em;
+      text-align: center;
+    }
+
+    .header-controls {
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .header-controls .btn-secondary {
+      font-size: 0.85em;
+      padding: 8px 14px;
+    }
+
+    .week-nav {
+      justify-content: center;
+      gap: 12px;
+      font-size: 0.9em;
+    }
+
+    .week-nav button {
+      padding: 6px 14px;
+    }
+
+    /* View toggle: full width pills */
+    .view-toggle {
+      gap: 0;
+      border: 2px solid #e2e8f0;
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 14px;
+    }
+
+    .view-btn {
+      flex: 1;
+      border: none;
+      border-radius: 0;
+      padding: 8px 10px;
+      font-size: 0.85em;
+    }
+
+    /* Insights compact */
+    .insights-btn {
+      width: 100%;
+      font-size: 0.85em;
+      padding: 8px 14px;
+      margin-bottom: 10px;
+    }
+
+    .insights-box {
+      padding: 12px;
+      margin-bottom: 14px;
+    }
+
+    .insights-row {
+      gap: 16px;
+    }
+
+    .insight-value {
+      font-size: 1.1em;
+    }
+
+    /* Hide desktop grid, show mobile list */
+    .desktop-calendar {
+      display: none !important;
+    }
+
+    .mobile-schedule-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    .mobile-day-row {
+      display: flex;
+      align-items: stretch;
+      border-bottom: 1px solid #edf2f7;
+      min-height: 52px;
+    }
+
+    .mobile-day-row:last-child {
+      border-bottom: none;
+    }
+
+    .mobile-day-row.is-today {
+      background: #ebf8ff;
+    }
+
+    .mobile-day-row.has-shift {
+      background: #f0fff4;
+    }
+
+    .mobile-day-row.is-today.has-shift {
+      background: linear-gradient(135deg, #ebf8ff 0%, #f0fff4 100%);
+    }
+
+    .mobile-day-label {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      width: 52px;
+      min-width: 52px;
+      padding: 8px 4px;
+      background: rgba(0, 0, 0, 0.03);
+      border-right: 1px solid #edf2f7;
+    }
+
+    .mobile-day-name {
+      font-size: 0.7em;
+      font-weight: 600;
+      color: #718096;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .mobile-day-date {
+      font-size: 1.2em;
+      font-weight: 700;
+      color: #2d3748;
+    }
+
+    .is-today .mobile-day-date {
+      color: #3182ce;
+    }
+
+    .mobile-day-info {
+      flex: 1;
+      padding: 8px 10px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    .mobile-shift-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .mobile-shift-badge {
+      background: #c6f6d5;
+      color: #22543d;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 0.8em;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .mobile-shift-time {
+      font-size: 0.85em;
+      color: #4a5568;
+      white-space: nowrap;
+    }
+
+    .mobile-shift-note {
+      font-size: 0.75em;
+      color: #718096;
+      font-style: italic;
+      padding-left: 4px;
+    }
+
+    .mobile-no-shift {
+      font-size: 0.85em;
+      color: #a0aec0;
+      font-style: italic;
+    }
+
+    .mobile-event-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding-left: 6px;
+      font-size: 0.8em;
+    }
+
+    .mobile-event-owner {
+      font-weight: 600;
+      color: #4a5568;
+    }
+
+    .mobile-event-title {
+      color: #718096;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
+    }
+
+    .mobile-event-time {
+      margin-left: auto;
+      color: #a0aec0;
+      white-space: nowrap;
+      font-size: 0.9em;
+    }
+
+    .mobile-add-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 36px;
+      min-width: 36px;
+      border: none;
+      background: transparent;
+      color: #667eea;
+      font-size: 1.3em;
+      font-weight: 700;
+      cursor: pointer;
+      border-left: 1px solid #edf2f7;
+    }
+
+    .mobile-add-btn:hover {
+      background: #ebf4ff;
+    }
+
+    /* Coverage stats: 2x2+1 grid on mobile */
+    .coverage-stats {
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+    }
+
+    .stat-card {
+      padding: 12px 10px;
+      border-radius: 8px;
+    }
+
+    .stat-value {
+      font-size: 1.5em;
+    }
+
+    .stat-label {
+      font-size: 0.75em;
+    }
+
+    .stat-detail {
+      font-size: 0.75em;
+    }
+
+    /* Hide desktop coverage grid, show mobile */
+    .desktop-coverage {
+      display: none !important;
+    }
+
+    .mobile-coverage {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .mobile-cov-day {
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .mobile-cov-day-header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 8px 12px;
+      font-weight: 600;
+      font-size: 0.9em;
+    }
+
+    .mobile-cov-hours {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(70px, 1fr));
+      gap: 2px;
+      padding: 4px;
+    }
+
+    .mobile-cov-hour {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 6px 4px;
+      border-radius: 4px;
+      border: 1px solid;
+      font-size: 0.75em;
+    }
+
+    .mobile-cov-time {
+      font-weight: 700;
+      font-size: 0.9em;
+    }
+
+    .mobile-cov-who {
+      font-size: 0.8em;
+      text-align: center;
+      line-height: 1.2;
+    }
+
+    /* Gap alerts compact */
+    .gap-alert {
+      padding: 14px;
+      margin-bottom: 14px;
+    }
+
+    .gap-alert h3 {
+      font-size: 1em;
+    }
+
+    .gap-item {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 10px;
+    }
+
+    .request-btn {
+      width: 100%;
+      text-align: center;
+      padding: 8px;
+    }
+
+    /* Legend compact */
+    .coverage-legend {
+      gap: 10px;
+      padding: 12px;
+      font-size: 0.85em;
+    }
+
+    .legend-color {
+      width: 18px;
+      height: 18px;
+    }
+  }
+
+  /* ========================================
+     Responsive: 480px and below
+     ======================================== */
+  @media (max-width: 480px) {
+    .container {
+      padding: 10px 8px;
+    }
+
+    .card {
+      padding: 12px;
+    }
+
+    .header h2 {
+      font-size: 1.05em;
+    }
+
+    .mobile-cov-hours {
+      grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
+    }
+
+    .mobile-cov-hour {
+      padding: 4px 2px;
+      font-size: 0.7em;
+    }
+
+    .coverage-stats {
+      grid-template-columns: repeat(2, 1fr);
+      gap: 6px;
+    }
+
+    .stat-card {
+      padding: 10px 8px;
+    }
+
+    .stat-value {
+      font-size: 1.3em;
+    }
+
+    .coverage-legend {
+      flex-direction: column;
+      gap: 6px;
+      font-size: 0.8em;
+    }
   }
 </style>
 

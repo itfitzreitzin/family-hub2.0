@@ -1,5 +1,7 @@
 <script>
   import { onMount } from 'svelte'
+  import { goto } from '$app/navigation'
+  import { toast } from '$lib/stores/toast.js'
   import { supabase } from '$lib/supabase'
   
   let user = null
@@ -13,7 +15,7 @@
     const { data: { user: currentUser } } = await supabase.auth.getUser()
     
     if (!currentUser) {
-      window.location.href = '/'
+      goto('/')
       return
     }
     
@@ -25,12 +27,12 @@
   
   async function completeSetup() {
     if (!role) {
-      alert('Please select your role')
+      toast.error('Please select your role')
       return
     }
     
     if (!fullName) {
-      alert('Please enter your name')
+      toast.error('Please enter your name')
       return
     }
     
@@ -50,9 +52,9 @@
       if (error) throw error
       
       // Redirect to dashboard
-      window.location.href = '/dashboard'
+      goto('/dashboard')
     } catch (err) {
-      alert('Error: ' + err.message)
+      toast.error('Error: ' + err.message)
       loading = false
     }
   }

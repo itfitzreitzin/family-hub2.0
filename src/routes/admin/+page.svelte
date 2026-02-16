@@ -1,6 +1,8 @@
 <script>
   import { onMount } from 'svelte'
   import { supabase } from '$lib/supabase'
+  import { goto } from '$app/navigation'
+  import { toast, confirm as confirmModal } from '$lib/stores/toast.js'
   import Nav from '$lib/Nav.svelte'
   
   let user = null
@@ -21,7 +23,7 @@
     const { data: { user: currentUser } } = await supabase.auth.getUser()
     
     if (!currentUser) {
-      window.location.href = '/'
+      goto('/')
       return
     }
     
@@ -38,8 +40,8 @@
 
     // Only admin can access this page
     if (profile?.role !== 'admin') {
-      alert('Access denied. Admin only.')
-      window.location.href = '/dashboard'
+      toast.error('Access denied. Admin only.')
+      goto('/dashboard')
       return
     }
     
@@ -69,7 +71,7 @@
   
   async function saveNanny() {
     if (!nannyName) {
-      alert('Name is required')
+      toast.error('Name is required')
       return
     }
     
@@ -87,11 +89,11 @@
         
         if (error) throw error
         
-        alert('Nanny updated!')
+        toast.success('Nanny updated!')
       } else {
         // Create new nanny - need to create auth user first
         if (!nannyEmail || !nannyPassword) {
-          alert('Email and password required for new nanny')
+          toast.error('Email and password required for new nanny')
           return
         }
         
@@ -117,20 +119,24 @@
         
         if (profileError) throw profileError
         
-        alert('Nanny created! They can log in with: ' + nannyEmail)
+        toast.success('Nanny created! They can log in with: ' + nannyEmail)
       }
       
       cancelNannyForm()
       await loadNannies()
     } catch (err) {
-      alert('Error: ' + err.message)
+      toast.error('Error: ' + err.message)
     }
   }
   
   async function deleteNanny(nanny) {
-    if (!confirm(`Delete ${nanny.full_name}? This will also delete all their time entries.`)) {
-      return
-    }
+    const confirmed = await confirmModal.show({
+      title: 'Delete Nanny',
+      message: `Delete ${nanny.full_name}? This will also delete all their time entries.`,
+      confirmText: 'Delete',
+      danger: true
+    })
+    if (!confirmed) return
     
     try {
       // Delete time entries first
@@ -147,10 +153,10 @@
       
       if (error) throw error
       
-      alert('Nanny deleted')
+      toast.success('Nanny deleted')
       await loadNannies()
     } catch (err) {
-      alert('Error deleting: ' + err.message)
+      toast.error('Error deleting: ' + err.message)
     }
   }
   
@@ -166,7 +172,7 @@
   
   async function viewNannyHistory(nanny) {
     // Redirect to history page with filter (we'll add this feature next)
-    window.location.href = `/history?nanny=${nanny.id}`
+    goto(`/history?nanny=${nanny.id}`)
   }
 </script>
 

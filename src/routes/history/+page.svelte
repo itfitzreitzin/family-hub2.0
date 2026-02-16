@@ -1,6 +1,8 @@
 <script>
   import { onMount } from 'svelte'
   import { supabase } from '$lib/supabase'
+  import { goto } from '$app/navigation'
+  import { toast, confirm as confirmModal } from '$lib/stores/toast.js'
   import Nav from '$lib/Nav.svelte'
   
   let user = null
@@ -28,7 +30,7 @@
     const { data: { user: currentUser } } = await supabase.auth.getUser()
     
     if (!currentUser) {
-      window.location.href = '/'
+      goto('/')
       return
     }
     
@@ -127,7 +129,7 @@
     })
   }
   
-  function generateVenmoPayment() {
+  async function generateVenmoPayment() {
     const venmo = profile?.venmo_username?.replace('@', '') || 'username'
     const rate = profile?.hourly_rate || 20
     
@@ -146,13 +148,14 @@ Total: $${weekPay.toFixed(2)}`
     if (isMobile) {
       const venmoUrl = `venmo://paycharge?txn=pay&recipients=${venmo}&amount=${weekPay.toFixed(2)}&note=${encodeURIComponent(note)}`
       
-      if (confirm(`Pay $${weekPay.toFixed(2)} to @${venmo} via Venmo?`)) {
+      const confirmed = await confirmModal.show({ title: 'Venmo Payment', message: `Pay $${weekPay.toFixed(2)} to @${venmo} via Venmo?`, confirmText: 'Pay' })
+      if (confirmed) {
         window.location.href = venmoUrl
       }
     } else {
       // Desktop - copy to clipboard
       navigator.clipboard.writeText(note).then(() => {
-        alert(`✅ Payment details copied!\n\n${note}\n\nPaste into Venmo when sending to @${venmo}`)
+        toast.success('Payment details copied to clipboard!')
       })
     }
   }
@@ -183,11 +186,11 @@ Total: $${weekPay.toFixed(2)}`
   
   async function signOut() {
     await supabase.auth.signOut()
-    window.location.href = '/'
+    goto('/')
   }
 </script>
 <Nav currentPage="history" />
-<div class="container">=
+<div class="container">
    <!-- Nanny Filter (only show for family/admin) -->
   {#if (profile?.role === 'family' || profile?.role === 'admin') && nannies.length > 0}
     <div class="filter-bar">

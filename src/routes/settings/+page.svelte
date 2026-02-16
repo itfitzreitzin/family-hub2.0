@@ -1,6 +1,8 @@
 <script>
   import { onMount } from 'svelte'
   import { supabase } from '$lib/supabase'
+  import { goto } from '$app/navigation'
+  import { toast, prompt as promptModal } from '$lib/stores/toast.js'
   import Nav from '$lib/Nav.svelte'
   
   let user = null
@@ -18,7 +20,7 @@
     const { data: { user: currentUser } } = await supabase.auth.getUser()
     
     if (!currentUser) {
-      window.location.href = '/'
+      goto('/')
       return
     }
     
@@ -70,7 +72,7 @@
       
       if (error) throw error
       
-      alert('Settings saved successfully!')
+      toast.success('Settings saved!')
       
       // Reload profile
       const { data: updatedProfile } = await supabase
@@ -81,30 +83,30 @@
       
       profile = updatedProfile
     } catch (err) {
-      alert('Error saving settings: ' + err.message)
+      toast.error('Error saving settings: ' + err.message)
     } finally {
       saving = false
     }
   }
   
   async function changePassword() {
-    const newPassword = prompt('Enter your new password (min 6 characters):')
-    
+    const newPassword = await promptModal.show({ title: 'Change Password', message: 'Enter your new password (min 6 characters):', placeholder: 'New password', inputType: 'password' })
+
     if (!newPassword || newPassword.length < 6) {
-      alert('Password must be at least 6 characters')
+      toast.error('Password must be at least 6 characters')
       return
     }
-    
+
     try {
       const { error } = await supabase.auth.updateUser({
         password: newPassword
       })
-      
+
       if (error) throw error
-      
-      alert('Password changed successfully!')
+
+      toast.success('Password changed!')
     } catch (err) {
-      alert('Error changing password: ' + err.message)
+      toast.error('Error changing password: ' + err.message)
     }
   }
 </script>

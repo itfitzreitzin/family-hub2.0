@@ -1,5 +1,7 @@
 <script>
   import { supabase } from '$lib/supabase'
+  import { goto } from '$app/navigation'
+  import { toast } from '$lib/stores/toast.js'
   
   let email = ''
   let password = ''
@@ -20,7 +22,7 @@
         
         if (signUpError) throw signUpError
         
-        alert('Check your email for the confirmation link!')
+        toast.success('Check your email for the confirmation link!')
       } else {
         const { data, error: signInError } = await supabase.auth.signInWithPassword({
           email,
@@ -44,13 +46,13 @@
 
           // If no profile or no role yet, send to setup
           if (!profile || !profile.role) {
-            window.location.href = '/setup'
+            goto('/setup')
             return
           }
         }
 
         // Otherwise go to dashboard
-        window.location.href = '/dashboard'
+        goto('/dashboard')
       }
     } catch (err) {
       error = err.message

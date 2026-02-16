@@ -39,28 +39,38 @@
 <style>
   .stats-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 0.875rem;
     margin: 1.5rem 0;
   }
-  
+
   .stat-card {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
-    padding: 1.25rem;
-    border-radius: 0.75rem;
+    padding: 1.25rem 1rem;
+    border-radius: 14px;
     text-align: center;
-    box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+    box-shadow: 0 4px 14px rgba(102, 126, 234, 0.25);
+    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
   }
-  
+
+  .stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(102, 126, 234, 0.3);
+  }
+
   .stat-value {
-    font-size: 2rem;
-    font-weight: bold;
+    font-size: 1.75rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
   }
-  
+
   .stat-label {
-    font-size: 0.9rem;
-    opacity: 0.9;
+    font-size: 0.8rem;
+    opacity: 0.85;
     margin-top: 0.25rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 500;
   }
 </style>

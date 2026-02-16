@@ -206,7 +206,7 @@
 <style>
   .container {
     min-height: 100vh;
-    background: #f7fafc;
+    background: var(--surface-page, #f0f2f8);
     padding: 40px 20px;
   }
   
@@ -214,24 +214,24 @@
     max-width: 600px;
     margin: 0 auto 30px;
     background: white;
-    border-radius: 15px;
+    border-radius: 1rem;
     padding: 30px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    box-shadow: var(--shadow-md, 0 4px 6px -1px rgba(0, 0, 0, 0.07)); border: 1px solid rgba(0, 0, 0, 0.04);
   }
   
   h2 {
     margin: 0 0 20px 0;
-    color: #2d3748;
+    color: var(--color-gray-800, #2d3748);
     padding-bottom: 10px;
-    border-bottom: 2px solid #e2e8f0;
+    border-bottom: 1px solid var(--color-gray-200, #e2e8f0);
   }
   
   .info-box {
-    background: #f7fafc;
+    background: var(--surface-sunken, #eef1f8);
     padding: clamp(1rem, 3vw, 1.5rem);
     border-radius: 0.75rem;
     margin-bottom: 2rem;
-    color: #4a5568;
+    color: var(--color-gray-700, #4a5568);
     line-height: 1.7;
   }
   
@@ -261,15 +261,16 @@
   input, select {
     width: 100%;
     padding: 0.75rem;
-    border: 1px solid #e2e8f0;
-    border-radius: 0.75rem;
+    border: 1.5px solid var(--color-gray-200, #e2e8f0);
+    border-radius: 10px;
     font-size: 1rem;
   }
 
   input:focus, select:focus {
     outline: none;
-    border-color: #667eea;
+    border-color: var(--color-primary, #667eea);
     box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
+    background: white;
   }
   
   small {
@@ -293,11 +294,13 @@
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
     font-size: clamp(1rem, 2vw, 1.15rem);
+    border-radius: 10px;
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
   }
   
   .btn-primary:hover:not(:disabled) {
-    transform: translateY(-2px);
-    box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
   }
   
   .btn-primary:disabled {
@@ -320,7 +323,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: #f7fafc;
-    color: #718096;
+    background: var(--surface-page, #f0f2f8);
+    color: var(--color-gray-500, #718096);
   }
 </style>

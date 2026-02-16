@@ -47,19 +47,47 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 1rem;
-    background: #f7fafc;
-    border-radius: 0.5rem;
+    padding: 0.875rem 1rem;
+    background: var(--surface-sunken, #eef1f8);
+    border-radius: 12px;
     margin-bottom: 1rem;
+    border: 1px solid rgba(0, 0, 0, 0.04);
   }
-  
+
+  .week-navigator button {
+    padding: 6px 14px;
+    background: var(--surface-card, white);
+    border: 1.5px solid var(--color-gray-200, #e2e8f0);
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 500;
+    font-size: 0.85em;
+    color: var(--color-gray-700, #4a5568);
+    transition: all 0.2s;
+  }
+
+  .week-navigator button:hover {
+    border-color: var(--color-primary, #667eea);
+    color: var(--color-primary, #667eea);
+  }
+
+  .week-display {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 500;
+    color: var(--color-gray-800, #2d3748);
+    font-size: 0.9em;
+  }
+
   .current-badge {
-    background: #48bb78;
+    background: linear-gradient(135deg, #48bb78, #38a169);
     color: white;
-    padding: 0.25rem 0.5rem;
+    padding: 0.2rem 0.6rem;
     border-radius: 9999px;
-    font-size: 0.8rem;
-    margin-left: 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    box-shadow: 0 2px 6px rgba(72, 187, 120, 0.25);
   }
 </style>
 

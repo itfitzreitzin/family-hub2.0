@@ -82,9 +82,9 @@
   .modal-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.5);
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
+    background: rgba(15, 23, 42, 0.45);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -95,40 +95,45 @@
 
   .modal-box {
     background: white;
-    border-radius: 15px;
-    padding: 30px;
+    border-radius: 1.125rem;
+    padding: 28px;
     max-width: 420px;
     width: 100%;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
-    animation: scaleIn 0.2s ease;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(0,0,0,0.04);
+    animation: modalSlideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   .modal-box h3 {
-    margin: 0 0 12px;
-    color: #2d3748;
-    font-size: 1.2em;
+    margin: 0 0 10px;
+    color: var(--color-gray-900, #1a202c);
+    font-size: 1.15em;
+    letter-spacing: -0.015em;
   }
 
   .modal-box p {
     margin: 0 0 24px;
-    color: #4a5568;
-    line-height: 1.5;
+    color: var(--color-gray-600, #4a5568);
+    line-height: 1.6;
     white-space: pre-line;
+    font-size: 0.95em;
   }
 
   .modal-box input {
     width: 100%;
-    padding: 12px;
-    border: 1px solid #e2e8f0;
-    border-radius: 8px;
+    padding: 11px 14px;
+    border: 1.5px solid var(--color-gray-200, #e2e8f0);
+    border-radius: 10px;
     font-size: 16px;
     margin-bottom: 20px;
+    background: var(--color-gray-50, #f7fafc);
+    transition: all 0.2s;
   }
 
   .modal-box input:focus {
     outline: none;
-    border-color: #667eea;
+    border-color: var(--color-primary, #667eea);
     box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
+    background: white;
   }
 
   .modal-actions {
@@ -140,41 +145,44 @@
   .btn-cancel,
   .btn-confirm {
     padding: 10px 20px;
-    border-radius: 8px;
+    border-radius: 10px;
     font-weight: 600;
     cursor: pointer;
-    font-size: 0.95em;
-    transition: all 0.2s;
+    font-size: 0.9em;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
     min-height: auto;
   }
 
   .btn-cancel {
     background: white;
-    color: #4a5568;
-    border: 2px solid #e2e8f0;
+    color: var(--color-gray-600, #4a5568);
+    border: 1.5px solid var(--color-gray-200, #e2e8f0);
   }
 
   .btn-cancel:hover {
-    background: #f7fafc;
+    background: var(--color-gray-50, #f7fafc);
+    border-color: var(--color-gray-300, #cbd5e0);
   }
 
   .btn-confirm {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
     border: none;
+    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.25);
   }
 
   .btn-confirm:hover {
     transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+    box-shadow: 0 4px 14px rgba(102, 126, 234, 0.35);
   }
 
   .btn-confirm.danger {
-    background: linear-gradient(135deg, #f56565 0%, #e53e3e 100%);
+    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+    box-shadow: 0 2px 8px rgba(239, 68, 68, 0.25);
   }
 
   .btn-confirm.danger:hover {
-    box-shadow: 0 4px 12px rgba(245, 101, 101, 0.3);
+    box-shadow: 0 4px 14px rgba(239, 68, 68, 0.35);
   }
 
   @keyframes fadeIn {
@@ -182,14 +190,14 @@
     to { opacity: 1; }
   }
 
-  @keyframes scaleIn {
+  @keyframes modalSlideIn {
     from {
       opacity: 0;
-      transform: scale(0.95);
+      transform: translateY(8px) scale(0.97);
     }
     to {
       opacity: 1;
-      transform: scale(1);
+      transform: translateY(0) scale(1);
     }
   }
 

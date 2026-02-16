@@ -970,7 +970,7 @@ Total: $${weekPay.toFixed(2)}`
 <style>
   .container {
     min-height: 100vh;
-    background: #f7fafc;
+    background: var(--surface-page, #f0f2f8);
     padding: 40px 20px;
     max-width: 1200px;
     margin: 0 auto;
@@ -979,9 +979,9 @@ Total: $${weekPay.toFixed(2)}`
   .nanny-selector {
     background: white;
     padding: 20px;
-    border-radius: 15px;
+    border-radius: 1rem;
     margin-bottom: 20px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    box-shadow: var(--shadow-md, 0 4px 6px -1px rgba(0, 0, 0, 0.07)); border: 1px solid rgba(0, 0, 0, 0.04);
     display: flex;
     align-items: center;
     gap: 15px;
@@ -989,7 +989,7 @@ Total: $${weekPay.toFixed(2)}`
   
   .nanny-selector label {
     font-weight: 600;
-    color: #4a5568;
+    color: var(--color-gray-700, #4a5568);
   }
   
   .nanny-selector select {
@@ -1002,10 +1002,10 @@ Total: $${weekPay.toFixed(2)}`
   
   .card {
     background: white;
-    border-radius: 15px;
+    border-radius: 1rem;
     padding: 30px;
     margin-bottom: 20px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    box-shadow: var(--shadow-md, 0 4px 6px -1px rgba(0, 0, 0, 0.07)); border: 1px solid rgba(0, 0, 0, 0.04);
   }
   
   .card-header {
@@ -1019,7 +1019,7 @@ Total: $${weekPay.toFixed(2)}`
   
   h2 {
     margin: 0 0 20px 0;
-    color: #2d3748;
+    color: var(--color-gray-800, #2d3748);
     padding-bottom: 10px;
     border-bottom: 2px solid #e2e8f0;
   }
@@ -1052,7 +1052,7 @@ Total: $${weekPay.toFixed(2)}`
   .week-nav span {
     font-size: 0.95em;
     font-weight: 600;
-    color: #4a5568;
+    color: var(--color-gray-700, #4a5568);
     min-width: 200px;
     text-align: center;
   }
@@ -1061,7 +1061,8 @@ Total: $${weekPay.toFixed(2)}`
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
     padding: 40px;
-    border-radius: 15px;
+    border-radius: 1rem;
+    box-shadow: 0 8px 24px rgba(102, 126, 234, 0.25);
     text-align: center;
     margin-bottom: 30px;
   }
@@ -1161,7 +1162,7 @@ Total: $${weekPay.toFixed(2)}`
     border: 2px solid #e2e8f0;
     border-radius: 6px;
     font-weight: 600;
-    color: #4a5568;
+    color: var(--color-gray-700, #4a5568);
     cursor: pointer;
     transition: all 0.2s;
   }
@@ -1187,7 +1188,7 @@ Total: $${weekPay.toFixed(2)}`
     background: #f7fafc;
     padding: 12px;
     text-align: left;
-    color: #4a5568;
+    color: var(--color-gray-700, #4a5568);
     font-weight: 600;
     border-bottom: 2px solid #e2e8f0;
   }
@@ -1212,10 +1213,10 @@ Total: $${weekPay.toFixed(2)}`
   }
   
   .entry-card {
-    background: #f7fafc;
+    background: var(--surface-sunken, #eef1f8);
     padding: 15px;
     border-radius: 8px;
-    border: 1px solid #e2e8f0;
+    border: 1px solid rgba(0, 0, 0, 0.05);
   }
   
   .entry-header {
@@ -1239,7 +1240,7 @@ Total: $${weekPay.toFixed(2)}`
   }
   
   .entry-time {
-    color: #4a5568;
+    color: var(--color-gray-700, #4a5568);
     font-size: 0.9em;
     margin-bottom: 8px;
   }
@@ -1277,7 +1278,7 @@ Total: $${weekPay.toFixed(2)}`
   
   .detail-label {
     font-weight: 600;
-    color: #4a5568;
+    color: var(--color-gray-700, #4a5568);
   }
   
   .detail-value {
@@ -1394,6 +1395,7 @@ Total: $${weekPay.toFixed(2)}`
     background: transparent;
     color: #a0aec0;
     font-size: 0.9em;
+    color: var(--color-gray-700, #4a5568);
     cursor: pointer;
     line-height: 1;
   }
@@ -1406,7 +1408,7 @@ Total: $${weekPay.toFixed(2)}`
   .empty-state {
     text-align: center;
     padding: 40px;
-    color: #718096;
+    color: var(--color-gray-500, #718096);
   }
   
   .week-total {
@@ -1414,7 +1416,8 @@ Total: $${weekPay.toFixed(2)}`
     padding: 20px;
     background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
     color: white;
-    border-radius: 10px;
+    border-radius: 12px;
+    box-shadow: 0 6px 20px rgba(72, 187, 120, 0.2);
     text-align: center;
   }
   
@@ -1482,7 +1485,7 @@ Total: $${weekPay.toFixed(2)}`
   .loading {
     text-align: center;
     padding: 60px;
-    color: #718096;
+    color: var(--color-gray-500, #718096);
   }
   
   /* Modals */
@@ -1492,7 +1495,9 @@ Total: $${weekPay.toFixed(2)}`
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(0,0,0,0.5);
+    background: rgba(15, 23, 42, 0.45);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1503,7 +1508,8 @@ Total: $${weekPay.toFixed(2)}`
   .modal-content {
     background: white;
     padding: 30px;
-    border-radius: 15px;
+    border-radius: 1.125rem;
+    box-shadow: var(--shadow-xl, 0 20px 40px rgba(0,0,0,0.15));
     max-width: 500px;
     width: 100%;
     max-height: 80vh;
@@ -1513,7 +1519,7 @@ Total: $${weekPay.toFixed(2)}`
   .modal-content h3 {
     margin-top: 0;
     margin-bottom: 20px;
-    color: #2d3748;
+    color: var(--color-gray-800, #2d3748);
   }
   
   .form-group {
@@ -1524,7 +1530,7 @@ Total: $${weekPay.toFixed(2)}`
     display: block;
     margin-bottom: 5px;
     font-weight: 600;
-    color: #4a5568;
+    color: var(--color-gray-700, #4a5568);
   }
   
   .form-group input {
@@ -1538,7 +1544,7 @@ Total: $${weekPay.toFixed(2)}`
   .form-group small {
     display: block;
     margin-top: 5px;
-    color: #718096;
+    color: var(--color-gray-500, #718096);
     font-size: 0.85em;
   }
   

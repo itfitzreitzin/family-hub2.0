@@ -187,7 +187,7 @@ Total: $${weekPay.toFixed(2)}`
   }
 </script>
 <Nav currentPage="history" />
-<div class="container">=
+<div class="container">
    <!-- Nanny Filter (only show for family/admin) -->
   {#if (profile?.role === 'family' || profile?.role === 'admin') && nannies.length > 0}
     <div class="filter-bar">

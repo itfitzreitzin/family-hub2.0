@@ -140,25 +140,47 @@
     justify-content: center;
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     padding: clamp(1.5rem, 6vw, 3rem);
+    position: relative;
+  }
+
+  .setup-screen::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at 20% 50%, rgba(255,255,255,0.08) 0%, transparent 50%),
+                radial-gradient(circle at 80% 20%, rgba(255,255,255,0.06) 0%, transparent 40%);
+    pointer-events: none;
   }
 
   .setup-card {
     background: white;
     padding: clamp(1.75rem, 6vw, 3rem);
     border-radius: clamp(0.75rem, 3vw, 1.25rem);
-    box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255,255,255,0.1);
     max-width: 520px;
     width: 100%;
     display: flex;
     flex-direction: column;
     gap: 1.75rem;
+    position: relative;
+    z-index: 1;
+    animation: cardEntrance 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  @keyframes cardEntrance {
+    from { opacity: 0; transform: translateY(12px) scale(0.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
   }
 
   h1 {
     text-align: center;
     font-size: clamp(1.9rem, 3vw, 2.4rem);
     margin-bottom: 0.25rem;
-    color: #667eea;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    letter-spacing: -0.03em;
   }
 
   h2 {
@@ -185,8 +207,8 @@
 
   .role-content {
     padding: 1.25rem;
-    border: 2px solid #e2e8f0;
-    border-radius: 0.75rem;
+    border: 1.5px solid var(--color-gray-200, #e2e8f0);
+    border-radius: 12px;
     transition: all 0.3s;
     text-align: center;
   }
@@ -197,8 +219,9 @@
   }
 
   .role-card.selected .role-content {
-    border-color: #667eea;
+    border-color: var(--color-primary, #667eea);
     background: linear-gradient(135deg, rgba(102, 126, 234, 0.12) 0%, rgba(118, 75, 162, 0.12) 100%);
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
   }
 
   .role-icon {
@@ -240,8 +263,8 @@
   input {
     width: 100%;
     padding: 0.75rem;
-    border: 1px solid #e2e8f0;
-    border-radius: 0.75rem;
+    border: 1.5px solid var(--color-gray-200, #e2e8f0);
+    border-radius: 10px;
     font-size: 1rem;
   }
 
@@ -257,11 +280,12 @@
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
     border: none;
-    border-radius: 0.75rem;
+    border-radius: 10px;
     font-size: clamp(1rem, 2vw, 1.15rem);
     font-weight: 600;
     cursor: pointer;
     transition: transform 0.2s;
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
   }
 
   button:hover:not(:disabled) {

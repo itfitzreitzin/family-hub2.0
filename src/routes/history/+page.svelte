@@ -305,9 +305,9 @@ Total: $${weekPay.toFixed(2)}`
 <style>
   .container {
     min-height: 100vh;
-    background: #f7fafc;
+    background: var(--surface-page, #f0f2f8);
   }
-  
+
   .header {
     background: white;
     padding: 20px;
@@ -346,10 +346,11 @@ Total: $${weekPay.toFixed(2)}`
   
   .summary-card {
     background: white;
-    border-radius: 15px;
+    border-radius: 1rem;
     padding: 30px;
     margin-bottom: 30px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    box-shadow: var(--shadow-md, 0 4px 6px -1px rgba(0, 0, 0, 0.07));
+    border: 1px solid rgba(0, 0, 0, 0.04);
   }
   
   .summary-header {
@@ -398,14 +399,15 @@ Total: $${weekPay.toFixed(2)}`
   .stat {
     text-align: center;
     padding: 20px;
-    background: #f7fafc;
-    border-radius: 10px;
+    background: var(--surface-sunken, #eef1f8);
+    border-radius: 12px;
   }
   
   .stat-value {
-    font-size: 2.5em;
+    font-size: 2.25em;
     font-weight: bold;
-    color: #667eea;
+    color: var(--color-primary, #667eea);
+    letter-spacing: -0.02em;
     margin-bottom: 5px;
   }
   
@@ -436,8 +438,8 @@ Total: $${weekPay.toFixed(2)}`
   }
   
   .btn-primary:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(102, 126, 234, 0.35);
   }
   
   .btn-secondary {
@@ -452,10 +454,11 @@ Total: $${weekPay.toFixed(2)}`
   
   .table-card {
     background: white;
-    border-radius: 15px;
+    border-radius: 1rem;
     padding: 30px;
     margin-bottom: 30px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    box-shadow: var(--shadow-md, 0 4px 6px -1px rgba(0, 0, 0, 0.07));
+    border: 1px solid rgba(0, 0, 0, 0.04);
   }
   
   h3 {
@@ -475,7 +478,7 @@ Total: $${weekPay.toFixed(2)}`
   }
   
   .empty-state a {
-    color: #667eea;
+    color: var(--color-primary, #667eea);
     text-decoration: none;
     font-weight: 600;
   }
@@ -490,12 +493,15 @@ Total: $${weekPay.toFixed(2)}`
   }
   
   th {
-    background: #f7fafc;
+    background: var(--surface-sunken, #eef1f8);
     padding: 12px;
     text-align: left;
     color: #4a5568;
     font-weight: 600;
-    border-bottom: 2px solid #e2e8f0;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 0.8rem;
+    border-bottom: 1px solid var(--color-gray-200, #e2e8f0);
   }
   
   td {
@@ -520,7 +526,7 @@ Total: $${weekPay.toFixed(2)}`
   }
   
   .quick-links a {
-    color: #667eea;
+    color: var(--color-primary, #667eea);
     text-decoration: none;
     font-weight: 600;
   }
@@ -539,8 +545,9 @@ Total: $${weekPay.toFixed(2)}`
   margin: 20px auto;
   padding: 15px 20px;
   background: white;
-  border-radius: 10px;
-  box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+  border-radius: 12px;
+  box-shadow: var(--shadow-sm, 0 1px 3px rgba(0,0,0,0.06));
+  border: 1px solid rgba(0, 0, 0, 0.04);
   display: flex;
   align-items: center;
   gap: 15px;

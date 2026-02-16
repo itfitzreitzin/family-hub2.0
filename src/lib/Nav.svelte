@@ -1,5 +1,6 @@
 <script>
   import { onMount } from 'svelte'
+  import { goto } from '$app/navigation'
   import { supabase } from '$lib/supabase'
   import { browser } from '$app/environment'
   
@@ -73,7 +74,7 @@
       window.navigator.vibrate(10)
     }
     await supabase.auth.signOut()
-    window.location.href = '/'
+    goto('/')
   }
   
   function toggleMobileMenu() {
@@ -123,9 +124,9 @@
 
 <!-- Desktop Navigation -->
 {#if !isMobile}
-<nav class="desktop-nav">
+<nav class="desktop-nav" aria-label="Main navigation">
   <div class="nav-content">
-    <a href="/dashboard" class="logo">👶 Family Hub</a>
+    <a href="/dashboard" class="logo" aria-label="Family Hub - Go to dashboard">👶 Family Hub</a>
     
     <div class="nav-links">
       <a href="/dashboard" class:active={currentPage === 'dashboard'}>Dashboard</a>
@@ -146,72 +147,72 @@
 
 <!-- Mobile Navigation -->
 {:else}
-<nav class="mobile-nav" class:hide={hideNav}>
+<nav class="mobile-nav" class:hide={hideNav} aria-label="Main navigation">
   <div class="mobile-nav-header safe-top">
-    <a href="/dashboard" class="mobile-logo" on:click={handleNavClick}>👶 Family Hub</a>
+    <a href="/dashboard" class="mobile-logo" on:click={handleNavClick} aria-label="Family Hub - Go to dashboard">👶 Family Hub</a>
   </div>
 </nav>
 
 <!-- Mobile Menu Overlay -->
 {#if mobileMenuOpen}
-  <div class="mobile-menu-overlay" on:click={toggleMobileMenu}></div>
-  <div class="mobile-menu safe-top">
+  <div class="mobile-menu-overlay" on:click={toggleMobileMenu} role="presentation"></div>
+  <div class="mobile-menu safe-top" role="dialog" aria-label="Navigation menu">
     <div class="mobile-menu-header">
       <h3>Menu</h3>
       <button class="close-menu touch-target" on:click={toggleMobileMenu} aria-label="Close menu">✕</button>
     </div>
     
-    <div class="mobile-menu-links">
-      <a href="/dashboard" class:active={currentPage === 'dashboard'} on:click={handleNavClick}>
-        <span class="icon">🏠</span>
+    <nav class="mobile-menu-links" aria-label="Page navigation">
+      <a href="/dashboard" class:active={currentPage === 'dashboard'} on:click={handleNavClick} aria-label="Dashboard" aria-current={currentPage === 'dashboard' ? 'page' : undefined}>
+        <span class="icon" aria-hidden="true">🏠</span>
         <span>Dashboard</span>
         {#if currentPage === 'dashboard'}
           <span class="active-indicator">•</span>
         {/if}
       </a>
-      <a href="/tracker" class:active={currentPage === 'tracker'} on:click={handleNavClick}>
-        <span class="icon">⏰</span>
+      <a href="/tracker" class:active={currentPage === 'tracker'} on:click={handleNavClick} aria-label="Time Tracker" aria-current={currentPage === 'tracker' ? 'page' : undefined}>
+        <span class="icon" aria-hidden="true">⏰</span>
         <span>Time Tracker</span>
         {#if currentPage === 'tracker'}
           <span class="active-indicator">•</span>
         {/if}
       </a>
       {#if userRole === 'family' || userRole === 'admin'}
-        <a href="/schedule" class:active={currentPage === 'schedule'} on:click={handleNavClick}>
-          <span class="icon">📅</span>
+        <a href="/schedule" class:active={currentPage === 'schedule'} on:click={handleNavClick} aria-label="Schedule" aria-current={currentPage === 'schedule' ? 'page' : undefined}>
+          <span class="icon" aria-hidden="true">📅</span>
           <span>Schedule</span>
           {#if currentPage === 'schedule'}
             <span class="active-indicator">•</span>
           {/if}
         </a>
       {/if}
-      <a href="/history" class:active={currentPage === 'history'} on:click={handleNavClick}>
-        <span class="icon">📊</span>
+      <a href="/history" class:active={currentPage === 'history'} on:click={handleNavClick} aria-label="History" aria-current={currentPage === 'history' ? 'page' : undefined}>
+        <span class="icon" aria-hidden="true">📊</span>
         <span>History</span>
         {#if currentPage === 'history'}
           <span class="active-indicator">•</span>
         {/if}
       </a>
       {#if isAdmin}
-        <a href="/admin" class:active={currentPage === 'admin'} class="admin-link-mobile" on:click={handleNavClick}>
-          <span class="icon">⚙️</span>
+        <a href="/admin" class:active={currentPage === 'admin'} class="admin-link-mobile" on:click={handleNavClick} aria-label="Admin" aria-current={currentPage === 'admin' ? 'page' : undefined}>
+          <span class="icon" aria-hidden="true">⚙️</span>
           <span>Admin</span>
           {#if currentPage === 'admin'}
             <span class="active-indicator">•</span>
           {/if}
         </a>
       {/if}
-      <a href="/settings" class:active={currentPage === 'settings'} on:click={handleNavClick}>
-        <span class="icon">👤</span>
+      <a href="/settings" class:active={currentPage === 'settings'} on:click={handleNavClick} aria-label="Settings" aria-current={currentPage === 'settings' ? 'page' : undefined}>
+        <span class="icon" aria-hidden="true">👤</span>
         <span>Settings</span>
         {#if currentPage === 'settings'}
           <span class="active-indicator">•</span>
         {/if}
       </a>
-    </div>
-    
-    <button class="mobile-sign-out touch-target" on:click={signOut}>
-      <span class="icon">🚪</span>
+    </nav>
+
+    <button class="mobile-sign-out touch-target" on:click={signOut} aria-label="Sign out">
+      <span class="icon" aria-hidden="true">🚪</span>
       <span>Sign Out</span>
     </button>
   </div>
@@ -219,29 +220,35 @@
 
 <!-- Mobile Bottom Navigation -->
 {#if isMobile}
-<div class="mobile-bottom-nav safe-bottom">
-  <a 
-    href="/dashboard" 
+<nav class="mobile-bottom-nav safe-bottom" aria-label="Quick navigation">
+  <a
+    href="/dashboard"
     class:active={currentPage === 'dashboard'}
     on:click={handleNavClick}
+    aria-label="Home"
+    aria-current={currentPage === 'dashboard' ? 'page' : undefined}
   >
-    <span class="bottom-icon">🏠</span>
+    <span class="bottom-icon" aria-hidden="true">🏠</span>
     <span class="bottom-label">Home</span>
   </a>
-  <a 
-    href="/tracker" 
+  <a
+    href="/tracker"
     class:active={currentPage === 'tracker'}
     on:click={handleNavClick}
+    aria-label="Time Tracker"
+    aria-current={currentPage === 'tracker' ? 'page' : undefined}
   >
-    <span class="bottom-icon">⏰</span>
+    <span class="bottom-icon" aria-hidden="true">⏰</span>
     <span class="bottom-label">Track</span>
   </a>
-  <a 
-    href="/history" 
+  <a
+    href="/history"
     class:active={currentPage === 'history'}
     on:click={handleNavClick}
+    aria-label="History"
+    aria-current={currentPage === 'history' ? 'page' : undefined}
   >
-    <span class="bottom-icon">📊</span>
+    <span class="bottom-icon" aria-hidden="true">📊</span>
     <span class="bottom-label">History</span>
   </a>
   <button 
@@ -249,10 +256,10 @@
     on:click={toggleMobileMenu}
     aria-label="More options"
   >
-    <span class="bottom-icon">☰</span>
+    <span class="bottom-icon" aria-hidden="true">☰</span>
     <span class="bottom-label">More</span>
   </button>
-</div>
+</nav>
 {/if}
 {/if}
 
@@ -483,7 +490,7 @@
     padding: 0;
   }
   
-  .mobile-menu-links {
+  nav.mobile-menu-links, .mobile-menu-links {
     flex: 1;
     padding: 20px 0;
     overflow-y: auto;

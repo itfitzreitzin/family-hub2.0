@@ -2,6 +2,8 @@
   import { onMount, onDestroy } from 'svelte'
   import { supabase } from '$lib/supabase'
   import Nav from '$lib/Nav.svelte'
+  import { goto } from '$app/navigation'
+  import { toast, confirm as confirmModal } from '$lib/stores/toast.js'
   
   let user = null
   let profile = null
@@ -30,7 +32,7 @@
   
   async function saveNanny() {
     if (!nannyName) {
-      alert('Name is required')
+      toast.error('Name is required')
       return
     }
     
@@ -48,11 +50,11 @@
         
         if (error) throw error
         
-        alert('Nanny updated!')
+        toast.success('Nanny updated!')
       } else {
         // Create new nanny
         if (!nannyEmail || !nannyPassword) {
-          alert('Email and password required for new nanny')
+          toast.error('Email and password required for new nanny')
           return
         }
         
@@ -76,20 +78,24 @@
         
         if (profileError) throw profileError
         
-        alert('Nanny created! They can log in with: ' + nannyEmail)
+        toast.success('Nanny created! They can log in with: ' + nannyEmail)
       }
       
       cancelNannyForm()
       await loadFamilyDashboard()
     } catch (err) {
-      alert('Error: ' + err.message)
+      toast.error('Error: ' + err.message)
     }
   }
   
   async function deleteNanny(nanny) {
-    if (!confirm(`Delete ${nanny.full_name}? This will also delete all their time entries.`)) {
-      return
-    }
+    const confirmed = await confirmModal.show({
+      title: 'Delete Nanny',
+      message: `Delete ${nanny.full_name}? This will also delete all their time entries.`,
+      confirmText: 'Delete',
+      danger: true
+    })
+    if (!confirmed) return
     
     try {
       // Delete time entries first
@@ -106,10 +112,10 @@
       
       if (error) throw error
       
-      alert('Nanny deleted')
+      toast.success('Nanny deleted')
       await loadFamilyDashboard()
     } catch (err) {
-      alert('Error deleting: ' + err.message)
+      toast.error('Error deleting: ' + err.message)
     }
   }
   
@@ -126,7 +132,7 @@ onMount(async () => {
   const { data: { user: currentUser } } = await supabase.auth.getUser()
   
   if (!currentUser) {
-    window.location.href = '/'
+    goto('/')
     return
   }
   
@@ -143,7 +149,7 @@ onMount(async () => {
 
   // If no profile or missing role, send to setup
   if (!profile || !profile.role) {
-    window.location.href = '/setup'
+    goto('/setup')
     return
   }
   

@@ -3,6 +3,7 @@
 <script>
   import { onMount } from 'svelte'
   import { supabase } from '$lib/supabase'
+  import { toast, confirm as confirmModal } from '$lib/stores/toast.js'
   
   export let userId
   export let onUpdate = () => {}
@@ -56,7 +57,7 @@
       if (error) throw error
       calendars = data || []
     } catch (err) {
-      console.error('Error loading calendars:', err)
+      toast.error('Failed to load calendars')
     }
     loading = false
   }
@@ -73,7 +74,7 @@
       // For iCal URL feeds
       if (calendarForm.calendar_type === 'ical') {
         if (!calendarForm.calendar_url) {
-          alert('Please provide an iCal feed URL')
+          toast.error('Please provide an iCal feed URL')
           return
         }
       }
@@ -93,18 +94,13 @@
       onUpdate()
       
     } catch (err) {
-      console.error('Error adding calendar:', err)
-      alert('Failed to add calendar')
+      toast.error('Failed to add calendar')
     }
   }
   
   async function connectGoogleCalendar() {
     // In production, this would initiate OAuth flow
-    alert(`Google Calendar integration would happen here. 
-For now, you can:
-1. Get your calendar ID from Google Calendar settings
-2. Use the manual calendar ID option
-3. Or use an iCal feed URL from Google Calendar settings`)
+    toast.info('Google Calendar integration coming soon. For now, use a manual calendar ID or iCal feed URL from your calendar settings.', 8000)
     
     calendarForm.calendar_type = 'manual'
   }
@@ -121,12 +117,13 @@ For now, you can:
       await loadCalendars()
       onUpdate()
     } catch (err) {
-      console.error('Error toggling calendar:', err)
+      toast.error('Failed to toggle calendar')
     }
   }
   
   async function deleteCalendar(calendarId) {
-    if (!confirm('Delete this calendar? All associated events will be removed.')) return
+    const confirmed = await confirmModal.show({ title: 'Delete Calendar', message: 'Delete this calendar? All associated events will be removed.', confirmText: 'Delete', danger: true })
+    if (!confirmed) return
     
     try {
       const { error } = await supabase
@@ -139,13 +136,13 @@ For now, you can:
       await loadCalendars()
       onUpdate()
     } catch (err) {
-      console.error('Error deleting calendar:', err)
+      toast.error('Failed to delete calendar')
     }
   }
   
   async function syncCalendar(calendarId) {
     // This would trigger a sync with the calendar source
-    alert('Sync functionality would fetch latest events from the calendar source')
+    toast.info('Sync functionality would fetch latest events from the calendar source')
     
     try {
       const { error } = await supabase
@@ -156,7 +153,7 @@ For now, you can:
       if (error) throw error
       await loadCalendars()
     } catch (err) {
-      console.error('Error updating sync time:', err)
+      toast.error('Failed to sync calendar')
     }
   }
   
@@ -223,8 +220,7 @@ For now, you can:
       onUpdate()
       
     } catch (err) {
-      console.error('Error adding manual busy time:', err)
-      alert('Failed to add busy time')
+      toast.error('Failed to add busy time')
     }
   }
   

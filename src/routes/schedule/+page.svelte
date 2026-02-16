@@ -3,6 +3,8 @@
   import { supabase } from '$lib/supabase'
   import Nav from '$lib/Nav.svelte'
   import CalendarManager from '$lib/components/CalendarManager.svelte' // Import the calendar manager
+  import { goto } from '$app/navigation'
+  import { toast, confirm as confirmModal } from '$lib/stores/toast.js'
   
   let user = null
   let profile = null
@@ -34,7 +36,7 @@
   onMount(async () => {
     const { data: { user: currentUser } } = await supabase.auth.getUser()
     if (!currentUser) {
-      window.location.href = '/'
+      goto('/')
       return
     }
     
@@ -78,12 +80,10 @@
       .order('created_at')
     
     if (error) {
-      console.error('Error loading family members:', error)
       return
     }
-    
+
     familyMembers = data || []
-    console.log('Family members loaded:', familyMembers)
   }
   
   async function loadParentCalendarEvents() {
@@ -169,10 +169,7 @@
         }
       })
       
-      console.log('Calendar events loaded:', parentCalendarEvents)
-      
     } catch (err) {
-      console.error('Error loading calendar events:', err)
     }
   }
   
@@ -295,7 +292,6 @@
       const { data, error } = await query
 
       if (error) {
-        console.error('Supabase error:', error)
         throw error
       }
       
@@ -311,7 +307,6 @@
       }
 
     } catch (err) {
-      console.error('Error loading schedules:', err)
       shifts = []
     }
   }
@@ -330,7 +325,6 @@
       .maybeSingle()
     
     if (error) {
-      console.error('Error loading week summary:', error)
     }
     
     weekSummary = data
@@ -338,7 +332,7 @@
 
   async function saveShift() {
     if (!shiftForm.nannyId) {
-      alert('Please select a nanny')
+      toast.error('Please select a nanny')
       return
     }
     
@@ -371,8 +365,7 @@
       await loadShifts()
       
     } catch (err) {
-      console.error('Error saving:', err)
-      alert('Error: ' + err.message)
+      toast.error('Error: ' + err.message)
     }
   }
   
@@ -400,7 +393,7 @@
   
   function openAddShift(date) {
     if ((profile?.role === 'family' || profile?.role === 'admin') && (!nannies || nannies.length === 0)) {
-      alert('No nannies found. Please create a nanny profile first.')
+      toast.error('No nannies found. Please create a nanny profile first.')
       return
     }
     shiftForm.date = ymd(date)
@@ -422,7 +415,7 @@
   }
   
   async function deleteShift(shiftId) {
-    if (!confirm('Delete this shift?')) return
+    const confirmed = await confirmModal.show({ title: 'Delete Shift', message: 'Delete this shift?', confirmText: 'Delete', danger: true }); if (!confirmed) return
     
     try {
       const { error } = await supabase
@@ -434,8 +427,7 @@
       
       await loadShifts()
     } catch (err) {
-      console.error('Error deleting shift:', err)
-      alert('Error deleting shift')
+      toast.error('Error deleting shift')
     }
   }
 
@@ -578,7 +570,7 @@
   
   async function requestCoverage(gap) {
     if ((profile?.role === 'family' || profile?.role === 'admin') && (!nannies || nannies.length === 0)) {
-      alert('No nannies found. Please create a nanny profile first.')
+      toast.error('No nannies found. Please create a nanny profile first.')
       return
     }
     

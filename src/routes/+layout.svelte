@@ -1,8 +1,11 @@
 <script>
     import { onMount } from 'svelte'
     import { page } from '$app/stores'
+    import { goto } from '$app/navigation'
     import { supabase } from '$lib/supabase'
     import favicon from '$lib/assets/favicon.svg'
+    import Toast from '$lib/components/Toast.svelte'
+    import ConfirmModal from '$lib/components/ConfirmModal.svelte'
 
     let { children } = $props()
 
@@ -17,9 +20,8 @@
             }
 
             if (cachedHasRole === true) {
-                // If user already confirmed to have a role and is on home, send to dashboard
                 if (pathname === '/') {
-                    window.location.href = '/dashboard'
+                    goto('/dashboard')
                 }
                 return
             }
@@ -36,13 +38,12 @@
             cachedHasRole = hasRole
 
             if (!hasRole && pathname !== '/setup') {
-                window.location.href = '/setup'
+                goto('/setup')
                 return
             }
 
-            // If has role and hits root, go to dashboard
             if (hasRole && pathname === '/') {
-                window.location.href = '/dashboard'
+                goto('/dashboard')
             }
         } catch (e) {
             // Swallow guard errors to avoid blocking rendering
@@ -60,5 +61,8 @@
 <svelte:head>
 	<link rel="icon" href={favicon} />
 </svelte:head>
+
+<Toast />
+<ConfirmModal />
 
 {@render children?.()}

@@ -1,6 +1,9 @@
 <script>
   import { onMount } from 'svelte'
   import { supabase } from '$lib/supabase'
+  import { goto } from '$app/navigation'
+  import { toast } from '$lib/stores/toast.js'
+  import { confirm as confirmModal, prompt as promptModal } from '$lib/stores/toast.js'
   import Nav from '$lib/Nav.svelte'
   
   let user = null
@@ -36,7 +39,7 @@
     const { data: { user: currentUser } } = await supabase.auth.getUser()
     
     if (!currentUser) {
-      window.location.href = '/'
+      goto('/')
       return
     }
     
@@ -211,12 +214,12 @@
   
   async function clockIn() {
     if (!selectedNannyId) {
-      alert('Please select a nanny')
+      toast.error('Please select a nanny')
       return
     }
     
     if (profile?.role !== 'nanny' && selectedNannyId === user.id) {
-      alert('You cannot clock yourself in. Please select a nanny.')
+      toast.error('You cannot clock yourself in. Please select a nanny.')
       return
     }
     
@@ -236,7 +239,7 @@
         .maybeSingle()
       
       if (activeEntry) {
-        alert(`${activeEntry.profiles.full_name} is already clocked in. Only one nanny can be on the clock at a time.`)
+        toast.error(`${activeEntry.profiles.full_name} is already clocked in. Only one nanny can be on the clock at a time.`)
         loading = false
         showClockInConfirm = false
         return
@@ -261,7 +264,7 @@
       await loadWeekData()
       showClockInConfirm = false
     } catch (err) {
-      alert('Error clocking in: ' + err.message)
+      toast.error('Error clocking in: ' + err.message)
     } finally {
       loading = false
     }
@@ -281,7 +284,7 @@
       if (fetchError) throw fetchError
       
       if (!activeEntry) {
-        alert('No active shift found for this nanny')
+        toast.error('No active shift found for this nanny')
         loading = false
         return
       }
@@ -300,15 +303,14 @@
       
       if (updateError) throw updateError
       
-      alert(`Clocked out! Worked ${hours.toFixed(2)} hours`)
+      toast.success(`Clocked out! Worked ${hours.toFixed(2)} hours`)
       
       currentEntry = null
       stopTimer()
       await checkCurrentEntry()
       await loadWeekData()
     } catch (err) {
-      console.error('Clock out error:', err)
-      alert('Error clocking out: ' + err.message)
+      toast.error('Error clocking out: ' + err.message)
     } finally {
       loading = false
     }
@@ -316,10 +318,10 @@
   
   async function generateVenmoPayment() {
     if (weekTotal === 0) {
-      alert('No completed hours for this week')
+      toast.error('No completed hours for this week')
       return
     }
-    
+
     const nanny = selectedNanny
     const venmo = nanny?.venmo_username?.replace('@', '') || 'username'
     const rate = nanny?.hourly_rate || 20
@@ -335,7 +337,8 @@ Total: $${weekPay.toFixed(2)}`
     if (isMobile && venmo !== 'username') {
       const venmoUrl = `venmo://paycharge?txn=pay&recipients=${venmo}&amount=${weekPay.toFixed(2)}&note=${encodeURIComponent(note)}`
       
-      if (confirm(`Pay $${weekPay.toFixed(2)} to @${venmo} via Venmo?`)) {
+      const confirmed = await confirmModal.show({ title: 'Venmo Payment', message: `Pay $${weekPay.toFixed(2)} to @${venmo} via Venmo?`, confirmText: 'Pay' })
+      if (confirmed) {
         await createPaymentRecord()
         window.location.href = venmoUrl
       }
@@ -343,9 +346,9 @@ Total: $${weekPay.toFixed(2)}`
       try {
         await navigator.clipboard.writeText(note)
         await createPaymentRecord()
-        alert(`Payment details copied!\n\n${note}\n\nPaste into Venmo when sending to @${venmo}`)
+        toast.success('Payment details copied to clipboard!')
       } catch {
-        prompt('Copy this payment message:', note)
+        toast.info('Payment details: ' + note, 10000)
       }
     }
   }
@@ -366,7 +369,6 @@ Total: $${weekPay.toFixed(2)}`
       
       await loadPayments()
     } catch (err) {
-      console.error('Error creating payment record:', err)
     }
   }
   
@@ -382,7 +384,7 @@ Total: $${weekPay.toFixed(2)}`
       
       await loadPayments()
     } catch (err) {
-      alert('Error marking as paid: ' + err.message)
+      toast.error('Error marking as paid: ' + err.message)
     }
   }
   
@@ -398,7 +400,7 @@ Total: $${weekPay.toFixed(2)}`
       
       await loadPayments()
     } catch (err) {
-      alert('Error marking as unpaid: ' + err.message)
+      toast.error('Error marking as unpaid: ' + err.message)
     }
   }
   
@@ -433,7 +435,8 @@ Total: $${weekPay.toFixed(2)}`
   }
   
   async function deletePayment(paymentId) {
-    if (!confirm('Delete this payment record? This cannot be undone.')) {
+    const confirmed = await confirmModal.show({ title: 'Delete Payment', message: 'Delete this payment record? This cannot be undone.', confirmText: 'Delete', danger: true })
+    if (!confirmed) {
       return
     }
     
@@ -446,25 +449,25 @@ Total: $${weekPay.toFixed(2)}`
       if (error) throw error
       
       await loadPayments()
-      alert('Payment record deleted')
+      toast.success('Payment record deleted')
     } catch (err) {
-      alert('Error deleting payment: ' + err.message)
+      toast.error('Error deleting payment: ' + err.message)
     }
   }
   
   async function requestPayment() {
     if (weekTotal === 0) {
-      alert('No completed hours for this week')
+      toast.error('No completed hours for this week')
       return
     }
-    
+
     const nanny = profile
     const venmo = nanny?.venmo_username?.replace('@', '') || null
     const rate = nanny?.hourly_rate || 20
     
     if (!venmo) {
-      alert('Please add your Venmo username in Settings first')
-      window.location.href = '/settings'
+      toast.error('Please add your Venmo username in Settings first')
+      goto('/settings')
       return
     }
     
@@ -486,15 +489,16 @@ Total: $${weekPay.toFixed(2)}`
     if (isMobile) {
       const venmoUrl = `venmo://paycharge?txn=charge&recipients=${familyVenmo}&amount=${weekPay.toFixed(2)}&note=${encodeURIComponent(note)}`
       
-      if (confirm(`Request $${weekPay.toFixed(2)} from @${familyVenmo} via Venmo?`)) {
+      const confirmed = await confirmModal.show({ title: 'Request Payment', message: `Request $${weekPay.toFixed(2)} from @${familyVenmo} via Venmo?`, confirmText: 'Request' })
+      if (confirmed) {
         window.location.href = venmoUrl
       }
     } else {
       try {
         await navigator.clipboard.writeText(note)
-        alert(`Payment request details copied!\n\n${note}\n\nOpen Venmo and request from your employer.`)
+        toast.success('Payment request details copied to clipboard!')
       } catch {
-        prompt('Copy this payment request:', note)
+        toast.info('Payment request: ' + note, 10000)
       }
     }
   }
@@ -527,7 +531,7 @@ Total: $${weekPay.toFixed(2)}`
     const hours = (clockOut - clockIn) / (1000 * 60 * 60)
     
     if (hours <= 0) {
-      alert('Clock out must be after clock in')
+      toast.error('Clock out must be after clock in')
       return
     }
     
@@ -560,14 +564,15 @@ Total: $${weekPay.toFixed(2)}`
       
       showManualEntry = false
       await loadWeekData()
-      alert('Entry saved!')
+      toast.success('Entry saved!')
     } catch (err) {
-      alert('Error: ' + err.message)
+      toast.error('Error: ' + err.message)
     }
   }
 
   async function deleteEntry(entryId) {
-    if (!confirm('Delete this entry?')) return
+    const confirmed = await confirmModal.show({ title: 'Delete Entry', message: 'Delete this entry?', confirmText: 'Delete', danger: true })
+    if (!confirmed) return
     
     try {
       const { error } = await supabase
@@ -578,9 +583,9 @@ Total: $${weekPay.toFixed(2)}`
       if (error) throw error
       
       await loadWeekData()
-      alert('Entry deleted')
+      toast.success('Entry deleted')
     } catch (err) {
-      alert('Error deleting: ' + err.message)
+      toast.error('Error deleting: ' + err.message)
     }
   }
 </script>
@@ -630,7 +635,7 @@ Total: $${weekPay.toFixed(2)}`
       </div>
       
       <div class="quick-actions">
-        <button class="btn btn-secondary" on:click={() => window.location.href = '/dashboard'}>
+        <button class="btn btn-secondary" on:click={() => goto('/dashboard')}>
           ← Dashboard
         </button>
         {#if profile?.role === 'family' || profile?.role === 'admin'}

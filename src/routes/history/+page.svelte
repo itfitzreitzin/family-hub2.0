@@ -61,12 +61,27 @@
     loading = false
   }
   
-  $: filteredEntries = showingWeek === 'current' 
+  $: filteredEntries = showingWeek === 'current'
     ? entries.filter(e => isCurrentWeek(e.clock_in))
     : entries
-  
+
   $: weekTotal = filteredEntries.reduce((sum, e) => sum + (parseFloat(e.hours) || 0), 0)
-  $: weekPay = weekTotal * (profile?.hourly_rate || 20)
+  $: weekPay = filteredEntries.reduce((sum, e) => {
+    const hours = parseFloat(e.hours) || 0
+    return sum + hours * getRateForEntry(e)
+  }, 0)
+  $: isFamilyOrAdmin = profile?.role === 'family' || profile?.role === 'admin'
+
+  function getRateForEntry(entry) {
+    if (profile?.role === 'nanny') return profile?.hourly_rate || 20
+    const nanny = nannies.find(n => n.id === entry.nanny_id)
+    return nanny?.hourly_rate || 20
+  }
+
+  function getNannyName(entry) {
+    const nanny = nannies.find(n => n.id === entry.nanny_id)
+    return nanny?.full_name || 'Unknown'
+  }
   
   function isCurrentWeek(dateString) {
     const date = new Date(dateString)
@@ -129,16 +144,16 @@
   }
   
   function generateVenmoPayment() {
-    const venmo = profile?.venmo_username?.replace('@', '') || 'username'
-    const rate = profile?.hourly_rate || 20
-    
+    const selectedNanny = selectedNannyId ? nannies.find(n => n.id === selectedNannyId) : null
+    const venmo = (selectedNanny?.venmo_username || profile?.venmo_username || '').replace('@', '') || 'username'
+    const nannyName = selectedNanny?.full_name || profile?.full_name
+
     const weekStart = new Date()
     weekStart.setDate(weekStart.getDate() - weekStart.getDay())
-    
-    const note = `Weekly payment for ${profile?.full_name}
+
+    const note = `Weekly payment for ${nannyName}
 Week of ${weekStart.toLocaleDateString()}
 Hours: ${weekTotal.toFixed(1)}
-Rate: $${rate}/hour
 Total: $${weekPay.toFixed(2)}`
     
     // Check if mobile
@@ -159,15 +174,23 @@ Total: $${weekPay.toFixed(2)}`
   }
   
   function exportCSV() {
-    const headers = ['Date', 'Clock In', 'Clock Out', 'Hours', 'Earnings', 'Notes']
-    const rows = filteredEntries.map(e => [
-      formatDate(e.clock_in),
-      formatTime(e.clock_in),
-      formatTime(e.clock_out),
-      (parseFloat(e.hours) || 0).toFixed(2),
-      ((parseFloat(e.hours) || 0) * (profile?.hourly_rate || 20)).toFixed(2),
-      e.notes || ''
-    ])
+    const headers = isFamilyOrAdmin
+      ? ['Nanny', 'Date', 'Clock In', 'Clock Out', 'Hours', 'Rate', 'Earnings', 'Notes']
+      : ['Date', 'Clock In', 'Clock Out', 'Hours', 'Earnings', 'Notes']
+    const rows = filteredEntries.map(e => {
+      const hours = (parseFloat(e.hours) || 0)
+      const rate = getRateForEntry(e)
+      const base = [
+        formatDate(e.clock_in),
+        formatTime(e.clock_in),
+        formatTime(e.clock_out),
+        hours.toFixed(2),
+      ]
+      if (isFamilyOrAdmin) {
+        return [getNannyName(e), ...base, rate.toFixed(2), (hours * rate).toFixed(2), e.notes || '']
+      }
+      return [...base, (hours * rate).toFixed(2), e.notes || '']
+    })
     
     const csv = [
       headers.join(','),
@@ -235,10 +258,18 @@ Total: $${weekPay.toFixed(2)}`
             <div class="stat-value">${weekPay.toFixed(2)}</div>
             <div class="stat-label">Total Pay</div>
           </div>
-          <div class="stat">
-            <div class="stat-value">${profile?.hourly_rate || 20}/hr</div>
-            <div class="stat-label">Rate</div>
-          </div>
+          {#if !isFamilyOrAdmin || selectedNannyId}
+            {@const rate = selectedNannyId ? (nannies.find(n => n.id === selectedNannyId)?.hourly_rate || 20) : (profile?.hourly_rate || 20)}
+            <div class="stat">
+              <div class="stat-value">${rate}/hr</div>
+              <div class="stat-label">Rate</div>
+            </div>
+          {:else}
+            <div class="stat">
+              <div class="stat-value">{filteredEntries.length}</div>
+              <div class="stat-label">Shifts</div>
+            </div>
+          {/if}
         </div>
         
         <div class="summary-actions">
@@ -267,23 +298,31 @@ Total: $${weekPay.toFixed(2)}`
             <table>
               <thead>
                 <tr>
+                  {#if isFamilyOrAdmin && !selectedNannyId}
+                    <th>Nanny</th>
+                  {/if}
                   <th>Date</th>
                   <th>Clock In</th>
                   <th>Clock Out</th>
                   <th>Hours</th>
                   <th>Earnings</th>
-                  <th>Notes</th>
+                  <th class="hide-mobile">Notes</th>
                 </tr>
               </thead>
               <tbody>
                 {#each filteredEntries as entry}
+                  {@const hours = parseFloat(entry.hours) || 0}
+                  {@const earnings = hours * getRateForEntry(entry)}
                   <tr>
+                    {#if isFamilyOrAdmin && !selectedNannyId}
+                      <td>{getNannyName(entry)}</td>
+                    {/if}
                     <td>{formatDate(entry.clock_in)}</td>
                     <td>{formatTime(entry.clock_in)}</td>
                     <td>{formatTime(entry.clock_out)}</td>
-                    <td>{(parseFloat(entry.hours) || 0).toFixed(2)}</td>
-                    <td>${((parseFloat(entry.hours) || 0) * (profile?.hourly_rate || 20)).toFixed(2)}</td>
-                    <td class="notes">{entry.notes || '—'}</td>
+                    <td>{hours.toFixed(2)}</td>
+                    <td>${earnings.toFixed(2)}</td>
+                    <td class="notes hide-mobile">{entry.notes || '—'}</td>
                   </tr>
                 {/each}
               </tbody>

@@ -145,7 +145,7 @@
   
   function generateVenmoPayment() {
     const selectedNanny = selectedNannyId ? nannies.find(n => n.id === selectedNannyId) : null
-    const venmo = (selectedNanny?.venmo_username || profile?.venmo_username || '').replace('@', '') || 'username'
+    const venmo = (selectedNanny?.venmo_username || profile?.venmo_username || '').replace(/@/g, '').trim().split(/[\s,;]+/)[0] || 'username'
     const nannyName = selectedNanny?.full_name || profile?.full_name
 
     const weekStart = new Date()
@@ -160,7 +160,7 @@ Total: $${weekPay.toFixed(2)}`
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
     
     if (isMobile) {
-      const venmoUrl = `venmo://paycharge?txn=pay&recipients=${venmo}&amount=${weekPay.toFixed(2)}&note=${encodeURIComponent(note)}`
+      const venmoUrl = `venmo://paycharge?txn=pay&recipients=${encodeURIComponent(venmo)}&amount=${weekPay.toFixed(2)}&note=${encodeURIComponent(note)}`
       
       if (confirm(`Pay $${weekPay.toFixed(2)} to @${venmo} via Venmo?`)) {
         window.location.href = venmoUrl

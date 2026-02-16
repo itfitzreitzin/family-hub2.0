@@ -322,19 +322,19 @@
     }
 
     const nanny = selectedNanny
-    const venmo = nanny?.venmo_username?.replace('@', '') || 'username'
+    const venmo = (nanny?.venmo_username || '').replace(/@/g, '').trim().split(/[\s,;]+/)[0] || 'username'
     const rate = nanny?.hourly_rate || 20
-    
+
     const note = `Weekly payment for ${nanny?.full_name}
 Week of ${currentWeekStart.toLocaleDateString()}
 Hours: ${weekTotal.toFixed(1)}
 Rate: $${rate}/hour
 Total: $${weekPay.toFixed(2)}`
-    
+
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
-    
+
     if (isMobile && venmo !== 'username') {
-      const venmoUrl = `venmo://paycharge?txn=pay&recipients=${venmo}&amount=${weekPay.toFixed(2)}&note=${encodeURIComponent(note)}`
+      const venmoUrl = `venmo://paycharge?txn=pay&recipients=${encodeURIComponent(venmo)}&amount=${weekPay.toFixed(2)}&note=${encodeURIComponent(note)}`
       
       if (confirm(`Pay $${weekPay.toFixed(2)} to @${venmo} via Venmo?`)) {
         await createPaymentRecord()
@@ -460,32 +460,32 @@ Total: $${weekPay.toFixed(2)}`
     }
 
     const nanny = profile
-    const venmo = nanny?.venmo_username?.replace('@', '') || null
+    const venmo = (nanny?.venmo_username || '').replace(/@/g, '').trim().split(/[\s,;]+/)[0] || null
     const rate = nanny?.hourly_rate || 20
-    
+
     if (!venmo) {
       toast.warning('Please add your Venmo username in Settings first')
       window.location.href = '/settings'
       return
     }
-    
+
     const { data: familyMembers } = await supabase
       .from('profiles')
       .select('*')
       .eq('role', 'family')
-    
-    const familyVenmo = familyMembers?.[0]?.venmo_username?.replace('@', '') || 'family'
-    
+
+    const familyVenmo = (familyMembers?.[0]?.venmo_username || '').replace(/@/g, '').trim().split(/[\s,;]+/)[0] || 'family'
+
     const note = `Payment request from ${nanny?.full_name}
 Week of ${currentWeekStart.toLocaleDateString()}
 Hours: ${weekTotal.toFixed(1)}
 Rate: $${rate}/hour
 Total: $${weekPay.toFixed(2)}`
-    
+
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
-    
+
     if (isMobile) {
-      const venmoUrl = `venmo://paycharge?txn=charge&recipients=${familyVenmo}&amount=${weekPay.toFixed(2)}&note=${encodeURIComponent(note)}`
+      const venmoUrl = `venmo://paycharge?txn=charge&recipients=${encodeURIComponent(familyVenmo)}&amount=${weekPay.toFixed(2)}&note=${encodeURIComponent(note)}`
       
       if (confirm(`Request $${weekPay.toFixed(2)} from @${familyVenmo} via Venmo?`)) {
         window.location.href = venmoUrl

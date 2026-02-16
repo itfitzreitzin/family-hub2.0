@@ -84,7 +84,7 @@
   }
   
   $: filteredEntries = entries.filter(e => e.clock_out)
-  $: weekTotal = filteredEntries.reduce((sum, e) => sum + (parseFloat(e.hours) || 0), 0)
+  $: weekTotal = filteredEntries.reduce((sum, e) => sum + roundToQuarter(parseFloat(e.hours) || 0), 0)
   $: selectedNanny = nannies.find(n => n.id === selectedNannyId) || profile
   $: weekPay = weekTotal * (selectedNanny?.hourly_rate || 20)
   
@@ -416,8 +416,8 @@ Total: $${weekPay.toFixed(2)}`
       formatDate(e.clock_in),
       formatTime(e.clock_in),
       formatTime(e.clock_out),
-      (parseFloat(e.hours) || 0).toFixed(2),
-      ((parseFloat(e.hours) || 0) * rate).toFixed(2),
+      roundToQuarter(parseFloat(e.hours) || 0).toFixed(2),
+      (roundToQuarter(parseFloat(e.hours) || 0) * rate).toFixed(2),
       e.notes || ''
     ])
     
@@ -698,8 +698,8 @@ Total: $${weekPay.toFixed(2)}`
                   <td>{formatDate(entry.clock_in)}</td>
                   <td>{formatTime(entry.clock_in)}</td>
                   <td>{formatTime(entry.clock_out)}</td>
-                  <td>{(parseFloat(entry.hours) || 0).toFixed(1)}</td>
-                  <td>${((parseFloat(entry.hours) || 0) * (selectedNanny?.hourly_rate || 20)).toFixed(2)}</td>
+                  <td>{roundToQuarter(parseFloat(entry.hours) || 0).toFixed(2)}</td>
+                  <td>${(roundToQuarter(parseFloat(entry.hours) || 0) * (selectedNanny?.hourly_rate || 20)).toFixed(2)}</td>
                   <td>{entry.notes || ''}</td>
                   {#if profile?.role === 'family' || profile?.role === 'admin'}
                     <td>
@@ -722,13 +722,13 @@ Total: $${weekPay.toFixed(2)}`
                 <div class="entry-card">
                   <div class="entry-header">
                     <span class="entry-date">{formatDateShort(entry.clock_in)}</span>
-                    <span class="entry-hours">{(parseFloat(entry.hours) || 0).toFixed(1)}h</span>
+                    <span class="entry-hours">{roundToQuarter(parseFloat(entry.hours) || 0).toFixed(2)}h</span>
                   </div>
                   <div class="entry-time">
                     {formatTime(entry.clock_in)} - {formatTime(entry.clock_out)}
                   </div>
                   <div class="entry-earnings">
-                    ${((parseFloat(entry.hours) || 0) * (selectedNanny?.hourly_rate || 20)).toFixed(2)}
+                    ${(roundToQuarter(parseFloat(entry.hours) || 0) * (selectedNanny?.hourly_rate || 20)).toFixed(2)}
                   </div>
                   {#if profile?.role === 'family' || profile?.role === 'admin'}
                     <div class="entry-actions">
@@ -754,11 +754,11 @@ Total: $${weekPay.toFixed(2)}`
                   </div>
                   <div class="detail-row">
                     <span class="detail-label">Hours:</span>
-                    <span class="detail-value">{(parseFloat(entry.hours) || 0).toFixed(1)}</span>
+                    <span class="detail-value">{roundToQuarter(parseFloat(entry.hours) || 0).toFixed(2)}</span>
                   </div>
                   <div class="detail-row">
                     <span class="detail-label">Earnings:</span>
-                    <span class="detail-value">${((parseFloat(entry.hours) || 0) * (selectedNanny?.hourly_rate || 20)).toFixed(2)}</span>
+                    <span class="detail-value">${(roundToQuarter(parseFloat(entry.hours) || 0) * (selectedNanny?.hourly_rate || 20)).toFixed(2)}</span>
                   </div>
                   {#if entry.notes}
                     <div class="detail-row">

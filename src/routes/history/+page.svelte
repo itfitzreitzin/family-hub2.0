@@ -4,6 +4,11 @@
   import { toast } from '$lib/stores/toast.js'
   import Nav from '$lib/Nav.svelte'
   
+  // Round hours to nearest 15 minutes (0.25 hour increments)
+  function roundToQuarter(hours) {
+    return Math.round(hours * 4) / 4
+  }
+
   let user = null
   let profile = null
   let entries = []
@@ -65,9 +70,9 @@
     ? entries.filter(e => isCurrentWeek(e.clock_in))
     : entries
 
-  $: weekTotal = filteredEntries.reduce((sum, e) => sum + (parseFloat(e.hours) || 0), 0)
+  $: weekTotal = filteredEntries.reduce((sum, e) => sum + roundToQuarter(parseFloat(e.hours) || 0), 0)
   $: weekPay = filteredEntries.reduce((sum, e) => {
-    const hours = parseFloat(e.hours) || 0
+    const hours = roundToQuarter(parseFloat(e.hours) || 0)
     return sum + hours * getRateForEntry(e)
   }, 0)
   $: isFamilyOrAdmin = profile?.role === 'family' || profile?.role === 'admin'
@@ -178,7 +183,7 @@ Total: $${weekPay.toFixed(2)}`
       ? ['Nanny', 'Date', 'Clock In', 'Clock Out', 'Hours', 'Rate', 'Earnings', 'Notes']
       : ['Date', 'Clock In', 'Clock Out', 'Hours', 'Earnings', 'Notes']
     const rows = filteredEntries.map(e => {
-      const hours = (parseFloat(e.hours) || 0)
+      const hours = roundToQuarter(parseFloat(e.hours) || 0)
       const rate = getRateForEntry(e)
       const base = [
         formatDate(e.clock_in),
@@ -311,7 +316,7 @@ Total: $${weekPay.toFixed(2)}`
               </thead>
               <tbody>
                 {#each filteredEntries as entry}
-                  {@const hours = parseFloat(entry.hours) || 0}
+                  {@const hours = roundToQuarter(parseFloat(entry.hours) || 0)}
                   {@const earnings = hours * getRateForEntry(entry)}
                   <tr>
                     {#if isFamilyOrAdmin && !selectedNannyId}

@@ -587,6 +587,20 @@
     return gaps
   }
 
+  function getShiftConflicts() {
+    if (!shiftForm.nannyId || !shiftForm.date || !shiftForm.startTime || !shiftForm.endTime) return []
+
+    const nannyEvents = nannyCalendarEvents[shiftForm.nannyId] || []
+    if (nannyEvents.length === 0) return []
+
+    const shiftStart = new Date(`${shiftForm.date}T${shiftForm.startTime}:00`)
+    const shiftEnd = new Date(`${shiftForm.date}T${shiftForm.endTime}:00`)
+
+    return nannyEvents.filter(event =>
+      event.startTime < shiftEnd && event.endTime > shiftStart
+    )
+  }
+
   function handleCalendarUpdate() {
     loadCalendarEvents()
   }
@@ -878,6 +892,21 @@
             <input type="time" bind:value={shiftForm.endTime} required />
           </div>
         </div>
+
+        {#if getShiftConflicts().length > 0}
+          <div class="conflict-warning">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            <div class="conflict-text">
+              <strong>Heads up</strong> &mdash; {getNannyName(shiftForm.nannyId)} has {getShiftConflicts().length === 1 ? 'something' : `${getShiftConflicts().length} things`} on their calendar during this time:
+              <ul class="conflict-list">
+                {#each getShiftConflicts() as conflict}
+                  <li>"{conflict.title}" ({conflict.startTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} - {conflict.endTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })})</li>
+                {/each}
+              </ul>
+              <span class="conflict-hint">You may want to check with them before booking this time.</span>
+            </div>
+          </div>
+        {/if}
 
         <div class="form-field">
           <label>Notes <span class="optional">(optional)</span></label>
@@ -1483,6 +1512,48 @@
     font-size: 0.9em;
     font-weight: 600;
     color: #64748b;
+  }
+
+  /* Conflict Warning */
+  .conflict-warning {
+    display: flex;
+    gap: 10px;
+    padding: 12px 14px;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: 10px;
+    margin-bottom: 16px;
+    color: #92400e;
+    font-size: 0.85em;
+    line-height: 1.5;
+    animation: fadeIn 0.2s ease;
+  }
+
+  .conflict-warning svg {
+    flex-shrink: 0;
+    margin-top: 1px;
+    color: #f59e0b;
+  }
+
+  .conflict-text strong {
+    color: #78350f;
+  }
+
+  .conflict-list {
+    margin: 6px 0 6px 0;
+    padding-left: 18px;
+    font-size: 0.95em;
+  }
+
+  .conflict-list li {
+    margin-bottom: 2px;
+  }
+
+  .conflict-hint {
+    display: block;
+    font-size: 0.9em;
+    color: #b45309;
+    font-style: italic;
   }
 
   /* Modal Form Fields */

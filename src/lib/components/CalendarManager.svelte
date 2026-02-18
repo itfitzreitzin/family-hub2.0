@@ -67,7 +67,7 @@
       return
     }
 
-    if (calendarForm.calendar_type === 'ical' && !calendarForm.calendar_url.trim()) {
+    if (['ical', 'google', 'outlook'].includes(calendarForm.calendar_type) && !calendarForm.calendar_url.trim()) {
       toast.error('Please provide an iCal feed URL')
       return
     }
@@ -442,7 +442,7 @@
         <div class="form-field">
           <label>iCal Feed URL</label>
           <input
-            type="url"
+            type="text"
             bind:value={calendarForm.calendar_url}
             placeholder="https://calendar.google.com/calendar/ical/..."
           />
@@ -461,7 +461,7 @@
           <div class="form-field">
             <label>iCal Feed URL</label>
             <input
-              type="url"
+              type="text"
               bind:value={calendarForm.calendar_url}
               placeholder="https://calendar.google.com/calendar/ical/..."
             />
@@ -480,7 +480,7 @@
           <div class="form-field">
             <label>iCal Feed URL</label>
             <input
-              type="url"
+              type="text"
               bind:value={calendarForm.calendar_url}
               placeholder="https://outlook.live.com/owa/calendar/..."
             />

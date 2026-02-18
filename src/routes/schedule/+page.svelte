@@ -29,6 +29,7 @@
     you: [],
     partner: []
   }
+  let nannyCalendarEvents = {} // keyed by nanny_id -> array of events
   let familyMembers = []
 
   // Time grid config
@@ -74,6 +75,7 @@
 
     setCurrentWeek(0)
     loading = false
+    loadCalendarEvents()
   })
 
   async function loadFamilyMembers() {
@@ -164,6 +166,72 @@
     }
   }
 
+  async function loadCalendarEvents() {
+    if (profile?.role === 'family' || profile?.role === 'admin') {
+      await loadParentCalendarEvents()
+      await loadNannyCalendarEvents()
+    } else if (profile?.role === 'nanny') {
+      await loadNannyCalendarEvents()
+    }
+  }
+
+  async function loadNannyCalendarEvents() {
+    if (!currentWeekStart) return
+
+    const weekEnd = new Date(currentWeekStart)
+    weekEnd.setDate(weekEnd.getDate() + 6)
+
+    try {
+      // Build the query — family sees all nanny events, nannies see only their own
+      let query = supabase
+        .from('calendar_events')
+        .select(`
+          *,
+          parent_calendars!inner (
+            calendar_name,
+            color,
+            sync_enabled,
+            user_id
+          )
+        `)
+        .gte('start_time', currentWeekStart.toISOString())
+        .lte('start_time', weekEnd.toISOString())
+        .eq('is_busy', true)
+        .eq('parent_calendars.sync_enabled', true)
+        .order('start_time')
+
+      const { data: events, error } = await query
+      if (error) throw error
+
+      // Get the set of nanny IDs
+      const nannyIds = new Set(nannies.map(n => n.id))
+
+      // Reset and populate nanny events
+      const newNannyEvents = {}
+      ;(events || []).forEach(event => {
+        const ownerId = event.parent_calendars.user_id
+        if (!nannyIds.has(ownerId)) return
+
+        if (!newNannyEvents[ownerId]) {
+          newNannyEvents[ownerId] = []
+        }
+
+        newNannyEvents[ownerId].push({
+          title: event.title,
+          startTime: new Date(event.start_time),
+          endTime: new Date(event.end_time),
+          color: event.parent_calendars.color,
+          calendarName: event.parent_calendars.calendar_name,
+          nannyId: ownerId
+        })
+      })
+
+      nannyCalendarEvents = newNannyEvents
+    } catch (err) {
+      // silently fail — nanny calendar events are supplementary
+    }
+  }
+
   async function processRecurringEvents(manualTimes, weekStart, weekEnd) {
     const recurringEvents = []
     for (const manual of manualTimes.filter(m => m.recurring)) {
@@ -215,9 +283,7 @@
     weekStart.setHours(0, 0, 0, 0)
     currentWeekStart = weekStart
     loadShifts()
-    if (profile?.role === 'family' || profile?.role === 'admin') {
-      loadParentCalendarEvents()
-    }
+    loadCalendarEvents()
   }
 
   function ymd(date) {
@@ -393,9 +459,7 @@
     newStart.setDate(newStart.getDate() + (offset * 7))
     currentWeekStart = newStart
     loadShifts()
-    if (profile?.role === 'family' || profile?.role === 'admin') {
-      loadParentCalendarEvents()
-    }
+    loadCalendarEvents()
   }
 
   async function deleteShift(shiftId) {
@@ -450,6 +514,18 @@
       .map(e => ({ ...e, owner: 'partner' }))
 
     return [...youEvents, ...partnerEvents]
+  }
+
+  function getNannyEventsForDay(day) {
+    const events = []
+    for (const [nannyId, nannyEvents] of Object.entries(nannyCalendarEvents)) {
+      for (const event of nannyEvents) {
+        if (event.startTime.toDateString() === day.toDateString()) {
+          events.push({ ...event, nannyName: getNannyName(nannyId) })
+        }
+      }
+    }
+    return events
   }
 
   function getPartnerName() {
@@ -511,10 +587,22 @@
     return gaps
   }
 
+  function getShiftConflicts() {
+    if (!shiftForm.nannyId || !shiftForm.date || !shiftForm.startTime || !shiftForm.endTime) return []
+
+    const nannyEvents = nannyCalendarEvents[shiftForm.nannyId] || []
+    if (nannyEvents.length === 0) return []
+
+    const shiftStart = new Date(`${shiftForm.date}T${shiftForm.startTime}:00`)
+    const shiftEnd = new Date(`${shiftForm.date}T${shiftForm.endTime}:00`)
+
+    return nannyEvents.filter(event =>
+      event.startTime < shiftEnd && event.endTime > shiftStart
+    )
+  }
+
   function handleCalendarUpdate() {
-    if (profile?.role === 'family' || profile?.role === 'admin') {
-      loadParentCalendarEvents()
-    }
+    loadCalendarEvents()
   }
 
   function goToToday() {
@@ -540,12 +628,10 @@
         </span>
       </div>
       <div class="top-right">
-        {#if profile?.role === 'family' || profile?.role === 'admin'}
-          <button class="top-btn" on:click={() => showCalendarManager = true}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-            Calendars
-          </button>
-        {/if}
+        <button class="top-btn" on:click={() => showCalendarManager = true}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          {profile?.role === 'nanny' ? 'My Availability' : 'Calendars'}
+        </button>
         <div class="week-nav">
           <button class="nav-btn" on:click={() => changeWeek('prev')}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
@@ -634,6 +720,22 @@
                 </div>
               {/each}
 
+              <!-- Nanny busy times (orange tinted blocks) -->
+              {#each getNannyEventsForDay(day) as nEvent}
+                <div
+                  class="cal-event cal-event-nanny"
+                  style="
+                    top: {Math.max(eventTop(nEvent.startTime), 0)}px;
+                    height: {eventHeight(nEvent.startTime, nEvent.endTime)}px;
+                    border-left-color: {nEvent.color || '#ed8936'};
+                  "
+                  title="{nEvent.nannyName}: {nEvent.title} (unavailable)"
+                >
+                  <span class="cal-event-owner">{nEvent.nannyName}</span>
+                  <span class="cal-event-title">{nEvent.title}</span>
+                </div>
+              {/each}
+
               <!-- Nanny shifts (solid green blocks) -->
               {#each getShiftsForDay(day) as shift}
                 <div
@@ -686,6 +788,12 @@
           <span>{getPartnerName()}'s busy time</span>
         </div>
       {/if}
+      {#if Object.keys(nannyCalendarEvents).length > 0}
+        <div class="legend-item">
+          <span class="legend-swatch nanny-busy-swatch"></span>
+          <span>Nanny unavailable</span>
+        </div>
+      {/if}
       {#if profile?.role === 'family' || profile?.role === 'admin'}
         <span class="legend-hint">Double-click a time slot to add a shift</span>
       {/if}
@@ -698,26 +806,48 @@
   <div class="modal-overlay" on:click={() => showCalendarManager = false}>
     <div class="modal-panel" on:click|stopPropagation>
       <div class="modal-top">
-        <h2>Manage Calendars</h2>
+        <h2>{profile?.role === 'nanny' ? 'My Availability' : 'Manage Calendars'}</h2>
         <button class="modal-close" on:click={() => showCalendarManager = false}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       </div>
+
+      {#if profile?.role === 'nanny'}
+        <p class="modal-desc">Connect your personal calendar so your family can see when you're unavailable. Only busy/free status is shared — event details stay private.</p>
+      {/if}
 
       <CalendarManager
         userId={user.id}
         onUpdate={handleCalendarUpdate}
       />
 
-      {#if familyMembers.length > 1}
-        {@const partner = familyMembers.find(m => m.id !== user.id)}
-        {#if partner}
+      {#if profile?.role === 'family' || profile?.role === 'admin'}
+        {#if familyMembers.length > 1}
+          {@const partner = familyMembers.find(m => m.id !== user.id)}
+          {#if partner}
+            <div class="partner-section">
+              <h3>{partner.full_name}'s Calendars</h3>
+              <CalendarManager
+                userId={partner.id}
+                onUpdate={handleCalendarUpdate}
+              />
+            </div>
+          {/if}
+        {/if}
+
+        {#if nannies.length > 0}
           <div class="partner-section">
-            <h3>{partner.full_name}'s Calendars</h3>
-            <CalendarManager
-              userId={partner.id}
-              onUpdate={handleCalendarUpdate}
-            />
+            <h3>Nanny Calendars</h3>
+            <p class="section-desc">These calendars are managed by your nannies. Their busy times appear on the schedule grid so you can avoid conflicts.</p>
+            {#each nannies as nanny}
+              <div class="nanny-cal-section">
+                <h4>{nanny.full_name}</h4>
+                <CalendarManager
+                  userId={nanny.id}
+                  onUpdate={handleCalendarUpdate}
+                />
+              </div>
+            {/each}
           </div>
         {/if}
       {/if}
@@ -762,6 +892,21 @@
             <input type="time" bind:value={shiftForm.endTime} required />
           </div>
         </div>
+
+        {#if getShiftConflicts().length > 0}
+          <div class="conflict-warning">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            <div class="conflict-text">
+              <strong>Heads up</strong> &mdash; {getNannyName(shiftForm.nannyId)} has {getShiftConflicts().length === 1 ? 'something' : `${getShiftConflicts().length} things`} on their calendar during this time:
+              <ul class="conflict-list">
+                {#each getShiftConflicts() as conflict}
+                  <li>"{conflict.title}" ({conflict.startTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} - {conflict.endTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })})</li>
+                {/each}
+              </ul>
+              <span class="conflict-hint">You may want to check with them before booking this time.</span>
+            </div>
+          </div>
+        {/if}
 
         <div class="form-field">
           <label>Notes <span class="optional">(optional)</span></label>
@@ -1138,6 +1283,14 @@
     right: 2px;
   }
 
+  .cal-event-nanny {
+    background: rgba(237, 137, 54, 0.12);
+    border-left-color: #ed8936;
+    left: 2px;
+    right: 2px;
+    z-index: 1;
+  }
+
   .cal-event-owner {
     font-weight: 600;
     color: #4a5568;
@@ -1290,6 +1443,11 @@
     border: 1px solid rgba(159, 122, 234, 0.4);
   }
 
+  .nanny-busy-swatch {
+    background: rgba(237, 137, 54, 0.15);
+    border: 1px solid rgba(237, 137, 54, 0.4);
+  }
+
   .legend-hint {
     margin-left: auto;
     color: #a0aec0;
@@ -1383,6 +1541,73 @@
     font-size: 1em;
     font-weight: 600;
     color: #4a5568;
+  }
+
+  .modal-desc {
+    margin: -12px 0 20px 0;
+    font-size: 0.9em;
+    color: #718096;
+    line-height: 1.5;
+  }
+
+  .section-desc {
+    margin: -8px 0 16px 0;
+    font-size: 0.85em;
+    color: #a0aec0;
+    line-height: 1.5;
+  }
+
+  .nanny-cal-section {
+    margin-bottom: 16px;
+  }
+
+  .nanny-cal-section h4 {
+    margin: 0 0 8px 0;
+    font-size: 0.9em;
+    font-weight: 600;
+    color: #64748b;
+  }
+
+  /* Conflict Warning */
+  .conflict-warning {
+    display: flex;
+    gap: 10px;
+    padding: 12px 14px;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: 10px;
+    margin-bottom: 16px;
+    color: #92400e;
+    font-size: 0.85em;
+    line-height: 1.5;
+    animation: fadeIn 0.2s ease;
+  }
+
+  .conflict-warning svg {
+    flex-shrink: 0;
+    margin-top: 1px;
+    color: #f59e0b;
+  }
+
+  .conflict-text strong {
+    color: #78350f;
+  }
+
+  .conflict-list {
+    margin: 6px 0 6px 0;
+    padding-left: 18px;
+    font-size: 0.95em;
+  }
+
+  .conflict-list li {
+    margin-bottom: 2px;
+  }
+
+  .conflict-hint {
+    display: block;
+    font-size: 0.9em;
+    color: #b45309;
+    font-style: italic;
   }
 
   /* Modal Form Fields */

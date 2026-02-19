@@ -645,6 +645,40 @@
     )
   }
 
+  function getWeekSummary() {
+    if (shifts.length === 0) return null
+
+    const byNanny = {}
+    let totalHours = 0
+
+    shifts.forEach(shift => {
+      const startMin = timeToMinutes(shift.start_time)
+      const endMin = timeToMinutes(shift.end_time)
+      const hours = Math.max((endMin - startMin) / 60, 0)
+
+      const id = shift.nanny_id
+      if (!byNanny[id]) {
+        const nanny = nannies.find(n => n.id === id)
+        byNanny[id] = {
+          name: getNannyName(id),
+          hours: 0,
+          rate: nanny?.hourly_rate || 20
+        }
+      }
+      byNanny[id].hours += hours
+      totalHours += hours
+    })
+
+    const nannyBreakdown = Object.values(byNanny).map(n => ({
+      ...n,
+      cost: n.hours * n.rate
+    }))
+
+    const totalCost = nannyBreakdown.reduce((sum, n) => sum + n.cost, 0)
+
+    return { totalHours, totalCost, nannyBreakdown }
+  }
+
   function handleCalendarUpdate() {
     loadCalendarEvents()
   }
@@ -693,6 +727,41 @@
       <div class="gap-banner">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
         <span><strong>{getCoverageGaps().length} coverage gap{getCoverageGaps().length > 1 ? 's' : ''}</strong> this week &mdash; both parents busy with no nanny scheduled</span>
+      </div>
+    {/if}
+
+    <!-- Week Summary -->
+    {#if getWeekSummary()}
+      {@const summary = getWeekSummary()}
+      <div class="week-summary">
+        {#if profile?.role === 'nanny'}
+          <div class="summary-stat">
+            <span class="summary-label">This week</span>
+            <span class="summary-value">{summary.totalHours.toFixed(1)}h</span>
+          </div>
+          <div class="summary-divider"></div>
+          <div class="summary-stat">
+            <span class="summary-label">Est. income</span>
+            <span class="summary-value summary-income">${summary.totalCost.toFixed(2)}</span>
+          </div>
+        {:else}
+          <div class="summary-stat">
+            <span class="summary-label">Scheduled</span>
+            <span class="summary-value">{summary.totalHours.toFixed(1)}h</span>
+          </div>
+          <div class="summary-divider"></div>
+          {#each summary.nannyBreakdown as nanny}
+            <div class="summary-stat">
+              <span class="summary-label">{nanny.name}</span>
+              <span class="summary-detail">{nanny.hours.toFixed(1)}h &times; ${nanny.rate}/hr</span>
+            </div>
+          {/each}
+          <div class="summary-divider"></div>
+          <div class="summary-stat">
+            <span class="summary-label">Est. cost</span>
+            <span class="summary-value summary-cost">${summary.totalCost.toFixed(2)}</span>
+          </div>
+        {/if}
       </div>
     {/if}
 
@@ -1093,6 +1162,57 @@
     border-bottom: 1px solid #fecaca;
     color: #991b1b;
     font-size: 0.9em;
+  }
+
+  /* === Week Summary === */
+  .week-summary {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 10px 24px;
+    background: white;
+    border-bottom: 1px solid #e2e8f0;
+    flex-wrap: wrap;
+  }
+
+  .summary-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+
+  .summary-label {
+    font-size: 0.72em;
+    font-weight: 600;
+    color: #a0aec0;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  .summary-value {
+    font-size: 1.05em;
+    font-weight: 700;
+    color: #1a202c;
+  }
+
+  .summary-detail {
+    font-size: 0.85em;
+    font-weight: 500;
+    color: #4a5568;
+  }
+
+  .summary-cost {
+    color: #c53030;
+  }
+
+  .summary-income {
+    color: #276749;
+  }
+
+  .summary-divider {
+    width: 1px;
+    height: 28px;
+    background: #e2e8f0;
   }
 
   /* === Calendar Grid === */

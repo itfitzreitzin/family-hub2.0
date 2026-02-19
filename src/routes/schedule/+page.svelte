@@ -1293,27 +1293,26 @@
   /* Calendar Events */
   .cal-event {
     position: absolute;
-    left: 2px;
-    right: 50%;
     border-radius: 4px;
     padding: 2px 6px;
     font-size: 0.7em;
     overflow: hidden;
-    z-index: 2;
     border-left: 3px solid #667eea;
     cursor: default;
   }
 
   .cal-event-you {
-    background: rgba(102, 126, 234, 0.1);
-    right: 50%;
+    background: rgba(102, 126, 234, 0.18);
     left: 2px;
+    right: 50%;
+    z-index: 5;
   }
 
   .cal-event-partner {
-    background: rgba(159, 122, 234, 0.1);
+    background: rgba(159, 122, 234, 0.18);
     left: 50%;
     right: 2px;
+    z-index: 5;
   }
 
   .cal-event-nanny {
@@ -1321,7 +1320,16 @@
     border-left-color: #ed8936;
     left: 2px;
     right: 2px;
-    z-index: 1;
+    z-index: 2;
+    border-left-width: 3px;
+    border-left-style: solid;
+    background-image: repeating-linear-gradient(
+      -45deg,
+      transparent,
+      transparent 4px,
+      rgba(237, 137, 54, 0.06) 4px,
+      rgba(237, 137, 54, 0.06) 8px
+    );
   }
 
   .cal-event-owner {
@@ -1339,29 +1347,35 @@
     text-overflow: ellipsis;
   }
 
-  /* Nanny Shift Blocks */
+  /* Nanny Shift Blocks — semi-transparent overlay so parent events show through */
   .shift-block {
     position: absolute;
     left: 3px;
     right: 3px;
-    background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
-    border: 1.5px solid #34d399;
+    background: rgba(52, 211, 153, 0.15);
+    border: 1.5px solid rgba(52, 211, 153, 0.6);
     border-radius: 6px;
     padding: 6px 8px;
-    z-index: 4;
+    z-index: 3;
     cursor: default;
     overflow: hidden;
     transition: box-shadow 0.15s;
   }
 
   .shift-block:hover {
-    box-shadow: 0 2px 8px rgba(52, 211, 153, 0.3);
+    background: rgba(52, 211, 153, 0.25);
+    box-shadow: 0 2px 8px rgba(52, 211, 153, 0.2);
   }
 
   .shift-content {
     display: flex;
     flex-direction: column;
     gap: 1px;
+    background: rgba(255, 255, 255, 0.7);
+    border-radius: 3px;
+    padding: 1px 4px;
+    width: fit-content;
+    max-width: 100%;
   }
 
   .shift-name {

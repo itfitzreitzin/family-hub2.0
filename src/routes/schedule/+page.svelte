@@ -82,6 +82,9 @@
     await setCurrentWeek(0)
     loading = false
 
+    // Prevent body from scrolling — only the grid body should scroll
+    document.body.classList.add('schedule-active')
+
     // Mobile detection
     const mql = window.matchMedia('(max-width: 768px)')
     isMobile = mql.matches
@@ -100,7 +103,10 @@
   })
 
   let mqlCleanup = null
-  onDestroy(() => { if (mqlCleanup) mqlCleanup() })
+  onDestroy(() => {
+    document.body.classList.remove('schedule-active')
+    if (mqlCleanup) mqlCleanup()
+  })
 
   async function loadFamilyMembers() {
     const { data, error } = await supabase
@@ -1116,13 +1122,21 @@
 {/if}
 
 <style>
+  /* Lock body scroll when schedule is active */
+  :global(body.schedule-active) {
+    overflow: hidden !important;
+  }
+
   /* === Page Layout === */
   .schedule-page {
-    min-height: 100vh;
+    height: calc(100dvh - 60px);
     background: var(--surface-page, #f0f2f8);
-    padding: 40px 20px;
+    padding: 0 20px;
     max-width: 1400px;
     margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
   }
   
   /* === Top Bar === */
@@ -1133,11 +1147,10 @@
     padding: 16px 24px;
     background: white;
     border-bottom: 1px solid #e2e8f0;
-    position: sticky;
-    top: 0;
     z-index: 20;
     flex-wrap: wrap;
     gap: 12px;
+    flex-shrink: 0;
   }
 
   .top-left h1 {
@@ -1232,6 +1245,7 @@
     border-bottom: 1px solid #fecaca;
     color: #991b1b;
     font-size: 0.9em;
+    flex-shrink: 0;
   }
 
   /* === Week Summary === */
@@ -1243,6 +1257,7 @@
     background: white;
     border-bottom: 1px solid #e2e8f0;
     flex-wrap: wrap;
+    flex-shrink: 0;
   }
 
   .summary-stat {
@@ -1288,13 +1303,14 @@
   /* === Calendar Grid === */
   .calendar-wrapper {
     flex: 1;
+    min-height: 0;
     overflow: hidden;
   }
 
   .time-grid {
     display: flex;
     flex-direction: column;
-    height: calc(100vh - 130px);
+    height: 100%;
   }
 
   /* Day Headers */
@@ -1349,12 +1365,13 @@
     justify-content: center;
   }
 
-  /* Grid Body */
+  /* Grid Body — sole scroll container */
   .grid-body {
     display: grid;
     grid-template-columns: 60px repeat(7, 1fr);
     overflow-y: auto;
     flex: 1;
+    min-height: 0;
   }
 
   /* Time Gutter */
@@ -1630,6 +1647,7 @@
     background: white;
     border-radius: 14px;
     border: 2px solid #e5e7eb;
+    flex-shrink: 0;
   }
 
   .legend-item {
@@ -1913,6 +1931,11 @@
 
   /* === Responsive === */
   @media (max-width: 768px) {
+    .schedule-page {
+      height: calc(100dvh - 56px - 60px);
+      padding: 0;
+    }
+
     .top-bar {
       padding: 12px 16px;
     }

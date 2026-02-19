@@ -10,16 +10,16 @@ import { fetchAndParseICal } from '$lib/server/ical-parser.js'
  * Requires authenticated user (passed via authorization header).
  */
 export async function POST({ request }) {
-  const supabase = createServerClient()
-
   // Get auth token from request
   const authHeader = request.headers.get('authorization')
   if (!authHeader) {
     return json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  // Verify the user
   const token = authHeader.replace('Bearer ', '')
+  const supabase = createServerClient(token)
+
+  // Verify the user
   const { data: { user }, error: authError } = await supabase.auth.getUser(token)
   if (authError || !user) {
     return json({ error: 'Unauthorized' }, { status: 401 })

@@ -77,9 +77,8 @@
       shiftForm.nannyId = profile?.id || null
     }
 
-    setCurrentWeek(0)
+    await setCurrentWeek(0)
     loading = false
-    loadCalendarEvents()
 
     // Auto-scroll grid to current hour
     setTimeout(() => {
@@ -138,7 +137,7 @@
 
       const recurringEvents = await processRecurringEvents(manualTimes || [], currentWeekStart, weekEnd)
 
-      parentCalendarEvents = { you: [], partner: [] }
+      const newParentEvents = { you: [], partner: [] }
 
       const youId = user.id
       const partnerId = familyMembers.find(m => m.id !== youId)?.id
@@ -153,9 +152,9 @@
         }
 
         if (event.parent_calendars.user_id === youId) {
-          parentCalendarEvents.you.push(eventData)
+          newParentEvents.you.push(eventData)
         } else if (event.parent_calendars.user_id === partnerId) {
-          parentCalendarEvents.partner.push(eventData)
+          newParentEvents.partner.push(eventData)
         }
       })
 
@@ -169,11 +168,13 @@
         }
 
         if (event.user_id === youId) {
-          parentCalendarEvents.you.push(eventData)
+          newParentEvents.you.push(eventData)
         } else if (event.user_id === partnerId) {
-          parentCalendarEvents.partner.push(eventData)
+          newParentEvents.partner.push(eventData)
         }
       })
+
+      parentCalendarEvents = newParentEvents
     } catch (err) {
       // silently fail — calendar events are supplementary
     }
@@ -289,14 +290,13 @@
     return instances
   }
 
-  function setCurrentWeek(offset) {
+  async function setCurrentWeek(offset) {
     const now = new Date()
     const weekStart = new Date(now)
     weekStart.setDate(now.getDate() - now.getDay() + (offset * 7))
     weekStart.setHours(0, 0, 0, 0)
     currentWeekStart = weekStart
-    loadShifts()
-    loadCalendarEvents()
+    await Promise.all([loadShifts(), loadCalendarEvents()])
   }
 
   function ymd(date) {

@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from 'svelte'
+  import { onMount, onDestroy } from 'svelte'
   import { supabase } from '$lib/supabase'
   import Nav from '$lib/Nav.svelte'
   import CalendarManager from '$lib/components/CalendarManager.svelte'
@@ -14,6 +14,8 @@
   let showAddShift = false
   let showCalendarManager = false
   let nannies = []
+  let editingShiftId = null
+  let isMobile = false
 
   let shiftForm = {
     nannyId: null,
@@ -80,6 +82,13 @@
     await setCurrentWeek(0)
     loading = false
 
+    // Mobile detection
+    const mql = window.matchMedia('(max-width: 768px)')
+    isMobile = mql.matches
+    const handleResize = (e) => { isMobile = e.matches }
+    mql.addEventListener('change', handleResize)
+    mqlCleanup = () => mql.removeEventListener('change', handleResize)
+
     // Auto-scroll grid to current hour
     setTimeout(() => {
       const gridBody = document.querySelector('.grid-body')
@@ -89,6 +98,9 @@
       }
     }, 50)
   })
+
+  let mqlCleanup = null
+  onDestroy(() => { if (mqlCleanup) mqlCleanup() })
 
   async function loadFamilyMembers() {
     const { data, error } = await supabase
@@ -377,6 +389,30 @@
     if (!error) weekSummary = data
   }
 
+  function editShift(shift) {
+    editingShiftId = shift.id
+    shiftForm = {
+      nannyId: shift.nanny_id,
+      date: normalizeDateValue(shift.date),
+      startTime: shift.start_time.slice(0, 5),
+      endTime: shift.end_time.slice(0, 5),
+      notes: shift.notes || ''
+    }
+    showAddShift = true
+  }
+
+  function resetShiftForm() {
+    editingShiftId = null
+    shiftForm = {
+      nannyId: nannies.length > 0 ? nannies[0].id : null,
+      date: '',
+      startTime: '09:00',
+      endTime: '17:00',
+      notes: ''
+    }
+    showAddShift = false
+  }
+
   async function saveShift() {
     if (!shiftForm.nannyId) {
       toast.error('Please select a nanny')
@@ -389,30 +425,37 @@
     }
 
     try {
-      const { error } = await supabase
-        .from('schedules')
-        .insert({
-          nanny_id: shiftForm.nannyId,
-          date: shiftForm.date,
-          start_time: shiftForm.startTime,
-          end_time: shiftForm.endTime,
-          notes: shiftForm.notes || '',
-          created_by: user.id
-        })
-        .select('*')
-        .single()
+      if (editingShiftId) {
+        const { error } = await supabase
+          .from('schedules')
+          .update({
+            nanny_id: shiftForm.nannyId,
+            date: shiftForm.date,
+            start_time: shiftForm.startTime,
+            end_time: shiftForm.endTime,
+            notes: shiftForm.notes || ''
+          })
+          .eq('id', editingShiftId)
 
-      if (error) throw error
+        if (error) throw error
+      } else {
+        const { error } = await supabase
+          .from('schedules')
+          .insert({
+            nanny_id: shiftForm.nannyId,
+            date: shiftForm.date,
+            start_time: shiftForm.startTime,
+            end_time: shiftForm.endTime,
+            notes: shiftForm.notes || '',
+            created_by: user.id
+          })
+          .select('*')
+          .single()
 
-      shiftForm = {
-        nannyId: nannies.length > 0 ? nannies[0].id : null,
-        date: '',
-        startTime: '09:00',
-        endTime: '17:00',
-        notes: ''
+        if (error) throw error
       }
 
-      showAddShift = false
+      resetShiftForm()
       await loadShifts()
     } catch (err) {
       toast.error('Error: ' + err.message)
@@ -422,10 +465,32 @@
   function getWeekDays() {
     if (!currentWeekStart) return []
     const days = []
-    for (let i = 0; i < 7; i++) {
-      const day = new Date(currentWeekStart)
-      day.setDate(day.getDate() + i)
-      days.push(day)
+    if (isMobile) {
+      // 3-day view centered on today (or week start if today is outside this week)
+      const today = new Date()
+      today.setHours(0, 0, 0, 0)
+      const weekEnd = new Date(currentWeekStart)
+      weekEnd.setDate(weekEnd.getDate() + 6)
+
+      let center
+      if (today >= currentWeekStart && today <= weekEnd) {
+        center = new Date(today)
+      } else {
+        center = new Date(currentWeekStart)
+        center.setDate(center.getDate() + 1)
+      }
+
+      for (let i = -1; i <= 1; i++) {
+        const day = new Date(center)
+        day.setDate(day.getDate() + i)
+        days.push(day)
+      }
+    } else {
+      for (let i = 0; i < 7; i++) {
+        const day = new Date(currentWeekStart)
+        day.setDate(day.getDate() + i)
+        days.push(day)
+      }
     }
     return days
   }
@@ -455,6 +520,7 @@
       toast.error('No nannies found. Please create a nanny profile first.')
       return
     }
+    editingShiftId = null
     shiftForm.date = ymd(date)
     if (hour !== undefined) {
       shiftForm.startTime = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
@@ -869,11 +935,15 @@
               {#each getShiftsForDay(day) as shift}
                 <div
                   class="shift-block"
+                  class:shift-editable={profile?.role === 'family' || profile?.role === 'admin'}
                   style="
                     top: {eventTop(shift.start_time)}px;
                     height: {eventHeight(shift.start_time, shift.end_time)}px;
                   "
-                  on:click|stopPropagation
+                  on:click|stopPropagation={() => {
+                    if (profile?.role === 'family' || profile?.role === 'admin') editShift(shift)
+                  }}
+                  title={profile?.role === 'family' || profile?.role === 'admin' ? 'Click to edit' : ''}
                 >
                   <div class="shift-content">
                     <span class="shift-name">{getNannyName(shift.nanny_id)}</span>
@@ -978,13 +1048,13 @@
   </div>
 {/if}
 
-<!-- Add Shift Modal -->
+<!-- Add/Edit Shift Modal -->
 {#if showAddShift}
-  <div class="modal-overlay" on:click={() => showAddShift = false}>
+  <div class="modal-overlay" on:click={resetShiftForm}>
     <div class="modal-panel compact" on:click|stopPropagation>
       <div class="modal-top">
-        <h2>Add Nanny Shift</h2>
-        <button class="modal-close" on:click={() => showAddShift = false}>
+        <h2>{editingShiftId ? 'Edit Shift' : 'Add Nanny Shift'}</h2>
+        <button class="modal-close" on:click={resetShiftForm}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       </div>
@@ -1037,8 +1107,8 @@
         </div>
 
         <div class="form-actions">
-          <button type="submit" class="btn-save">Save Shift</button>
-          <button type="button" class="btn-cancel" on:click={() => showAddShift = false}>Cancel</button>
+          <button type="submit" class="btn-save">{editingShiftId ? 'Update Shift' : 'Save Shift'}</button>
+          <button type="button" class="btn-cancel" on:click={resetShiftForm}>Cancel</button>
         </div>
       </form>
     </div>
@@ -1542,6 +1612,15 @@
     background: #fee2e2;
   }
 
+  .shift-editable {
+    cursor: pointer;
+  }
+
+  .shift-editable:hover {
+    outline: 2px solid rgba(52, 211, 153, 0.8);
+    outline-offset: -2px;
+  }
+
   /* === Legend === */
   .legend {
     display: flex;
@@ -1843,11 +1922,11 @@
     }
 
     .grid-header {
-      grid-template-columns: 44px repeat(7, 1fr);
+      grid-template-columns: 44px repeat(3, 1fr);
     }
 
     .grid-body {
-      grid-template-columns: 44px repeat(7, 1fr);
+      grid-template-columns: 44px repeat(3, 1fr);
     }
 
     .time-text {
@@ -1874,15 +1953,15 @@
     }
 
     .shift-name {
-      font-size: 0.7em;
+      font-size: 0.75em;
     }
 
     .shift-time {
-      font-size: 0.6em;
+      font-size: 0.65em;
     }
 
     .shift-note {
-      display: none;
+      font-size: 0.6em;
     }
 
     .legend {
@@ -1897,6 +1976,23 @@
     .gap-banner {
       padding: 8px 16px;
       font-size: 0.8em;
+    }
+
+    .week-summary {
+      padding: 8px 16px;
+      gap: 12px;
+    }
+
+    .summary-label {
+      font-size: 0.65em;
+    }
+
+    .summary-value {
+      font-size: 0.9em;
+    }
+
+    .summary-detail {
+      font-size: 0.78em;
     }
   }
 </style>

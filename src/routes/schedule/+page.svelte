@@ -932,14 +932,6 @@
     margin: 0 auto;
   }
   
-  .card {
-    background: white;
-    border-radius: 1rem;
-    padding: 30px;
-    box-shadow: var(--shadow-md, 0 4px 6px -1px rgba(0, 0, 0, 0.07));
-    border: 1px solid rgba(0, 0, 0, 0.04);
-  }
-
   /* === Top Bar === */
   .top-bar {
     display: flex;
@@ -1075,20 +1067,15 @@
   .time-gutter-header {
     border-right: 1px solid #e2e8f0;
   }
-  
-  .day-column {
-    border: 1.5px solid var(--color-gray-200, #e2e8f0);
-    border-radius: 12px;
-    overflow: hidden;
-    min-height: 250px;
-  }
-  
-  .day-header {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    padding: 15px;
+
+  .day-col-header {
     text-align: center;
-    box-shadow: inset 0 -1px 0 rgba(255,255,255,0.1);
+    padding: 8px 4px;
+    border-right: 1px solid #f1f5f9;
+  }
+
+  .day-col-header.today {
+    background: rgba(102, 126, 234, 0.05);
   }
 
   .day-label {
@@ -1107,84 +1094,23 @@
     font-size: 0.9em;
   }
   
-  /* Nanny Shifts */
-  .shift-block {
-    background: #c6f6d5;
-    border: 1px solid #48bb78;
-    border-radius: 10px;
-    padding: 10px;
-    margin-bottom: 10px;
-    position: relative;
-    animation: slideIn 0.3s ease;
-  }
-  
-  @keyframes slideIn {
-    from {
-      opacity: 0;
-      transform: translateY(-10px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-  
-  .shift-nanny {
-    font-weight: 600;
-    color: #22543d;
-    margin-bottom: 5px;
-  }
-  
-  .shift-time {
-    font-size: 0.9em;
-    color: #2d3748;
-  }
-  
-  .shift-notes {
-    font-size: 0.85em;
-    color: #718096;
-    margin-top: 5px;
-    font-style: italic;
-  }
-  
-  .delete-btn {
-    position: absolute;
-    top: 5px;
-    right: 5px;
-    width: 20px;
-    height: 20px;
-    border: none;
-    background: rgba(239, 68, 68, 0.8);
-    color: white;
-    border-radius: 50%;
-    cursor: pointer;
-    font-size: 16px;
-    line-height: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 50%;
-  }
-
   .day-num.today-num {
     background: #667eea;
     color: white;
+    border-radius: 50%;
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
 
   /* Grid Body */
   .grid-body {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 15px;
-    margin-bottom: 20px;
-  }
-
-  .stat-card {
-    background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
-    border: 2px solid #0284c7;
-    border-radius: 14px;
-    padding: 20px;
-    text-align: center;
+    grid-template-columns: 60px repeat(7, 1fr);
+    overflow-y: auto;
+    flex: 1;
   }
 
   /* Time Gutter */
@@ -1215,17 +1141,12 @@
   .day-col {
     position: relative;
     border-right: 1px solid #f1f5f9;
-    height: calc(var(--total-hours) * var(--hour-height));
-    min-height: calc(13 * 60px);
+    height: calc(13 * 60px);
     cursor: default;
   }
 
-  .gap-alert {
-    background: #fef2f2;
-    border: 2px solid #dc2626;
-    border-radius: 14px;
-    padding: 20px;
-    margin-bottom: 20px;
+  .day-col.today-col {
+    background: rgba(102, 126, 234, 0.03);
   }
 
   .hour-line {

@@ -26,7 +26,13 @@ export async function POST({ request }) {
   }
 
   // Get request body
-  const { calendarId } = await request.json()
+  let calendarId
+  try {
+    const body = await request.json()
+    calendarId = body.calendarId
+  } catch {
+    return json({ error: 'Invalid request body' }, { status: 400 })
+  }
   if (!calendarId) {
     return json({ error: 'calendarId is required' }, { status: 400 })
   }

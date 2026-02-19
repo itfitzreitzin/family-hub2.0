@@ -104,7 +104,9 @@
 
   let mqlCleanup = null
   onDestroy(() => {
-    document.body.classList.remove('schedule-active')
+    if (typeof document !== 'undefined') {
+      document.body.classList.remove('schedule-active')
+    }
     if (mqlCleanup) mqlCleanup()
   })
 
@@ -145,11 +147,13 @@
 
       if (error) throw error
 
+      // Fetch non-recurring manual busy times within this week,
+      // plus all recurring events (their start_time is the first occurrence,
+      // which may be in the past, so we can't filter by date range).
       const { data: manualTimes, error: manualError } = await supabase
         .from('manual_busy_times')
         .select('*')
-        .gte('start_time', currentWeekStart.toISOString())
-        .lte('start_time', weekEnd.toISOString())
+        .or(`and(start_time.gte.${currentWeekStart.toISOString()},start_time.lte.${weekEnd.toISOString()}),recurring.eq.true`)
 
       if (manualError) throw manualError
 

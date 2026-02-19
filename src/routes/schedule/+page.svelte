@@ -33,10 +33,14 @@
   let familyMembers = []
 
   // Time grid config
-  const DAY_START_HOUR = 7
-  const DAY_END_HOUR = 20
+  const DAY_START_HOUR = 0
+  const DAY_END_HOUR = 24
   const TOTAL_HOURS = DAY_END_HOUR - DAY_START_HOUR
   const HOUR_HEIGHT = 60 // px per hour
+  const SLOT_MINUTES = 15
+  const SLOT_HEIGHT = HOUR_HEIGHT / (60 / SLOT_MINUTES) // 15px
+
+  let hoveredSlot = null
 
   onMount(async () => {
     const { data: { user: currentUser } } = await supabase.auth.getUser()
@@ -76,6 +80,15 @@
     setCurrentWeek(0)
     loading = false
     loadCalendarEvents()
+
+    // Auto-scroll grid to current hour
+    setTimeout(() => {
+      const gridBody = document.querySelector('.grid-body')
+      if (gridBody) {
+        const scrollToHour = Math.max(new Date().getHours() - 1, 0)
+        gridBody.scrollTop = scrollToHour * HOUR_HEIGHT
+      }
+    }, 50)
   })
 
   async function loadFamilyMembers() {
@@ -437,20 +450,51 @@
     return `${display} ${ampm}`
   }
 
-  function openAddShift(date, hour) {
+  function openAddShift(date, hour, minute = 0) {
     if ((profile?.role === 'family' || profile?.role === 'admin') && (!nannies || nannies.length === 0)) {
       toast.error('No nannies found. Please create a nanny profile first.')
       return
     }
     shiftForm.date = ymd(date)
     if (hour !== undefined) {
-      shiftForm.startTime = `${String(hour).padStart(2, '0')}:00`
-      shiftForm.endTime = `${String(Math.min(hour + 2, DAY_END_HOUR)).padStart(2, '0')}:00`
+      shiftForm.startTime = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+      const endTotalMin = Math.min(hour * 60 + minute + 60, 23 * 60 + 59)
+      shiftForm.endTime = `${String(Math.floor(endTotalMin / 60)).padStart(2, '0')}:${String(endTotalMin % 60).padStart(2, '0')}`
     }
     if (!shiftForm.nannyId && nannies && nannies.length === 1) {
       shiftForm.nannyId = nannies[0].id
     }
     showAddShift = true
+  }
+
+  function handleDayClick(e, day) {
+    if (profile?.role !== 'family' && profile?.role !== 'admin') return
+    const rect = e.currentTarget.getBoundingClientRect()
+    const y = e.clientY - rect.top + e.currentTarget.scrollTop
+    const totalMinutes = (y / HOUR_HEIGHT) * 60
+    const snapped = Math.floor(totalMinutes / SLOT_MINUTES) * SLOT_MINUTES
+    const hour = Math.min(Math.floor(snapped / 60), 23)
+    const minute = snapped % 60
+    openAddShift(day, hour, minute)
+  }
+
+  function handleDayMouseMove(e, dayIdx) {
+    if (profile?.role !== 'family' && profile?.role !== 'admin') return
+    const rect = e.currentTarget.getBoundingClientRect()
+    const y = e.clientY - rect.top + e.currentTarget.scrollTop
+    const totalMinutes = (y / HOUR_HEIGHT) * 60
+    const snapped = Math.floor(totalMinutes / SLOT_MINUTES) * SLOT_MINUTES
+    const hour = Math.min(Math.floor(snapped / 60), 23)
+    const minute = snapped % 60
+    if (hour >= 0 && hour < 24) {
+      hoveredSlot = { dayIdx, hour, minute }
+    }
+  }
+
+  function formatTime15(hour, minute) {
+    const ampm = hour >= 12 ? 'pm' : 'am'
+    const display = hour > 12 ? hour - 12 : hour === 0 ? 12 : hour
+    return `${display}:${String(minute).padStart(2, '0')}${ampm}`
   }
 
   function changeWeek(direction) {
@@ -682,18 +726,32 @@
             <div
               class="day-col"
               class:today-col={isToday(day)}
-              on:dblclick={(e) => {
-                if (profile?.role !== 'family' && profile?.role !== 'admin') return
-                const rect = e.currentTarget.getBoundingClientRect()
-                const y = e.clientY - rect.top + e.currentTarget.parentElement.scrollTop
-                const hour = Math.floor(y / HOUR_HEIGHT) + DAY_START_HOUR
-                openAddShift(day, hour)
-              }}
+              on:click={(e) => handleDayClick(e, day)}
+              on:mousemove={(e) => handleDayMouseMove(e, dayIdx)}
+              on:mouseleave={() => hoveredSlot = null}
             >
-              <!-- Hour grid lines -->
+              <!-- Zebra hour backgrounds -->
+              {#each Array(TOTAL_HOURS) as _, i}
+                <div class="hour-bg" class:hour-even={i % 2 === 0} style="top: {i * HOUR_HEIGHT}px; height: {HOUR_HEIGHT}px"></div>
+              {/each}
+
+              <!-- Grid lines: hour (solid), half-hour (dashed), quarter-hour (dotted) -->
               {#each Array(TOTAL_HOURS) as _, i}
                 <div class="hour-line" style="top: {i * HOUR_HEIGHT}px"></div>
+                <div class="quarter-line" style="top: {i * HOUR_HEIGHT + SLOT_HEIGHT}px"></div>
+                <div class="half-line" style="top: {i * HOUR_HEIGHT + SLOT_HEIGHT * 2}px"></div>
+                <div class="quarter-line" style="top: {i * HOUR_HEIGHT + SLOT_HEIGHT * 3}px"></div>
               {/each}
+
+              <!-- Hover indicator for clickable slot -->
+              {#if hoveredSlot && hoveredSlot.dayIdx === dayIdx}
+                <div class="slot-hover" style="top: {(hoveredSlot.hour * 60 + hoveredSlot.minute) / 60 * HOUR_HEIGHT}px; height: {SLOT_HEIGHT}px">
+                  <span class="slot-hover-label">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    {formatTime15(hoveredSlot.hour, hoveredSlot.minute)}
+                  </span>
+                </div>
+              {/if}
 
               <!-- Current time indicator -->
               {#if isToday(day)}
@@ -714,6 +772,7 @@
                     border-left-color: {event.color};
                   "
                   title="{event.owner === 'you' ? 'You' : getPartnerName()}: {event.title}"
+                  on:click|stopPropagation
                 >
                   <span class="cal-event-owner">{event.owner === 'you' ? 'You' : getPartnerName()}</span>
                   <span class="cal-event-title">{event.title}</span>
@@ -730,6 +789,7 @@
                     border-left-color: {nEvent.color || '#ed8936'};
                   "
                   title="{nEvent.nannyName}: {nEvent.title} (unavailable)"
+                  on:click|stopPropagation
                 >
                   <span class="cal-event-owner">{nEvent.nannyName}</span>
                   <span class="cal-event-title">{nEvent.title}</span>
@@ -744,6 +804,7 @@
                     top: {eventTop(shift.start_time)}px;
                     height: {eventHeight(shift.start_time, shift.end_time)}px;
                   "
+                  on:click|stopPropagation
                 >
                   <div class="shift-content">
                     <span class="shift-name">{getNannyName(shift.nanny_id)}</span>
@@ -759,13 +820,6 @@
                   {/if}
                 </div>
               {/each}
-
-              <!-- "Add" click hint on hover (family only) -->
-              {#if profile?.role === 'family' || profile?.role === 'admin'}
-                <button class="add-hint" on:click={() => openAddShift(day)}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                </button>
-              {/if}
             </div>
           {/each}
         </div>
@@ -795,7 +849,7 @@
         </div>
       {/if}
       {#if profile?.role === 'family' || profile?.role === 'admin'}
-        <span class="legend-hint">Double-click a time slot to add a shift</span>
+        <span class="legend-hint">Click a time slot to add a shift</span>
       {/if}
     </div>
   {/if}
@@ -1140,21 +1194,79 @@
   /* Day Columns */
   .day-col {
     position: relative;
-    border-right: 1px solid #f1f5f9;
-    height: calc(13 * 60px);
-    cursor: default;
+    border-right: 1px solid #e2e8f0;
+    height: calc(24 * 60px);
+    cursor: pointer;
   }
 
   .day-col.today-col {
     background: rgba(102, 126, 234, 0.03);
   }
 
+  /* Zebra hour backgrounds */
+  .hour-bg {
+    position: absolute;
+    left: 0;
+    right: 0;
+  }
+
+  .hour-bg.hour-even {
+    background: rgba(241, 245, 249, 0.5);
+  }
+
+  /* Grid lines */
   .hour-line {
     position: absolute;
     left: 0;
     right: 0;
     height: 1px;
+    background: #cbd5e0;
+    z-index: 1;
+  }
+
+  .half-line {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: #e2e8f0;
+    z-index: 1;
+  }
+
+  .quarter-line {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 1px;
     background: #f1f5f9;
+    z-index: 1;
+  }
+
+  /* Hover indicator */
+  .slot-hover {
+    position: absolute;
+    left: 0;
+    right: 0;
+    background: rgba(102, 126, 234, 0.08);
+    border-top: 2px solid rgba(102, 126, 234, 0.4);
+    z-index: 3;
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .slot-hover-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 0.65em;
+    font-weight: 600;
+    color: #667eea;
+    background: rgba(255, 255, 255, 0.9);
+    padding: 0 6px;
+    border-radius: 4px;
+    white-space: nowrap;
   }
 
   /* Current Time Line */
@@ -1294,36 +1406,6 @@
 
   .shift-delete:hover {
     background: #fee2e2;
-  }
-
-  /* Add Hint */
-  .add-hint {
-    position: absolute;
-    bottom: 8px;
-    right: 8px;
-    width: 28px;
-    height: 28px;
-    background: white;
-    border: 1.5px solid #e2e8f0;
-    border-radius: 6px;
-    cursor: pointer;
-    display: none;
-    align-items: center;
-    justify-content: center;
-    color: #667eea;
-    z-index: 6;
-    transition: all 0.15s;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-  }
-
-  .day-col:hover .add-hint {
-    display: flex;
-  }
-
-  .add-hint:hover {
-    background: #667eea;
-    color: white;
-    border-color: #667eea;
   }
 
   /* === Legend === */

@@ -174,6 +174,16 @@ function addDuration(date, duration) {
  * @returns {Promise<Array>} Parsed events
  */
 export async function fetchAndParseICal(url) {
+  // Validate the URL before fetching
+  try {
+    const parsed = new URL(url)
+    if (!parsed.protocol.startsWith('http')) {
+      throw new Error('not http')
+    }
+  } catch {
+    throw new Error(`Invalid calendar URL: "${url}" — please update the calendar with a valid https:// link`)
+  }
+
   const response = await fetch(url, {
     headers: {
       'Accept': 'text/calendar, application/calendar+json, text/plain',

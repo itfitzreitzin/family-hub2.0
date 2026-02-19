@@ -67,9 +67,21 @@
       return
     }
 
-    if (['ical', 'google', 'outlook'].includes(calendarForm.calendar_type) && !calendarForm.calendar_url.trim()) {
-      toast.error('Please provide an iCal feed URL')
-      return
+    if (['ical', 'google', 'outlook'].includes(calendarForm.calendar_type)) {
+      const url = calendarForm.calendar_url.trim()
+      if (!url) {
+        toast.error('Please provide an iCal feed URL')
+        return
+      }
+      try {
+        const parsed = new URL(url)
+        if (!parsed.protocol.startsWith('http')) {
+          throw new Error('not http')
+        }
+      } catch {
+        toast.error('Please enter a valid URL starting with https://')
+        return
+      }
     }
 
     try {

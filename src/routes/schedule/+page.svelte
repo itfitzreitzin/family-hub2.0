@@ -123,7 +123,10 @@
   }
 
   async function loadParentCalendarEvents() {
-    if (!currentWeekStart || familyMembers.length === 0) return
+    if (!currentWeekStart || familyMembers.length === 0) {
+      console.log('[schedule] loadParentCalendarEvents SKIPPED — currentWeekStart:', !!currentWeekStart, 'familyMembers:', familyMembers.length)
+      return
+    }
 
     const weekEnd = new Date(currentWeekStart)
     weekEnd.setDate(weekEnd.getDate() + 7)
@@ -197,9 +200,11 @@
         }
       })
 
+      console.log('[schedule] loadParentCalendarEvents: DB events=', (events || []).length, 'recurring=', recurringEvents.length, 'you=', newParentEvents.you.length, 'partner=', newParentEvents.partner.length, 'range=', currentWeekStart.toISOString(), 'to', weekEnd.toISOString())
       parentCalendarEvents = newParentEvents
     } catch (err) {
-      // silently fail — calendar events are supplementary
+      console.error('[schedule] loadParentCalendarEvents ERROR:', err)
+      parentCalendarEvents = { you: [], partner: [] }
     }
   }
 
@@ -263,9 +268,11 @@
         })
       })
 
+      console.log('[schedule] loadNannyCalendarEvents:', (events || []).length, 'DB events, matched', Object.values(newNannyEvents).flat().length, 'nanny events')
       nannyCalendarEvents = newNannyEvents
     } catch (err) {
-      // silently fail — nanny calendar events are supplementary
+      console.error('[schedule] loadNannyCalendarEvents ERROR:', err)
+      nannyCalendarEvents = {}
     }
   }
 
@@ -320,6 +327,7 @@
     weekStart.setDate(now.getDate() - now.getDay() + (offset * 7))
     weekStart.setHours(0, 0, 0, 0)
     currentWeekStart = weekStart
+    console.log('[schedule] setCurrentWeek offset=', offset, 'range=', ymd(currentWeekStart), 'to', ymd(new Date(currentWeekStart.getTime() + 6 * 86400000)))
     await Promise.all([loadShifts(), loadCalendarEvents()])
   }
 
@@ -374,6 +382,7 @@
         ...shift,
         date: normalizeDateValue(shift.date)
       }))
+      console.log('[schedule] loadShifts:', shifts.length, 'shifts for', ymd(currentWeekStart), '-', ymd(weekEnd))
 
       if (profile?.role === 'family' || profile?.role === 'admin') {
         await loadWeekSummary()
@@ -381,6 +390,7 @@
         weekSummary = null
       }
     } catch (err) {
+      console.error('[schedule] loadShifts ERROR:', err)
       shifts = []
     }
   }
@@ -603,7 +613,9 @@
   }
 
   function changeWeek(direction) {
-    setCurrentWeek(weekOffset + (direction === 'prev' ? -1 : 1))
+    const newOffset = weekOffset + (direction === 'prev' ? -1 : 1)
+    console.log('[schedule] changeWeek', direction, '→ offset', newOffset)
+    setCurrentWeek(newOffset)
   }
 
   async function deleteShift(shiftId) {

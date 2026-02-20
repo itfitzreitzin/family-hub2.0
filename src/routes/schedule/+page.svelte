@@ -590,13 +590,20 @@
     return `${display}:${String(minute).padStart(2, '0')}${ampm}`
   }
 
-  function changeWeek(direction) {
+  async function changeWeek(direction) {
     const offset = direction === 'prev' ? -1 : 1
     const newStart = new Date(currentWeekStart)
     newStart.setDate(newStart.getDate() + (offset * 7))
+    newStart.setHours(0, 0, 0, 0)
     currentWeekStart = newStart
-    loadShifts()
-    loadCalendarEvents()
+
+    // Clear stale data so old-week items don't flash on the new week's grid
+    shifts = []
+    parentCalendarEvents = { you: [], partner: [] }
+    nannyCalendarEvents = {}
+    weekSummary = null
+
+    await Promise.all([loadShifts(), loadCalendarEvents()])
   }
 
   async function deleteShift(shiftId) {

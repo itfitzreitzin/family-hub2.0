@@ -125,7 +125,7 @@
     if (!currentWeekStart || familyMembers.length === 0) return
 
     const weekEnd = new Date(currentWeekStart)
-    weekEnd.setDate(weekEnd.getDate() + 6)
+    weekEnd.setDate(weekEnd.getDate() + 7)
 
     try {
       const { data: events, error } = await supabase
@@ -140,7 +140,7 @@
           )
         `)
         .gte('start_time', currentWeekStart.toISOString())
-        .lte('start_time', weekEnd.toISOString())
+        .lt('start_time', weekEnd.toISOString())
         .eq('is_busy', true)
         .eq('parent_calendars.sync_enabled', true)
         .order('start_time')
@@ -153,7 +153,7 @@
       const { data: manualTimes, error: manualError } = await supabase
         .from('manual_busy_times')
         .select('*')
-        .or(`and(start_time.gte.${currentWeekStart.toISOString()},start_time.lte.${weekEnd.toISOString()}),recurring.eq.true`)
+        .or(`and(start_time.gte.${currentWeekStart.toISOString()},start_time.lt.${weekEnd.toISOString()}),recurring.eq.true`)
 
       if (manualError) throw manualError
 
@@ -215,7 +215,7 @@
     if (!currentWeekStart) return
 
     const weekEnd = new Date(currentWeekStart)
-    weekEnd.setDate(weekEnd.getDate() + 6)
+    weekEnd.setDate(weekEnd.getDate() + 7)
 
     try {
       // Build the query — family sees all nanny events, nannies see only their own
@@ -231,7 +231,7 @@
           )
         `)
         .gte('start_time', currentWeekStart.toISOString())
-        .lte('start_time', weekEnd.toISOString())
+        .lt('start_time', weekEnd.toISOString())
         .eq('is_busy', true)
         .eq('parent_calendars.sync_enabled', true)
         .order('start_time')
@@ -434,6 +434,9 @@
       return
     }
 
+    const isEditing = !!editingShiftId
+    const savedDate = shiftForm.date
+
     try {
       if (editingShiftId) {
         const { error } = await supabase
@@ -466,7 +469,21 @@
       }
 
       resetShiftForm()
-      await loadShifts()
+
+      // Navigate to the week containing the saved shift so it's visible
+      const shiftDate = new Date(savedDate + 'T00:00:00')
+      const weekEnd = new Date(currentWeekStart)
+      weekEnd.setDate(weekEnd.getDate() + 6)
+
+      if (shiftDate < currentWeekStart || shiftDate > weekEnd) {
+        const newWeekStart = new Date(shiftDate)
+        newWeekStart.setDate(shiftDate.getDate() - shiftDate.getDay())
+        newWeekStart.setHours(0, 0, 0, 0)
+        currentWeekStart = newWeekStart
+      }
+
+      await Promise.all([loadShifts(), loadCalendarEvents()])
+      toast.success(isEditing ? 'Shift updated!' : 'Shift saved!')
     } catch (err) {
       toast.error('Error: ' + err.message)
     }

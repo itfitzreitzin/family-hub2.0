@@ -111,6 +111,19 @@
     if (mqlCleanup) mqlCleanup()
   })
 
+  // Reactive data reload — whenever the displayed week changes, reload everything.
+  // This is a safety net: setCurrentWeek already calls the loaders, but Svelte's
+  // async reactivity can miss updates in some edge cases.
+  let _prevWeekKey = null
+  $: {
+    const weekKey = currentWeekStart ? currentWeekStart.getTime() : null
+    if (weekKey && weekKey !== _prevWeekKey && !loading && user && profile) {
+      _prevWeekKey = weekKey
+      console.log('[schedule] reactive reload triggered for week', ymd(currentWeekStart))
+      Promise.all([loadShifts(), loadCalendarEvents()])
+    }
+  }
+
   async function loadFamilyMembers() {
     const { data, error } = await supabase
       .from('profiles')
@@ -123,10 +136,14 @@
   }
 
   async function loadParentCalendarEvents() {
-    if (!currentWeekStart || familyMembers.length === 0) return
+    if (!currentWeekStart || familyMembers.length === 0) {
+      console.log('[schedule] loadParentCalendarEvents SKIPPED — currentWeekStart:', !!currentWeekStart, 'familyMembers:', familyMembers.length)
+      return
+    }
 
     const weekEnd = new Date(currentWeekStart)
-    weekEnd.setDate(weekEnd.getDate() + 7)
+    weekEnd.setDate(weekEnd.getDate() + 6)
+    weekEnd.setHours(23, 59, 59, 999)
 
     try {
       const { data: events, error } = await supabase
@@ -141,7 +158,7 @@
           )
         `)
         .gte('start_time', currentWeekStart.toISOString())
-        .lt('start_time', weekEnd.toISOString())
+        .lte('start_time', weekEnd.toISOString())
         .eq('is_busy', true)
         .eq('parent_calendars.sync_enabled', true)
         .order('start_time')
@@ -154,7 +171,7 @@
       const { data: manualTimes, error: manualError } = await supabase
         .from('manual_busy_times')
         .select('*')
-        .or(`and(start_time.gte.${currentWeekStart.toISOString()},start_time.lt.${weekEnd.toISOString()}),recurring.eq.true`)
+        .or(`and(start_time.gte.${currentWeekStart.toISOString()},start_time.lte.${weekEnd.toISOString()}),recurring.eq.true`)
 
       if (manualError) throw manualError
 
@@ -197,9 +214,11 @@
         }
       })
 
+      console.log('[schedule] loadParentCalendarEvents: DB events=', (events || []).length, 'recurring=', recurringEvents.length, 'you=', newParentEvents.you.length, 'partner=', newParentEvents.partner.length, 'range=', currentWeekStart.toISOString(), 'to', weekEnd.toISOString())
       parentCalendarEvents = newParentEvents
     } catch (err) {
-      // silently fail — calendar events are supplementary
+      console.error('[schedule] loadParentCalendarEvents ERROR:', err)
+      parentCalendarEvents = { you: [], partner: [] }
     }
   }
 
@@ -216,7 +235,8 @@
     if (!currentWeekStart) return
 
     const weekEnd = new Date(currentWeekStart)
-    weekEnd.setDate(weekEnd.getDate() + 7)
+    weekEnd.setDate(weekEnd.getDate() + 6)
+    weekEnd.setHours(23, 59, 59, 999)
 
     try {
       // Build the query — family sees all nanny events, nannies see only their own
@@ -232,7 +252,7 @@
           )
         `)
         .gte('start_time', currentWeekStart.toISOString())
-        .lt('start_time', weekEnd.toISOString())
+        .lte('start_time', weekEnd.toISOString())
         .eq('is_busy', true)
         .eq('parent_calendars.sync_enabled', true)
         .order('start_time')
@@ -263,9 +283,11 @@
         })
       })
 
+      console.log('[schedule] loadNannyCalendarEvents:', (events || []).length, 'DB events, matched', Object.values(newNannyEvents).flat().length, 'nanny events')
       nannyCalendarEvents = newNannyEvents
     } catch (err) {
-      // silently fail — nanny calendar events are supplementary
+      console.error('[schedule] loadNannyCalendarEvents ERROR:', err)
+      nannyCalendarEvents = {}
     }
   }
 
@@ -320,6 +342,7 @@
     weekStart.setDate(now.getDate() - now.getDay() + (offset * 7))
     weekStart.setHours(0, 0, 0, 0)
     currentWeekStart = weekStart
+    console.log('[schedule] setCurrentWeek offset=', offset, 'range=', ymd(currentWeekStart), 'to', ymd(new Date(currentWeekStart.getTime() + 6 * 86400000)))
     await Promise.all([loadShifts(), loadCalendarEvents()])
   }
 
@@ -374,6 +397,7 @@
         ...shift,
         date: normalizeDateValue(shift.date)
       }))
+      console.log('[schedule] loadShifts:', shifts.length, 'shifts for', ymd(currentWeekStart), '-', ymd(weekEnd))
 
       if (profile?.role === 'family' || profile?.role === 'admin') {
         await loadWeekSummary()
@@ -381,6 +405,7 @@
         weekSummary = null
       }
     } catch (err) {
+      console.error('[schedule] loadShifts ERROR:', err)
       shifts = []
     }
   }
@@ -603,7 +628,9 @@
   }
 
   function changeWeek(direction) {
-    setCurrentWeek(weekOffset + (direction === 'prev' ? -1 : 1))
+    const newOffset = weekOffset + (direction === 'prev' ? -1 : 1)
+    console.log('[schedule] changeWeek', direction, '→ offset', newOffset)
+    setCurrentWeek(newOffset)
   }
 
   async function deleteShift(shiftId) {

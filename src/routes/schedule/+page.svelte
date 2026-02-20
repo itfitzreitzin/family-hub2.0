@@ -9,6 +9,7 @@
   let user = null
   let profile = null
   let currentWeekStart = null
+  let weekOffset = 0
   let shifts = []
   let loading = true
   let showAddShift = false
@@ -313,6 +314,7 @@
   }
 
   async function setCurrentWeek(offset) {
+    weekOffset = offset
     const now = new Date()
     const weekStart = new Date(now)
     weekStart.setDate(now.getDate() - now.getDay() + (offset * 7))
@@ -476,13 +478,23 @@
       weekEnd.setDate(weekEnd.getDate() + 6)
 
       if (shiftDate < currentWeekStart || shiftDate > weekEnd) {
-        const newWeekStart = new Date(shiftDate)
-        newWeekStart.setDate(shiftDate.getDate() - shiftDate.getDay())
-        newWeekStart.setHours(0, 0, 0, 0)
-        currentWeekStart = newWeekStart
+        // Calculate the week offset for the shift's week
+        const now = new Date()
+        const currentSunday = new Date(now)
+        currentSunday.setDate(now.getDate() - now.getDay())
+        currentSunday.setHours(0, 0, 0, 0)
+
+        const shiftSunday = new Date(shiftDate)
+        shiftSunday.setDate(shiftDate.getDate() - shiftDate.getDay())
+        shiftSunday.setHours(0, 0, 0, 0)
+
+        const newOffset = Math.round((shiftSunday - currentSunday) / (7 * 24 * 60 * 60 * 1000))
+        await setCurrentWeek(newOffset)
+      } else {
+        // Same week — just reload data via setCurrentWeek
+        await setCurrentWeek(weekOffset)
       }
 
-      await Promise.all([loadShifts(), loadCalendarEvents()])
       toast.success(isEditing ? 'Shift updated!' : 'Shift saved!')
     } catch (err) {
       toast.error('Error: ' + err.message)
@@ -590,20 +602,8 @@
     return `${display}:${String(minute).padStart(2, '0')}${ampm}`
   }
 
-  async function changeWeek(direction) {
-    const offset = direction === 'prev' ? -1 : 1
-    const newStart = new Date(currentWeekStart)
-    newStart.setDate(newStart.getDate() + (offset * 7))
-    newStart.setHours(0, 0, 0, 0)
-    currentWeekStart = newStart
-
-    // Clear stale data so old-week items don't flash on the new week's grid
-    shifts = []
-    parentCalendarEvents = { you: [], partner: [] }
-    nannyCalendarEvents = {}
-    weekSummary = null
-
-    await Promise.all([loadShifts(), loadCalendarEvents()])
+  function changeWeek(direction) {
+    setCurrentWeek(weekOffset + (direction === 'prev' ? -1 : 1))
   }
 
   async function deleteShift(shiftId) {

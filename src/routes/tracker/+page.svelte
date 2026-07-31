@@ -16,6 +16,7 @@
     formatDateShort,
     formatWeekDisplay
   } from '$lib/time.js'
+  import { errorMessage } from '$lib/errors.js'
   
   let user = null
   let profile = null
@@ -23,6 +24,7 @@
   let selectedNannyId = null
   let currentEntry = null
   let timerDisplay = '00:00:00'
+  /** @type {ReturnType<typeof setInterval> | null} */
   let timerInterval = null
   let loading = true
   let entries = []
@@ -97,7 +99,7 @@
       await loadWeekData()
       loading = false
     } catch (err) {
-      toast.error('Error loading tracker: ' + err.message)
+      toast.error('Error loading tracker: ' + errorMessage(err))
       loading = false
     }
   }
@@ -107,7 +109,7 @@
       await checkCurrentEntry()
       await loadWeekData()
     } catch (err) {
-      toast.error('Error loading data: ' + err.message)
+      toast.error('Error loading data: ' + errorMessage(err))
     }
   }
   
@@ -178,7 +180,7 @@
   function changeWeek(direction) {
     currentWeekOffset += direction
     loadWeekData().catch(err => {
-      toast.error('Error loading week: ' + err.message)
+      toast.error('Error loading week: ' + errorMessage(err))
     })
   }
 

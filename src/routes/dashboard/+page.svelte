@@ -5,13 +5,18 @@
   import { goto } from '$app/navigation'
   import { toast, confirm as confirmModal } from '$lib/stores/toast.js'
   import { getWeekBounds, localDateString, formatTime } from '$lib/time.js'
+  import { errorMessage } from '$lib/errors.js'
 
   let user = null
   let profile = null
   let loading = true
+  /** @type {string | null} */
   let initError = null
+  /** @type {any[]} */
   let nannies = []
+  /** @type {any[]} */
   let activeShifts = []
+  /** @type {any[]} */
   let weekEntries = []
   let now = Date.now()
   let showAddNanny = false
@@ -22,9 +27,13 @@
   let nannyVenmo = ''
   let nannyPassword = ''
 
+  /** @type {ReturnType<typeof supabase.channel> | null} */
   let dashChannel = null
+  /** @type {ReturnType<typeof setInterval> | null} */
   let pollInterval = null
+  /** @type {ReturnType<typeof setInterval> | null} */
   let tickInterval = null
+  /** @type {ReturnType<typeof setTimeout> | null} */
   let reloadTimer = null
 
   function editNanny(nanny) {
@@ -196,7 +205,7 @@ async function initDashboard() {
 
     loading = false
   } catch (err) {
-    initError = err.message
+    initError = errorMessage(err)
     loading = false
   }
 }
@@ -212,7 +221,7 @@ async function reloadDashboard() {
     }
   } catch (err) {
     // Background refresh: keep showing the last good data
-    console.warn('Dashboard refresh failed:', err.message)
+    console.warn('Dashboard refresh failed:', errorMessage(err))
   }
 }
 
@@ -304,6 +313,10 @@ function subscribeToShifts() {
     return activeShifts.find(shift => shift.nanny_id === nannyId)
   }
   
+  /**
+   * @param {string} dateString
+   * @param {number} nowMs
+   */
   function getTimeSince(dateString, nowMs) {
     const diff = Math.max(0, nowMs - new Date(dateString).getTime())
 
@@ -313,6 +326,10 @@ function subscribeToShifts() {
     return `${hours}h ${minutes}m`
   }
 
+  /**
+   * @param {any} entry
+   * @param {number} nowMs
+   */
   function entryHours(entry, nowMs) {
     if (entry.clock_out) return parseFloat(entry.hours) || 0
     return (nowMs - new Date(entry.clock_in).getTime()) / (1000 * 60 * 60)

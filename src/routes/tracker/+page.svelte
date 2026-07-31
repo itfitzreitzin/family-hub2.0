@@ -18,6 +18,7 @@
     formatWeekDisplay
   } from '$lib/time.js'
   import { errorMessage } from '$lib/errors.js'
+  import { normalizeVenmoHandle, isMobileDevice, buildVenmoNote, buildVenmoLink } from '$lib/venmo.js'
   
   /** @type {any} */
   let user = null
@@ -477,62 +478,158 @@
   }
   
   async function generateVenmoPayment() {
+    if (generatingPayment) return
+
     if (weekTotal === 0) {
       toast.error('No completed hours for this week')
       return
     }
 
     const nanny = selectedNanny
-    const venmo = nanny?.venmo_username?.replace('@', '') || 'username'
-    const rate = nanny?.hourly_rate || 20
-    
-    const note = `Weekly payment for ${nanny?.full_name}
-Week of ${currentWeekStart.toLocaleDateString()}
-Hours: ${weekTotal.toFixed(1)}
-Rate: $${rate}/hour
-Total: $${weekPay.toFixed(2)}`
-    
-    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
-    
-    if (isMobile && venmo !== 'username') {
-      const venmoUrl = `venmo://paycharge?txn=pay&recipients=${venmo}&amount=${weekPay.toFixed(2)}&note=${encodeURIComponent(note)}`
-      
-      const confirmed = await confirmModal.show({ title: 'Venmo Payment', message: `Pay $${weekPay.toFixed(2)} to @${venmo} via Venmo?`, confirmText: 'Pay' })
-      if (confirmed) {
-        await createPaymentRecord()
-        window.location.href = venmoUrl
+    const recipient = normalizeVenmoHandle(nanny?.venmo_username)
+
+    if (!recipient) {
+      toast.error(`${nanny?.full_name || 'This nanny'} has no Venmo username set. Add it in Settings.`)
+      return
+    }
+
+    generatingPayment = true
+
+    try {
+      // Record (or refresh) the payment row BEFORE any Venmo handoff, so the
+      // bookkeeping never depends on what happens inside Venmo and behaves
+      // identically on mobile and desktop.
+      const { row, status } = await ensureWeekPaymentRecord()
+
+      if (status === 'already-paid') {
+        const proceed = await confirmModal.show({
+          title: 'Already Paid',
+          message: `This week is already marked paid${row.paid_date ? ' on ' + formatDate(row.paid_date) : ''}. Open Venmo again anyway?`,
+          confirmText: 'Open Venmo'
+        })
+        if (!proceed) return
+      } else if (status === 'created') {
+        toast.success('Payment recorded for this week — mark it paid once sent')
+      } else {
+        toast.success('Payment record updated with the latest hours')
       }
-    } else {
-      try {
-        await navigator.clipboard.writeText(note)
-        await createPaymentRecord()
-        toast.success('Payment details copied to clipboard!')
-      } catch {
-        toast.info('Payment details: ' + note, 10000)
+
+      const rate = nanny?.hourly_rate || 20
+      const note = buildVenmoNote({
+        direction: 'pay',
+        name: nanny?.full_name || 'nanny',
+        weekStart: currentWeekStart,
+        hours: weekTotal,
+        rate,
+        total: weekPay
+      })
+
+      if (isMobileDevice()) {
+        const confirmed = await confirmModal.show({ title: 'Venmo Payment', message: `Pay $${weekPay.toFixed(2)} to @${recipient} via Venmo?`, confirmText: 'Pay' })
+        if (confirmed) {
+          window.location.href = buildVenmoLink({ txn: 'pay', recipient, amount: weekPay, note })
+        }
+      } else {
+        try {
+          await navigator.clipboard.writeText(note)
+          toast.success('Payment details copied to clipboard!')
+        } catch {
+          toast.info('Payment details: ' + note, 10000)
+        }
       }
+    } catch (err) {
+      toast.error('Error preparing payment: ' + errorMessage(err))
+    } finally {
+      generatingPayment = false
     }
   }
-  
-  async function createPaymentRecord() {
-    try {
-      const { error } = await supabase
+
+  /** @param {any} row */
+  function mergePayment(row) {
+    if (!row) return
+    const rest = payments.filter(p => p.id !== row.id)
+    payments = [...rest, row].sort((a, b) =>
+      String(b.week_start).localeCompare(String(a.week_start))
+    )
+  }
+
+  // One payment row per nanny per week: update the existing row when there is
+  // one, insert otherwise. Never silently touches a row that is already paid.
+  async function ensureWeekPaymentRecord() {
+    const weekStartStr = localDateString(currentWeekStart)
+    const weekEndStr = localDateString(currentWeekEnd)
+    const roundedHours = Math.round(weekTotal * 100) / 100
+    const roundedAmount = Math.round(weekPay * 100) / 100
+
+    // Fresh fetch (not the cached list) so a row created on another device
+    // moments ago is still found.
+    const { data: existing, error: fetchError } = await supabase
+      .from('payments')
+      .select('*')
+      .eq('nanny_id', selectedNannyId)
+      .eq('week_start', weekStartStr)
+      .maybeSingle()
+
+    if (fetchError) throw fetchError
+
+    if (existing && existing.is_paid) {
+      mergePayment(existing)
+      return { row: existing, status: 'already-paid' }
+    }
+
+    if (existing) {
+      const { data, error } = await supabase
         .from('payments')
-        .insert({
-          nanny_id: selectedNannyId,
-          week_start: localDateString(currentWeekStart),
-          week_end: localDateString(currentWeekEnd),
-          hours: weekTotal,
-          amount: weekPay,
-          is_paid: false,
-          payment_method: 'Venmo'
+        .update({
+          hours: roundedHours,
+          amount: roundedAmount,
+          week_end: weekEndStr
         })
+        .eq('id', existing.id)
+        .select()
+        .single()
 
       if (error) throw error
-
-      await loadPayments()
-    } catch (err) {
-      toast.error('Error saving payment record: ' + err.message)
+      mergePayment(data)
+      return { row: data, status: 'updated' }
     }
+
+    const { data, error } = await supabase
+      .from('payments')
+      .insert({
+        nanny_id: selectedNannyId,
+        week_start: weekStartStr,
+        week_end: weekEndStr,
+        hours: roundedHours,
+        amount: roundedAmount,
+        is_paid: false,
+        payment_method: 'Venmo'
+      })
+      .select()
+      .single()
+
+    if (error) {
+      if (/** @type {any} */ (error).code === '23505') {
+        // Unique index one_payment_per_nanny_week: lost a race with another
+        // device — use the row that won.
+        const { data: raced, error: racedError } = await supabase
+          .from('payments')
+          .select('*')
+          .eq('nanny_id', selectedNannyId)
+          .eq('week_start', weekStartStr)
+          .maybeSingle()
+
+        if (racedError) throw racedError
+        if (raced) {
+          mergePayment(raced)
+          return { row: raced, status: 'updated' }
+        }
+      }
+      throw error
+    }
+
+    mergePayment(data)
+    return { row: data, status: 'created' }
   }
 
   // Flip paid state optimistically, then confirm with the returned row —

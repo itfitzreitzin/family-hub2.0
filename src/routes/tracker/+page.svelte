@@ -20,6 +20,7 @@
   let clockInTime = '09:00'
   let showManualEntry = false
   let editingEntry = null
+  let saving = false
   let manualEntryForm = {
     date: new Date().toISOString().split('T')[0],
     clockIn: '09:00',
@@ -228,8 +229,9 @@
   }
 
   async function confirmClockIn() {
+    if (loading) return
     loading = true
-    
+
     try {
       const { data: activeEntry } = await supabase
         .from('time_entries')
@@ -237,9 +239,9 @@
         .is('clock_out', null)
         .limit(1)
         .maybeSingle()
-      
+
       if (activeEntry) {
-        toast.error(`${activeEntry.profiles.full_name} is already clocked in. Only one nanny can be on the clock at a time.`)
+        toast.error(`${activeEntry.profiles?.full_name || 'Another nanny'} is already clocked in. Only one nanny can be on the clock at a time.`)
         loading = false
         showClockInConfirm = false
         return
@@ -264,35 +266,63 @@
       await loadWeekData()
       showClockInConfirm = false
     } catch (err) {
-      toast.error('Error clocking in: ' + err.message)
+      if (err.code === '23505') {
+        // Unique index one_open_shift_per_nanny: an open shift already exists
+        toast.error('This nanny is already clocked in.')
+        showClockInConfirm = false
+        await checkCurrentEntry()
+      } else {
+        toast.error('Error clocking in: ' + err.message)
+      }
     } finally {
       loading = false
     }
   }
   
   async function clockOut() {
+    if (loading) return
     loading = true
-    
+
     try {
-      const { data: activeEntry, error: fetchError } = await supabase
+      // Fetch ALL open shifts for this nanny. Duplicates can exist (e.g. from
+      // a double-tapped clock-in), and a single-row query errors on them.
+      const { data: openEntries, error: fetchError } = await supabase
         .from('time_entries')
         .select('*')
         .eq('nanny_id', selectedNannyId)
         .is('clock_out', null)
-        .maybeSingle()
-      
+        .order('clock_in', { ascending: false })
+
       if (fetchError) throw fetchError
-      
-      if (!activeEntry) {
+
+      if (!openEntries || openEntries.length === 0) {
         toast.error('No active shift found for this nanny')
         loading = false
         return
       }
-      
+
+      // The newest open entry is the shift the timer displays; any older open
+      // entries are stray duplicates. Close the strays first with 0 hours so
+      // they can't inflate the week total or block future clock-ins — if that
+      // fails, the real shift is still open and clock-out can be retried.
+      const [activeEntry, ...staleEntries] = openEntries
+
+      for (const stale of staleEntries) {
+        const { error: staleError } = await supabase
+          .from('time_entries')
+          .update({
+            clock_out: stale.clock_in,
+            hours: '0.00'
+          })
+          .eq('id', stale.id)
+
+        if (staleError) throw staleError
+      }
+
       const clockOutTime = new Date()
       const clockInTime = new Date(activeEntry.clock_in)
       const hours = (clockOutTime - clockInTime) / (1000 * 60 * 60)
-      
+
       const { error: updateError } = await supabase
         .from('time_entries')
         .update({
@@ -300,7 +330,7 @@
           hours: hours.toFixed(2)
         })
         .eq('id', activeEntry.id)
-      
+
       if (updateError) throw updateError
       
       toast.success(`Clocked out! Worked ${hours.toFixed(2)} hours`)
@@ -526,15 +556,19 @@ Total: $${weekPay.toFixed(2)}`
   }
 
   async function saveManualEntry() {
+    if (saving) return
+
     const clockIn = new Date(`${manualEntryForm.date}T${manualEntryForm.clockIn}`)
     const clockOut = new Date(`${manualEntryForm.date}T${manualEntryForm.clockOut}`)
     const hours = (clockOut - clockIn) / (1000 * 60 * 60)
-    
+
     if (hours <= 0) {
       toast.error('Clock out must be after clock in')
       return
     }
-    
+
+    saving = true
+
     try {
       if (editingEntry) {
         const { error } = await supabase
@@ -567,6 +601,8 @@ Total: $${weekPay.toFixed(2)}`
       toast.success('Entry saved!')
     } catch (err) {
       toast.error('Error: ' + err.message)
+    } finally {
+      saving = false
     }
   }
 
@@ -918,7 +954,7 @@ Total: $${weekPay.toFixed(2)}`
         </div>
         
         <div class="button-row">
-          <button class="btn btn-primary" on:click={confirmClockIn}>
+          <button class="btn btn-primary" on:click={confirmClockIn} disabled={loading}>
             Confirm Clock In
           </button>
           <button class="btn btn-secondary" on:click={() => showClockInConfirm = false}>
@@ -959,7 +995,7 @@ Total: $${weekPay.toFixed(2)}`
         </div>
         
         <div class="button-row">
-          <button type="submit" class="btn btn-primary">Save</button>
+          <button type="submit" class="btn btn-primary" disabled={saving}>Save</button>
           <button type="button" class="btn btn-secondary" on:click={() => showManualEntry = false}>Cancel</button>
         </div>
       </form>

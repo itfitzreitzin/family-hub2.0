@@ -44,6 +44,10 @@
   let entryLoadToken = 0
   let weekLoadToken = 0
   let paymentsLoadToken = 0
+  /** @type {ReturnType<typeof supabase.channel> | null} */
+  let realtimeChannel = null
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let resyncTimer = null
   /** @type {any[]} */
   let entries = []
   /** @type {any[]} */
@@ -75,6 +79,8 @@
 
   onDestroy(() => {
     if (timerInterval) clearInterval(timerInterval)
+    if (resyncTimer) clearTimeout(resyncTimer)
+    if (realtimeChannel) supabase.removeChannel(realtimeChannel)
   })
 
   async function initTracker() {
@@ -119,11 +125,80 @@
       }
 
       await Promise.all([checkCurrentEntry(), loadWeekData(), loadPayments()])
+
+      if (!realtimeChannel) {
+        subscribeRealtime()
+      }
+
       initializing = false
     } catch (err) {
       initError = errorMessage(err)
       initializing = false
     }
+  }
+
+  function subscribeRealtime() {
+    // Unfiltered on purpose: a clock-out UPDATE leaves the clock_out=is.null
+    // set (filtered subscriptions never see it), and DELETE events can't be
+    // filtered by non-key columns at all. Relevance is checked client-side.
+    realtimeChannel = supabase
+      .channel('tracker-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'time_entries' }, handleTimeEntryEvent)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'payments' }, handlePaymentEvent)
+      .subscribe()
+  }
+
+  /** @param {any} payload */
+  function handleTimeEntryEvent(payload) {
+    const row = payload.new || {}
+
+    // Fast paths keep the timer honest before the refetch lands
+    if (payload.eventType === 'UPDATE' && currentEntry && row.id === currentEntry.id && row.clock_out) {
+      currentEntry = null
+      stopTimer()
+      toast.info('Shift was clocked out on another device')
+    } else if (payload.eventType === 'INSERT' && row.nanny_id === selectedNannyId && !row.clock_out) {
+      currentEntry = row
+      startTimer()
+    }
+
+    // DELETE payloads only carry the primary key, so treat them as relevant
+    if (payload.eventType === 'DELETE' || row.nanny_id === selectedNannyId) {
+      scheduleResync()
+    }
+  }
+
+  /** @param {any} payload */
+  function handlePaymentEvent(payload) {
+    const row = payload.new || {}
+    if (payload.eventType === 'DELETE' || row.nanny_id === selectedNannyId) {
+      loadPayments().catch(() => {})
+    }
+  }
+
+  // Collapse event bursts (e.g. a clock-out closing stray duplicates) into
+  // one refetch.
+  function scheduleResync() {
+    if (resyncTimer) clearTimeout(resyncTimer)
+    resyncTimer = setTimeout(() => {
+      resyncTimer = null
+      resyncAll()
+    }, 250)
+  }
+
+  async function resyncAll() {
+    try {
+      await Promise.all([checkCurrentEntry(), loadWeekData(true), loadPayments()])
+    } catch (err) {
+      // Background sync: keep showing the last good data
+      console.warn('Tracker resync failed:', errorMessage(err))
+    }
+  }
+
+  function handleVisibility() {
+    if (document.visibilityState !== 'visible' || initializing) return
+    updateTimerDisplay()
+    scheduleResync()
   }
 
   async function handleNannyChange() {
@@ -707,6 +782,9 @@ Total: $${weekPay.toFixed(2)}`
     }
   }
 </script>
+
+<svelte:document on:visibilitychange={handleVisibility} />
+<svelte:window on:focus={handleVisibility} />
 
 <Nav currentPage="tracker" />
 

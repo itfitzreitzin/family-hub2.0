@@ -214,6 +214,10 @@
   $: weekTotal = filteredEntries.reduce((sum, e) => sum + (parseFloat(e.hours) || 0), 0)
   $: selectedNanny = nannies.find(n => n.id === selectedNannyId) || profile
   $: weekPay = weekTotal * (selectedNanny?.hourly_rate || 20)
+  // The payment record for the week being viewed, if one exists
+  $: currentWeekPayment = currentWeekStart
+    ? payments.find(p => p.week_start === localDateString(currentWeekStart)) || null
+    : null
   
   async function checkCurrentEntry() {
     if (!selectedNannyId) return
@@ -732,50 +736,69 @@
   }
   
   async function requestPayment() {
+    if (generatingPayment) return
+
     if (weekTotal === 0) {
       toast.error('No completed hours for this week')
       return
     }
 
-    const nanny = profile
-    const venmo = nanny?.venmo_username?.replace('@', '') || null
-    const rate = nanny?.hourly_rate || 20
-    
-    if (!venmo) {
+    const requester = normalizeVenmoHandle(profile?.venmo_username)
+
+    if (!requester) {
       toast.error('Please add your Venmo username in Settings first')
       goto('/settings')
       return
     }
-    
-    const { data: familyMembers } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('role', 'family')
-    
-    const familyVenmo = familyMembers?.[0]?.venmo_username?.replace('@', '') || 'family'
-    
-    const note = `Payment request from ${nanny?.full_name}
-Week of ${currentWeekStart.toLocaleDateString()}
-Hours: ${weekTotal.toFixed(1)}
-Rate: $${rate}/hour
-Total: $${weekPay.toFixed(2)}`
-    
-    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
-    
-    if (isMobile) {
-      const venmoUrl = `venmo://paycharge?txn=charge&recipients=${familyVenmo}&amount=${weekPay.toFixed(2)}&note=${encodeURIComponent(note)}`
-      
-      const confirmed = await confirmModal.show({ title: 'Request Payment', message: `Request $${weekPay.toFixed(2)} from @${familyVenmo} via Venmo?`, confirmText: 'Request' })
-      if (confirmed) {
-        window.location.href = venmoUrl
+
+    generatingPayment = true
+
+    try {
+      const { data: familyMembers, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('role', 'family')
+        .not('venmo_username', 'is', null)
+        .order('full_name')
+
+      if (error) throw error
+
+      const target = (familyMembers || [])
+        .map(m => normalizeVenmoHandle(m.venmo_username))
+        .find(h => h)
+
+      if (!target) {
+        toast.error('No family member has a Venmo username set. Ask them to add it in Settings.')
+        return
       }
-    } else {
-      try {
-        await navigator.clipboard.writeText(note)
-        toast.success('Payment request details copied to clipboard!')
-      } catch {
-        toast.info('Payment request: ' + note, 10000)
+
+      const rate = profile?.hourly_rate || 20
+      const note = buildVenmoNote({
+        direction: 'request',
+        name: profile?.full_name || 'nanny',
+        weekStart: currentWeekStart,
+        hours: weekTotal,
+        rate,
+        total: weekPay
+      })
+
+      if (isMobileDevice()) {
+        const confirmed = await confirmModal.show({ title: 'Request Payment', message: `Request $${weekPay.toFixed(2)} from @${target} via Venmo?`, confirmText: 'Request' })
+        if (confirmed) {
+          window.location.href = buildVenmoLink({ txn: 'charge', recipient: target, amount: weekPay, note })
+        }
+      } else {
+        try {
+          await navigator.clipboard.writeText(note)
+          toast.success('Payment request details copied to clipboard!')
+        } catch {
+          toast.info('Payment request: ' + note, 10000)
+        }
       }
+    } catch (err) {
+      toast.error('Error preparing request: ' + errorMessage(err))
+    } finally {
+      generatingPayment = false
     }
   }
   
@@ -1082,10 +1105,25 @@ Total: $${weekPay.toFixed(2)}`
             <span class="total-label">Total:</span>
             <span class="total-value">${weekPay.toFixed(2)}</span>
             <span class="total-hours">({weekTotal.toFixed(1)} hours)</span>
+            {#if currentWeekPayment}
+              <span class="pay-chip" class:paid={currentWeekPayment.is_paid}>
+                {currentWeekPayment.is_paid
+                  ? 'Paid' + (currentWeekPayment.paid_date ? ' ' + formatDateShort(currentWeekPayment.paid_date) : '')
+                  : 'Recorded — unpaid'}
+              </span>
+            {:else}
+              <span class="pay-chip none">Not recorded</span>
+            {/if}
           </div>
           {#if profile?.role === 'family' || profile?.role === 'admin'}
             <button class="btn btn-primary" on:click={generateVenmoPayment} disabled={generatingPayment}>
-              {generatingPayment ? 'Preparing…' : 'Generate Venmo Payment'}
+              {generatingPayment
+                ? 'Preparing…'
+                : !currentWeekPayment
+                  ? 'Generate Venmo Payment'
+                  : currentWeekPayment.is_paid
+                    ? 'Regenerate Payment'
+                    : 'Update & Pay via Venmo'}
             </button>
           {:else if profile?.role === 'nanny'}
             <button class="btn btn-primary" on:click={requestPayment} disabled={generatingPayment}>
@@ -1998,6 +2036,28 @@ Total: $${weekPay.toFixed(2)}`
     font-size: 0.8em;
     color: #718096;
     font-weight: normal;
+  }
+
+  .pay-chip {
+    display: inline-block;
+    margin-left: 10px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 0.75em;
+    font-weight: 600;
+    background: #fef3cd;
+    color: #92400e;
+    vertical-align: middle;
+  }
+
+  .pay-chip.paid {
+    background: #d1fae5;
+    color: #065f46;
+  }
+
+  .pay-chip.none {
+    background: #edf2f7;
+    color: #718096;
   }
 
   .error-card {

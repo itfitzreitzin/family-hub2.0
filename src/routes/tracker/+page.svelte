@@ -10,6 +10,7 @@
     localTimeString,
     combineLocalDateTime,
     getWeekBounds,
+    weekOffsetFor,
     formatDuration,
     hoursBetween,
     formatTime,
@@ -864,13 +865,21 @@
     if (saving) return
 
     const clockIn = combineLocalDateTime(manualEntryForm.date, manualEntryForm.clockIn)
-    const clockOut = combineLocalDateTime(manualEntryForm.date, manualEntryForm.clockOut)
-    const hours = (clockOut - clockIn) / (1000 * 60 * 60)
+    let clockOut = combineLocalDateTime(manualEntryForm.date, manualEntryForm.clockOut)
+    let overnight = false
 
-    if (hours <= 0) {
+    if (clockOut.getTime() === clockIn.getTime()) {
       toast.error('Clock out must be after clock in')
       return
     }
+
+    // An end time before the start means the shift crossed midnight
+    if (clockOut.getTime() < clockIn.getTime()) {
+      clockOut = new Date(clockOut.getTime() + 24 * 60 * 60 * 1000)
+      overnight = true
+    }
+
+    const hours = hoursBetween(clockIn, clockOut)
 
     saving = true
 
@@ -910,7 +919,16 @@
 
       showManualEntry = false
       mergeEntry(savedRow)
-      toast.success('Entry saved!')
+
+      // Jump to the saved entry's week so it never silently disappears
+      const targetOffset = weekOffsetFor(new Date(savedRow.clock_in))
+      if (targetOffset !== currentWeekOffset) {
+        currentWeekOffset = targetOffset
+        loadWeekData().catch(() => {})
+        toast.success(`Entry saved — showing week of ${formatDateShort(savedRow.clock_in)}`)
+      } else {
+        toast.success(overnight ? 'Saved overnight entry ending the next day' : 'Entry saved!')
+      }
     } catch (err) {
       toast.error('Error: ' + errorMessage(err))
     } finally {

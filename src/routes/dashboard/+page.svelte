@@ -4,22 +4,38 @@
   import Nav from '$lib/Nav.svelte'
   import { goto } from '$app/navigation'
   import { toast, confirm as confirmModal } from '$lib/stores/toast.js'
-  
+  import { getWeekBounds, localDateString, formatTime } from '$lib/time.js'
+  import { errorMessage } from '$lib/errors.js'
+
   let user = null
   let profile = null
   let loading = true
+  /** @type {string | null} */
+  let initError = null
+  /** @type {any[]} */
   let nannies = []
+  /** @type {any[]} */
   let activeShifts = []
-    let showAddNanny = false
+  /** @type {any[]} */
+  let weekEntries = []
+  let now = Date.now()
+  let showAddNanny = false
   let selectedNanny = null
   let nannyEmail = ''
   let nannyName = ''
   let nannyRate = 20
   let nannyVenmo = ''
   let nannyPassword = ''
-  
-  // ... existing functions ...
-  
+
+  /** @type {ReturnType<typeof supabase.channel> | null} */
+  let dashChannel = null
+  /** @type {ReturnType<typeof setInterval> | null} */
+  let pollInterval = null
+  /** @type {ReturnType<typeof setInterval> | null} */
+  let tickInterval = null
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let reloadTimer = null
+
   function editNanny(nanny) {
     selectedNanny = nanny
     nannyName = nanny.full_name
@@ -128,85 +144,136 @@
     nannyVenmo = ''
     nannyPassword = ''
   }
-onMount(async () => {
-  const { data: { user: currentUser } } = await supabase.auth.getUser()
-  
-  if (!currentUser) {
-    goto('/')
-    return
-  }
-  
-  user = currentUser
-  
-  // Get profile
-  const { data: profileData } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('id', user.id)
-    .maybeSingle()
+onMount(() => {
+  initDashboard()
 
-  profile = profileData
+  tickInterval = setInterval(() => {
+    now = Date.now()
+  }, 1000)
 
-  // If no profile or missing role, send to setup
-  if (!profile || !profile.role) {
-    goto('/setup')
-    return
-  }
-  
-  // Load data based on role
-  if (profile?.role === 'family' || profile?.role === 'admin') {
-    await loadFamilyDashboard()
-  } else if (profile?.role === 'nanny') {
-    await loadNannyDashboard()
-  }
-  
-  // Set up subscription and return cleanup
-  const cleanup = subscribeToShifts()
-  loading = false
-  
-  // Set up auto-refresh every 30 seconds for active shifts
-  const interval = setInterval(() => {
-    if (activeShifts.length > 0) {
-      if (profile?.role === 'family' || profile?.role === 'admin') {
-        loadFamilyDashboard()
-      } else if (profile?.role === 'nanny') {
-        loadNannyDashboard()
-      }
-    }
-  }, 30000) // 30 seconds
-  
-  // Return cleanup function
-  return () => {
-    cleanup()
-    clearInterval(interval)
-  }
+  // Fallback refresh in case a realtime event is missed or unavailable
+  pollInterval = setInterval(() => {
+    reloadDashboard()
+  }, 30000)
 })
-  // Update your loadFamilyDashboard function
+
+onDestroy(() => {
+  if (dashChannel) supabase.removeChannel(dashChannel)
+  if (pollInterval) clearInterval(pollInterval)
+  if (tickInterval) clearInterval(tickInterval)
+  if (reloadTimer) clearTimeout(reloadTimer)
+})
+
+async function initDashboard() {
+  loading = true
+  initError = null
+
+  try {
+    const { data: { user: currentUser } } = await supabase.auth.getUser()
+
+    if (!currentUser) {
+      goto('/')
+      return
+    }
+
+    user = currentUser
+
+    const { data: profileData, error: profileError } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', user.id)
+      .maybeSingle()
+
+    if (profileError) throw profileError
+    profile = profileData
+
+    // If no profile or missing role, send to setup
+    if (!profile || !profile.role) {
+      goto('/setup')
+      return
+    }
+
+    if (profile?.role === 'family' || profile?.role === 'admin') {
+      await loadFamilyDashboard()
+    } else if (profile?.role === 'nanny') {
+      await loadNannyDashboard()
+    }
+
+    if (!dashChannel) {
+      subscribeToShifts()
+    }
+
+    loading = false
+  } catch (err) {
+    initError = errorMessage(err)
+    loading = false
+  }
+}
+
+async function reloadDashboard() {
+  if (!profile) return
+
+  try {
+    if (profile.role === 'family' || profile.role === 'admin') {
+      await loadFamilyDashboard()
+    } else if (profile.role === 'nanny') {
+      await loadNannyDashboard()
+    }
+  } catch (err) {
+    // Background refresh: keep showing the last good data
+    console.warn('Dashboard refresh failed:', errorMessage(err))
+  }
+}
+
+function scheduleReload() {
+  if (reloadTimer) clearTimeout(reloadTimer)
+  reloadTimer = setTimeout(() => {
+    reloadTimer = null
+    reloadDashboard()
+  }, 300)
+}
+
+function handleVisibilityChange() {
+  if (document.visibilityState === 'visible' && !loading) {
+    scheduleReload()
+  }
+}
+
 async function loadFamilyDashboard() {
   // Get all nannies
-  const { data: nanniesData } = await supabase
+  const { data: nanniesData, error: nanniesError } = await supabase
     .from('profiles')
     .select('*')
     .eq('role', 'nanny')
     .order('full_name')
-  
+
+  if (nanniesError) throw nanniesError
   nannies = nanniesData || []
-  
+
   // Get active shifts (not clocked out)
-  const { data: shiftsData } = await supabase
+  const { data: shiftsData, error: shiftsError } = await supabase
     .from('time_entries')
     .select('*')
     .is('clock_out', null)
-  
+
+  if (shiftsError) throw shiftsError
   activeShifts = shiftsData || []
-  
-  // Update the weekly total
-  await getWeeklyTotal()
+
+  // This week's entries, all nannies — the stat tiles derive from these
+  const bounds = getWeekBounds(0)
+  const { data: weekData, error: weekError } = await supabase
+    .from('time_entries')
+    .select('*')
+    .gte('clock_in', bounds.start.toISOString())
+    .lte('clock_in', bounds.end.toISOString())
+
+  if (weekError) throw weekError
+  weekEntries = weekData || []
 }
-  
+
   async function loadNannyDashboard() {
     // Get nanny's active shift
-    const { data: shiftData } = await supabase
+    const { data: shiftData, error } = await supabase
       .from('time_entries')
       .select('*')
       .eq('nanny_id', user.id)
@@ -215,35 +282,28 @@ async function loadFamilyDashboard() {
       .limit(1)
       .maybeSingle()
 
+    if (error) throw error
+
     if (shiftData) {
       activeShifts = [shiftData]
     } else {
       activeShifts = []
     }
   }
-  // Update your subscribeToShifts function to handle cleanup properly
+
 function subscribeToShifts() {
-  const subscription = supabase
+  // Subscribe without a clock_out filter: a clock-out UPDATE removes the row
+  // from the filtered set, so filtered subscriptions never deliver it.
+  dashChannel = supabase
     .channel('active_shifts')
     .on('postgres_changes', {
       event: '*',
       schema: 'public',
-      table: 'time_entries',
-      filter: 'clock_out=is.null'
-    }, payload => {
-      // Reload dashboard data when shifts change
-      if (profile?.role === 'family' || profile?.role === 'admin') {
-        loadFamilyDashboard()
-      } else if (profile?.role === 'nanny') {
-        loadNannyDashboard()
-      }
+      table: 'time_entries'
+    }, () => {
+      scheduleReload()
     })
     .subscribe()
-  
-  // Return cleanup function for onMount
-  return () => {
-    supabase.removeChannel(subscription)
-  }
 }
   function isNannyActive(nannyId) {
     return activeShifts.some(shift => shift.nanny_id === nannyId)
@@ -253,82 +313,46 @@ function subscribeToShifts() {
     return activeShifts.find(shift => shift.nanny_id === nannyId)
   }
   
-  function formatTime(dateString) {
-    return new Date(dateString).toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit'
-    })
-  }
-  
-  function getTimeSince(dateString) {
-    const start = new Date(dateString)
-    const now = new Date()
-    const diff = now - start
-    
+  /**
+   * @param {string} dateString
+   * @param {number} nowMs
+   */
+  function getTimeSince(dateString, nowMs) {
+    const diff = Math.max(0, nowMs - new Date(dateString).getTime())
+
     const hours = Math.floor(diff / (1000 * 60 * 60))
     const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
-    
+
     return `${hours}h ${minutes}m`
   }
-  function getTotalHoursToday() {
-  const today = new Date().toDateString()
-  let totalHours = 0
-  
-  activeShifts.forEach(shift => {
-    const shiftDate = new Date(shift.clock_in).toDateString()
-    if (shiftDate === today) {
-      const start = new Date(shift.clock_in)
-      const end = shift.clock_out ? new Date(shift.clock_out) : new Date()
-      const hours = (end - start) / (1000 * 60 * 60)
-      totalHours += hours
-    }
-  })
-  
-  return totalHours.toFixed(1)
-}
 
-// Create a reactive weekly total
-let weeklyTotal = '0.00'
+  /**
+   * @param {any} entry
+   * @param {number} nowMs
+   */
+  function entryHours(entry, nowMs) {
+    if (entry.clock_out) return parseFloat(entry.hours) || 0
+    return (nowMs - new Date(entry.clock_in).getTime()) / (1000 * 60 * 60)
+  }
 
-async function getWeeklyTotal() {
-  // Get the start of the current week (Sunday)
-  const now = new Date()
-  const weekStart = new Date(now)
-  weekStart.setDate(weekStart.getDate() - weekStart.getDay())
-  weekStart.setHours(0, 0, 0, 0)
-  
-  // Fetch this week's entries (both active and completed)
-  const { data: weekEntries } = await supabase
-    .from('time_entries')
-    .select('*')
-    .gte('clock_in', weekStart.toISOString())
-  
-  if (!weekEntries) return '0.00'
-  
-  // Calculate total cost
-  let totalCost = 0
-  weekEntries.forEach(entry => {
-    const nanny = nannies.find(n => n.id === entry.nanny_id)
-    const rate = nanny?.hourly_rate || 20
-    
-    // Calculate hours for this entry
-    let hours = 0
-    if (entry.clock_out) {
-      hours = entry.hours || 0
-    } else {
-      // Still active - calculate current hours
-      const start = new Date(entry.clock_in)
-      const now = new Date()
-      hours = (now - start) / (1000 * 60 * 60)
-    }
-    
-    totalCost += hours * rate
-  })
-  
-  weeklyTotal = totalCost.toFixed(2)
-  return weeklyTotal
-}
+  // Hours worked today across all nannies: completed shifts keep their value
+  // after clock-out, open shifts tick up live.
+  $: hoursToday = weekEntries
+    .filter(e => localDateString(new Date(e.clock_in)) === localDateString(new Date(now)))
+    .reduce((sum, e) => sum + entryHours(e, now), 0)
+    .toFixed(1)
+
+  // Total cost of this week's shifts (completed + in progress) at each
+  // nanny's rate.
+  $: weeklyTotal = weekEntries
+    .reduce((sum, e) => {
+      const rate = nannies.find(n => n.id === e.nanny_id)?.hourly_rate || 20
+      return sum + entryHours(e, now) * rate
+    }, 0)
+    .toFixed(2)
 </script>
+
+<svelte:document on:visibilitychange={handleVisibilityChange} />
 
 <Nav currentPage="dashboard" />
 
@@ -336,6 +360,16 @@ async function getWeeklyTotal() {
   <div class="loading-screen">
     <div class="spinner"></div>
     <p>Loading...</p>
+  </div>
+{:else if initError}
+  <div class="container">
+    <div class="content">
+      <div class="card error-card">
+        <h2>Couldn't load the dashboard</h2>
+        <p>{initError}</p>
+        <button class="btn btn-primary" on:click={initDashboard}>Retry</button>
+      </div>
+    </div>
   </div>
 {:else}
   <div class="container">
@@ -359,7 +393,7 @@ async function getWeeklyTotal() {
     </div>
     <div class="stat-card">
       <div class="stat-icon">⏱️</div>
-      <div class="stat-value">{getTotalHoursToday()}</div>
+      <div class="stat-value">{hoursToday}</div>
       <div class="stat-label">Hours Today</div>
     </div>
     <div class="stat-card">
@@ -412,7 +446,7 @@ async function getWeeklyTotal() {
             {#if isActive && activeShift}
               <div class="active-shift">
                 <p><strong>Clocked in:</strong> {formatTime(activeShift.clock_in)}</p>
-                <p><strong>Duration:</strong> {getTimeSince(activeShift.clock_in)}</p>
+                <p><strong>Duration:</strong> {getTimeSince(activeShift.clock_in, now)}</p>
               </div>
             {/if}
             
@@ -461,7 +495,7 @@ async function getWeeklyTotal() {
               <div class="shift-info">
                 <h3>🟢 Currently On Clock</h3>
                 <p><strong>Clocked in:</strong> {formatTime(shift.clock_in)}</p>
-                <p><strong>Duration:</strong> {getTimeSince(shift.clock_in)}</p>
+                <p><strong>Duration:</strong> {getTimeSince(shift.clock_in, now)}</p>
               </div>
               <a href="/tracker" class="btn btn-large btn-primary">Go to Tracker</a>
             </div>
@@ -1018,5 +1052,15 @@ async function getWeeklyTotal() {
     .content {
       padding: 24px 16px;
     }
+  }
+
+  .error-card {
+    text-align: center;
+    padding: 40px 30px;
+  }
+
+  .error-card p {
+    color: #718096;
+    margin: 10px 0 20px;
   }
 </style>

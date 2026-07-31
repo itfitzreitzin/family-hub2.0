@@ -4,17 +4,28 @@
   import { goto } from '$app/navigation'
   import { toast, confirm as confirmModal } from '$lib/stores/toast.js'
   import Nav from '$lib/Nav.svelte'
-  
+  import { getWeekBounds, formatTime, formatDateWeekday as formatDate } from '$lib/time.js'
+  import { normalizeVenmoHandle, isMobileDevice, buildVenmoNote, buildVenmoLink } from '$lib/venmo.js'
+  import { buildTimesheetCsv, timesheetFilename, downloadCsv } from '$lib/csv.js'
+  import { errorMessage } from '$lib/errors.js'
+
   let user = null
   let profile = null
+  /** @type {any[]} */
   let entries = []
   let loading = true
+  /** @type {string | null} */
+  let initError = null
+  let entriesLoading = false
+  let loadToken = 0
+  /** @type {any[]} */
   let nannies = [] // List of all nannies
+  /** @type {string | null} */
   let selectedNannyId = null // Filter
-  
+
   // Week filter
   let showingWeek = 'current' // 'current' or 'all'
-  
+
   // Check URL params for nanny filter
   onMount(async () => {
     const urlParams = new URLSearchParams(window.location.search)
@@ -22,88 +33,137 @@
     if (nannyParam) {
       selectedNannyId = nannyParam
     }
-    
+
     await initialize()
   })
-  
+
   async function initialize() {
-    const { data: { user: currentUser } } = await supabase.auth.getUser()
-    
-    if (!currentUser) {
-      goto('/')
-      return
-    }
-    
-    user = currentUser
-    
-    // Get profile
-    const { data: profileData } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', user.id)
-      .maybeSingle()
+    loading = true
+    initError = null
 
-    profile = profileData
+    try {
+      const { data: { user: currentUser } } = await supabase.auth.getUser()
 
-    // If family or admin, load all nannies for the filter dropdown
-    if (profile?.role === 'family' || profile?.role === 'admin') {
-      const { data: nanniesData } = await supabase
+      if (!currentUser) {
+        goto('/')
+        return
+      }
+
+      user = currentUser
+
+      // Get profile
+      const { data: profileData, error: profileError } = await supabase
         .from('profiles')
         .select('*')
-        .eq('role', 'nanny')
-        .order('full_name')
-      
-      nannies = nanniesData || []
+        .eq('id', user.id)
+        .maybeSingle()
+
+      if (profileError) throw profileError
+      profile = profileData
+
+      // If family or admin, load all nannies for the filter dropdown
+      if (profile?.role === 'family' || profile?.role === 'admin') {
+        const { data: nanniesData, error: nanniesError } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('role', 'nanny')
+          .order('full_name')
+
+        if (nanniesError) throw nanniesError
+        nannies = nanniesData || []
+      }
+
+      // Load time entries
+      await loadEntries()
+
+      loading = false
+    } catch (err) {
+      initError = errorMessage(err)
+      loading = false
     }
-    
-    // Load time entries
-    await loadEntries()
-    
-    loading = false
   }
-  
-  $: filteredEntries = showingWeek === 'current' 
+
+  $: filteredEntries = showingWeek === 'current'
     ? entries.filter(e => isCurrentWeek(e.clock_in))
     : entries
-  
+
+  $: nannyById = Object.fromEntries(nannies.map(n => [n.id, n]))
   $: weekTotal = filteredEntries.reduce((sum, e) => sum + (parseFloat(e.hours) || 0), 0)
-  $: weekPay = weekTotal * (profile?.hourly_rate || 20)
-  
+  $: weekPay = computeWeekPay(filteredEntries, nannyById, profile)
+  // The rate shown in the summary: the filtered nanny's rate, or the viewer's
+  // own for nannies. Null (shown as —) when "All Nannies" mixes rates.
+  $: displayRate = selectedNannyId
+    ? (nannyById[selectedNannyId]?.hourly_rate ?? 20)
+    : (profile?.role === 'nanny' ? (profile?.hourly_rate ?? 20) : null)
+
+  // Each entry is priced at its own nanny's rate, not the viewer's.
+  /**
+   * @param {any} entry
+   * @param {Record<string, any>} byId
+   * @param {any} viewer
+   */
+  function rateForEntry(entry, byId, viewer) {
+    const nannyRate = byId[entry.nanny_id]?.hourly_rate
+    if (nannyRate) return nannyRate
+    if (viewer?.role === 'nanny' && viewer?.hourly_rate) return viewer.hourly_rate
+    return 20
+  }
+
+  /**
+   * @param {any[]} list
+   * @param {Record<string, any>} byId
+   * @param {any} viewer
+   */
+  function computeWeekPay(list, byId, viewer) {
+    return list.reduce((sum, e) => sum + (parseFloat(e.hours) || 0) * rateForEntry(e, byId, viewer), 0)
+  }
+
   function isCurrentWeek(dateString) {
+    const { start, end } = getWeekBounds(0)
     const date = new Date(dateString)
-    const now = new Date()
-    const weekStart = new Date(now)
-    weekStart.setDate(now.getDate() - now.getDay()) // Sunday
-    weekStart.setHours(0, 0, 0, 0)
-    
-    return date >= weekStart
+    return date >= start && date <= end
   }
-  
+
   async function loadEntries() {
-    let query = supabase
-      .from('time_entries')
-      .select('*')
-      .order('clock_in', { ascending: false })
-    
-    // Filter by selected nanny
-    if (selectedNannyId) {
-      query = query.eq('nanny_id', selectedNannyId)
-    } else if (profile?.role === 'nanny') {
-      // Nannies only see their own
-      query = query.eq('nanny_id', user.id)
+    const token = ++loadToken
+    entriesLoading = true
+
+    try {
+      let query = supabase
+        .from('time_entries')
+        .select('*')
+        .order('clock_in', { ascending: false })
+
+      // Filter by selected nanny
+      if (selectedNannyId) {
+        query = query.eq('nanny_id', selectedNannyId)
+      } else if (profile?.role === 'nanny') {
+        // Nannies only see their own
+        query = query.eq('nanny_id', user.id)
+      }
+      // Family/admin see all (unless filtered)
+
+      const { data, error } = await query
+
+      if (error) throw error
+      if (token !== loadToken) return
+
+      // Only show completed entries (with clock_out)
+      entries = (data || []).filter(e => e.clock_out)
+    } finally {
+      if (token === loadToken) entriesLoading = false
     }
-    // Family/admin see all (unless filtered)
-    
-    const { data } = await query
-    
-    // Only show completed entries (with clock_out)
-    entries = (data || []).filter(e => e.clock_out)
   }
-  
+
   async function changeNannyFilter(nannyId) {
     selectedNannyId = nannyId
-    await loadEntries()
-    
+
+    try {
+      await loadEntries()
+    } catch (err) {
+      toast.error('Error loading entries: ' + errorMessage(err))
+    }
+
     // Update URL without reload
     const url = new URL(window.location)
     if (nannyId) {
@@ -113,80 +173,67 @@
     }
     window.history.pushState({}, '', url)
   }
-  
-  function formatDate(dateString) {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric'
-    })
-  }
-  
-  function formatTime(dateString) {
-    return new Date(dateString).toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit'
-    })
-  }
-  
+
   async function generateVenmoPayment() {
-    const venmo = profile?.venmo_username?.replace('@', '') || 'username'
-    const rate = profile?.hourly_rate || 20
-    
-    const weekStart = new Date()
-    weekStart.setDate(weekStart.getDate() - weekStart.getDay())
-    
-    const note = `Weekly payment for ${profile?.full_name}
-Week of ${weekStart.toLocaleDateString()}
-Hours: ${weekTotal.toFixed(1)}
-Rate: $${rate}/hour
-Total: $${weekPay.toFixed(2)}`
-    
-    // Check if mobile
-    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
-    
-    if (isMobile) {
-      const venmoUrl = `venmo://paycharge?txn=pay&recipients=${venmo}&amount=${weekPay.toFixed(2)}&note=${encodeURIComponent(note)}`
-      
-      const confirmed = await confirmModal.show({ title: 'Venmo Payment', message: `Pay $${weekPay.toFixed(2)} to @${venmo} via Venmo?`, confirmText: 'Pay' })
+    const nanny = selectedNannyId ? nannyById[selectedNannyId] : null
+    if (!nanny) {
+      toast.error('Select a single nanny to generate a payment')
+      return
+    }
+
+    if (weekTotal === 0) {
+      toast.error('No completed hours for this week')
+      return
+    }
+
+    const recipient = normalizeVenmoHandle(nanny.venmo_username)
+    if (!recipient) {
+      toast.error(`${nanny.full_name} has no Venmo username set. Add it in Settings.`)
+      return
+    }
+
+    const rate = nanny.hourly_rate || 20
+    const note = buildVenmoNote({
+      direction: 'pay',
+      name: nanny.full_name,
+      weekStart: getWeekBounds(0).start,
+      hours: weekTotal,
+      rate,
+      total: weekPay
+    })
+
+    if (isMobileDevice()) {
+      const confirmed = await confirmModal.show({ title: 'Venmo Payment', message: `Pay $${weekPay.toFixed(2)} to @${recipient} via Venmo?`, confirmText: 'Pay' })
       if (confirmed) {
-        window.location.href = venmoUrl
+        window.location.href = buildVenmoLink({ txn: 'pay', recipient, amount: weekPay, note })
       }
     } else {
       // Desktop - copy to clipboard
-      navigator.clipboard.writeText(note).then(() => {
-        toast.success('Payment details copied to clipboard!')
-      })
+      try {
+        await navigator.clipboard.writeText(note)
+        toast.success('Payment details copied. Tip: use the Tracker page to record and track payments.')
+      } catch {
+        toast.info('Payment details: ' + note, 10000)
+      }
     }
   }
-  
+
   function exportCSV() {
-    const headers = ['Date', 'Clock In', 'Clock Out', 'Hours', 'Earnings', 'Notes']
-    const rows = filteredEntries.map(e => [
-      formatDate(e.clock_in),
-      formatTime(e.clock_in),
-      formatTime(e.clock_out),
-      (parseFloat(e.hours) || 0).toFixed(2),
-      ((parseFloat(e.hours) || 0) * (profile?.hourly_rate || 20)).toFixed(2),
-      e.notes || ''
-    ])
-    
-    const csv = [
-      headers.join(','),
-      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
-    ].join('\n')
-    
-    const blob = new Blob([csv], { type: 'text/csv' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `timesheet-${new Date().toISOString().split('T')[0]}.csv`
-    a.click()
-  }
-  
-  async function signOut() {
-    await supabase.auth.signOut()
-    goto('/')
+    const nannyName = selectedNannyId
+      ? nannyById[selectedNannyId]?.full_name
+      : profile?.role === 'nanny'
+        ? profile?.full_name
+        : null
+    const bounds = showingWeek === 'current' ? getWeekBounds(0) : null
+
+    downloadCsv(
+      timesheetFilename({
+        nannyName,
+        weekStart: bounds ? bounds.start : null,
+        weekEnd: bounds ? bounds.end : null
+      }),
+      buildTimesheetCsv(filteredEntries, e => rateForEntry(e, nannyById, profile))
+    )
   }
 </script>
 <Nav currentPage="history" />
@@ -206,7 +253,14 @@ Total: $${weekPay.toFixed(2)}`
   <div class="content">
     {#if loading}
       <div class="loading">Loading...</div>
-      
+
+    {:else if initError}
+      <div class="table-card error-card">
+        <h3>Couldn't load history</h3>
+        <p>{initError}</p>
+        <button class="btn-primary" on:click={initialize}>Retry</button>
+      </div>
+
     {:else}
       <!-- Week Summary -->
       <div class="summary-card">
@@ -238,13 +292,13 @@ Total: $${weekPay.toFixed(2)}`
             <div class="stat-label">Total Pay</div>
           </div>
           <div class="stat">
-            <div class="stat-value">${profile?.hourly_rate || 20}/hr</div>
+            <div class="stat-value">{displayRate !== null ? '$' + displayRate + '/hr' : '—'}</div>
             <div class="stat-label">Rate</div>
           </div>
         </div>
         
         <div class="summary-actions">
-          {#if profile?.role === 'family' && showingWeek === 'current'}
+          {#if (profile?.role === 'family' || profile?.role === 'admin') && showingWeek === 'current' && selectedNannyId}
             <button class="btn-primary" on:click={generateVenmoPayment}>
               💸 Generate Venmo Payment
             </button>
@@ -265,7 +319,7 @@ Total: $${weekPay.toFixed(2)}`
             <a href="/tracker">Go to Time Tracker →</a>
           </div>
         {:else}
-          <div class="table-container">
+          <div class="table-container" class:refreshing={entriesLoading}>
             <table>
               <thead>
                 <tr>
@@ -284,7 +338,7 @@ Total: $${weekPay.toFixed(2)}`
                     <td>{formatTime(entry.clock_in)}</td>
                     <td>{formatTime(entry.clock_out)}</td>
                     <td>{(parseFloat(entry.hours) || 0).toFixed(2)}</td>
-                    <td>${((parseFloat(entry.hours) || 0) * (profile?.hourly_rate || 20)).toFixed(2)}</td>
+                    <td>${((parseFloat(entry.hours) || 0) * rateForEntry(entry, nannyById, profile)).toFixed(2)}</td>
                     <td class="notes">{entry.notes || '—'}</td>
                   </tr>
                 {/each}
@@ -564,5 +618,19 @@ Total: $${weekPay.toFixed(2)}`
   border-radius: 6px;
   font-size: 1em;
   cursor: pointer;
+}
+
+.table-container.refreshing {
+  opacity: 0.55;
+  transition: opacity 0.15s;
+}
+
+.error-card {
+  text-align: center;
+}
+
+.error-card p {
+  color: #718096;
+  margin: 10px 0 20px;
 }
 </style>

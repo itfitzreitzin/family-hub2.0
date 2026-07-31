@@ -1,314 +1,318 @@
 <script>
-  import { supabase } from '$lib/supabase'
-  import { goto } from '$app/navigation'
-  import { toast } from '$lib/stores/toast.js'
-  
-  let email = ''
-  let password = ''
-  let loading = false
-  let error = ''
-  let mode = 'login' // 'login' or 'signup'
+	import { supabase } from '$lib/supabase';
+	import { goto } from '$app/navigation';
+	import { toast } from '$lib/stores/toast.js';
+	import Icon from '$lib/icons/Icon.svelte';
+	import MoonPhase from '$lib/components/MoonPhase.svelte';
+	import ThemeToggle from '$lib/components/ThemeToggle.svelte';
+	import { moonPhase } from '$lib/moon.js';
 
-  async function handleAuth() {
-    loading = true
-    error = ''
-    
-    try {
-      if (mode === 'signup') {
-        const { data, error: signUpError } = await supabase.auth.signUp({
-          email,
-          password,
-        })
-        
-        if (signUpError) throw signUpError
-        
-        toast.success('Check your email for the confirmation link!')
-      } else {
-        const { data, error: signInError } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        })
-        
-        if (signInError) throw signInError
+	let email = '';
+	let password = '';
+	let loading = false;
+	let error = '';
+	let mode = 'login'; // 'login' or 'signup'
 
-        // After login, check if user has a profile/role
-        const { data: userData } = await supabase.auth.getUser()
-        const uid = userData?.user?.id
+	const phase = moonPhase();
 
-        if (uid) {
-          const { data: profile, error: profileError } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', uid)
-            .maybeSingle()
+	async function handleAuth() {
+		loading = true;
+		error = '';
 
-          if (profileError) throw profileError
+		try {
+			if (mode === 'signup') {
+				const { error: signUpError } = await supabase.auth.signUp({
+					email,
+					password
+				});
 
-          // If no profile or no role yet, send to setup
-          if (!profile || !profile.role) {
-            goto('/setup')
-            return
-          }
-        }
+				if (signUpError) throw signUpError;
 
-        // Otherwise go to dashboard
-        goto('/dashboard')
-      }
-    } catch (err) {
-      error = err.message
-    } finally {
-      loading = false
-    }
-  }
+				toast.success('Check your email for the confirmation link!');
+			} else {
+				const { error: signInError } = await supabase.auth.signInWithPassword({
+					email,
+					password
+				});
+
+				if (signInError) throw signInError;
+
+				// After login, check if user has a profile/role
+				const { data: userData } = await supabase.auth.getUser();
+				const uid = userData?.user?.id;
+
+				if (uid) {
+					const { data: profile, error: profileError } = await supabase
+						.from('profiles')
+						.select('*')
+						.eq('id', uid)
+						.maybeSingle();
+
+					if (profileError) throw profileError;
+
+					// If no profile or no role yet, send to setup
+					if (!profile || !profile.role) {
+						goto('/setup');
+						return;
+					}
+				}
+
+				// Otherwise go to dashboard
+				goto('/dashboard');
+			}
+		} catch (err) {
+			error = err.message;
+		} finally {
+			loading = false;
+		}
+	}
 </script>
 
-<div class="login-page">
-  <div class="container">
-    <div class="card">
-      <h1>Family Hub</h1>
-      <h2>{mode === 'login' ? 'Welcome Back' : 'Create Account'}</h2>
-      
-      {#if error}
-        <div class="error">{error}</div>
-      {/if}
-      
-      <form on:submit|preventDefault={handleAuth}>
-        <div class="input-group">
-          <label for="email">Email</label>
-          <input
-            id="email"
-            type="email"
-            bind:value={email}
-            placeholder="you@example.com"
-            required
-          />
-        </div>
-        
-        <div class="input-group">
-          <label for="password">Password</label>
-          <input
-            id="password"
-            type="password"
-            bind:value={password}
-            placeholder="••••••••"
-            required
-          />
-        </div>
-        
-        <button type="submit" disabled={loading}>
-          {loading ? 'Loading...' : mode === 'login' ? 'Sign In' : 'Sign Up'}
-        </button>
-      </form>
-      
-      <p class="toggle">
-        {mode === 'login' ? "Don't have an account?" : 'Already have an account?'}
-        <button class="link" on:click={() => mode = mode === 'login' ? 'signup' : 'login'}>
-          {mode === 'login' ? 'Sign Up' : 'Sign In'}
-        </button>
-      </p>
-    </div>
-  </div>
+<div class="gate">
+	<div class="gate-corner">
+		<ThemeToggle compact />
+	</div>
+
+	<!-- The card itself: a piece of major arcana. -->
+	<div class="arcanum">
+		<span class="numeral" aria-hidden="true">0</span>
+
+		<header class="crest">
+			<MoonPhase size={38} />
+			<h1>Family Hub</h1>
+			<p class="motto">{phase.name} &mdash; {phase.meaning}</p>
+		</header>
+
+		<div class="rule" aria-hidden="true"><Icon name="star" size={11} /></div>
+
+		<h2>{mode === 'login' ? 'Welcome back to the hearth' : 'Take your place at the hearth'}</h2>
+
+		{#if error}
+			<div class="error" role="alert">
+				<Icon name="warning" size={16} />
+				<span>{error}</span>
+			</div>
+		{/if}
+
+		<form on:submit|preventDefault={handleAuth}>
+			<div class="input-group">
+				<label for="email">Email</label>
+				<input id="email" type="email" bind:value={email} placeholder="you@example.com" required />
+			</div>
+
+			<div class="input-group">
+				<label for="password">Password</label>
+				<input
+					id="password"
+					type="password"
+					bind:value={password}
+					placeholder="••••••••"
+					required
+				/>
+			</div>
+
+			<button type="submit" class="btn btn-primary btn-large enter" disabled={loading}>
+				{#if loading}
+					<span class="wisp" aria-hidden="true"></span>
+					<span>Opening…</span>
+				{:else}
+					<Icon name={mode === 'login' ? 'door' : 'candle'} size={16} />
+					<span>{mode === 'login' ? 'Enter' : 'Light a candle'}</span>
+				{/if}
+			</button>
+		</form>
+
+		<p class="toggle">
+			{mode === 'login' ? "Don't have an account?" : 'Already have an account?'}
+			<button class="link" on:click={() => (mode = mode === 'login' ? 'signup' : 'login')}>
+				{mode === 'login' ? 'Sign up' : 'Sign in'}
+			</button>
+		</p>
+	</div>
 </div>
 
 <style>
-  /* Override body padding for login page only */
-  :global(body) {
-    padding-top: 0 !important;
-    padding-bottom: 0 !important;
-  }
+	/* The login page owns the full viewport — no nav, no chrome. */
+	:global(body) {
+		padding-top: 0 !important;
+		padding-bottom: 0 !important;
+	}
 
-  .login-page {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-  }
+	.gate {
+		position: relative;
+		min-height: 100vh;
+		min-height: 100dvh;
+		display: grid;
+		place-items: center;
+		padding: clamp(1rem, 5vw, 2.5rem);
+		padding-top: calc(clamp(1rem, 5vw, 2.5rem) + var(--safe-top));
+		padding-bottom: calc(clamp(1rem, 5vw, 2.5rem) + var(--safe-bottom));
+	}
 
-  .container {
-    min-height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    padding: 20px;
-    position: relative;
-  }
+	.gate-corner {
+		position: absolute;
+		top: calc(1rem + var(--safe-top));
+		right: 1rem;
+	}
 
-  /* Subtle pattern overlay */
-  .container::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: radial-gradient(circle at 20% 50%, rgba(255,255,255,0.08) 0%, transparent 50%),
-                radial-gradient(circle at 80% 20%, rgba(255,255,255,0.06) 0%, transparent 40%),
-                radial-gradient(circle at 50% 80%, rgba(255,255,255,0.04) 0%, transparent 50%);
-    pointer-events: none;
-  }
+	/* ── The card ───────────────────────────────────────────── */
+	.arcanum {
+		position: relative;
+		width: 100%;
+		max-width: 420px;
+		padding: clamp(1.75rem, 6vw, 2.75rem);
+		background: var(--surface);
+		background-image: linear-gradient(165deg, var(--accent-tint), transparent 55%);
+		border: 1px solid var(--border-gilt);
+		border-radius: var(--radius-lg);
+		box-shadow: var(--shadow-xl);
+		animation: deal 0.6s var(--ease-out-expo);
+	}
 
-  .card {
-    background: rgba(255, 255, 255, 0.95);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    padding: 44px;
-    border-radius: 1.25rem;
-    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255,255,255,0.1);
-    max-width: 420px;
-    width: 100%;
-    position: relative;
-    z-index: 1;
-    animation: cardEntrance 0.5s cubic-bezier(0.16, 1, 0.3, 1);
-  }
+	/* Inner rule — the second line of the tarot frame */
+	.arcanum::before {
+		content: '';
+		position: absolute;
+		inset: 7px;
+		border: 1px solid var(--border-soft);
+		border-radius: calc(var(--radius-lg) - 5px);
+		pointer-events: none;
+	}
 
-  @keyframes cardEntrance {
-    from {
-      opacity: 0;
-      transform: translateY(12px) scale(0.98);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0) scale(1);
-    }
-  }
+	/* Gilt corner brackets */
+	.arcanum::after {
+		content: '';
+		position: absolute;
+		inset: 15px;
+		pointer-events: none;
+		background:
+			linear-gradient(var(--border-gilt), var(--border-gilt)) 0 0 / 14px 1px no-repeat,
+			linear-gradient(var(--border-gilt), var(--border-gilt)) 0 0 / 1px 14px no-repeat,
+			linear-gradient(var(--border-gilt), var(--border-gilt)) 100% 0 / 14px 1px no-repeat,
+			linear-gradient(var(--border-gilt), var(--border-gilt)) 100% 0 / 1px 14px no-repeat,
+			linear-gradient(var(--border-gilt), var(--border-gilt)) 0 100% / 14px 1px no-repeat,
+			linear-gradient(var(--border-gilt), var(--border-gilt)) 0 100% / 1px 14px no-repeat,
+			linear-gradient(var(--border-gilt), var(--border-gilt)) 100% 100% / 14px 1px no-repeat,
+			linear-gradient(var(--border-gilt), var(--border-gilt)) 100% 100% / 1px 14px no-repeat;
+	}
 
-  h1 {
-    text-align: center;
-    font-size: 2.25em;
-    margin-bottom: 6px;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    letter-spacing: -0.03em;
-  }
+	@keyframes deal {
+		from {
+			opacity: 0;
+			transform: translateY(20px) rotate(-1.5deg) scale(0.96);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0) rotate(0) scale(1);
+		}
+	}
 
-  h2 {
-    text-align: center;
-    color: var(--color-gray-500);
-    margin-bottom: 32px;
-    font-weight: 400;
-    font-size: 1.05em;
-    letter-spacing: -0.01em;
-  }
+	/* Card number, like a real arcanum */
+	.numeral {
+		position: absolute;
+		top: 1.15rem;
+		left: 1.35rem;
+		font-family: var(--font-display);
+		font-size: 0.85rem;
+		font-weight: 600;
+		letter-spacing: 0.1em;
+		color: var(--border-gilt);
+	}
 
-  .error {
-    background: #fef2f2;
-    border: 1px solid #fecaca;
-    color: #dc2626;
-    padding: 12px 16px;
-    border-radius: 10px;
-    margin-bottom: 20px;
-    font-size: 0.9em;
-    font-weight: 500;
-  }
+	.crest {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.5rem;
+		text-align: center;
+	}
 
-  .input-group {
-    margin-bottom: 20px;
-  }
+	h1 {
+		font-family: var(--font-wordmark);
+		font-size: clamp(1.75rem, 7vw, 2.25rem);
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		color: var(--accent-bright);
+		text-shadow: 0 0 30px var(--accent-dim);
+	}
 
-  label {
-    display: block;
-    margin-bottom: 6px;
-    color: var(--color-gray-700);
-    font-weight: 500;
-    font-size: 0.9em;
-  }
+	.motto {
+		font-family: var(--font-body);
+		font-size: 0.72rem;
+		font-weight: 700;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
+		color: var(--text-faint);
+	}
 
-  input {
-    width: 100%;
-    padding: 12px 14px;
-    border: 1.5px solid var(--color-gray-200);
-    border-radius: 10px;
-    font-size: 1em;
-    background: var(--color-gray-50);
-    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-  }
+	h2 {
+		text-align: center;
+		font-family: var(--font-body);
+		font-size: 0.98rem;
+		font-weight: 400;
+		font-style: italic;
+		letter-spacing: 0.01em;
+		color: var(--text-muted);
+		margin-bottom: 1.75rem;
+	}
 
-  input:focus {
-    outline: none;
-    border-color: var(--color-primary);
-    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
-    background: white;
-  }
+	.error {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		padding: 0.7rem 0.9rem;
+		margin-bottom: 1.25rem;
+		background: var(--danger-dim);
+		border: 1px solid var(--danger);
+		border-radius: var(--radius-sm);
+		color: var(--danger);
+		font-size: 0.9rem;
+		--icon-accent: var(--danger);
+	}
 
-  button[type="submit"] {
-    width: 100%;
-    padding: 14px;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    border: none;
-    border-radius: 10px;
-    font-size: 1.05em;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
-    letter-spacing: 0.01em;
-    margin-top: 4px;
-  }
+	form {
+		position: relative;
+		z-index: 1;
+	}
 
-  button[type="submit"]:hover:not(:disabled) {
-    transform: translateY(-1px);
-    box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
-  }
+	.enter {
+		width: 100%;
+		margin-top: 0.5rem;
+	}
 
-  button[type="submit"]:active:not(:disabled) {
-    transform: translateY(0);
-    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
-  }
+	/* A little will-o'-the-wisp while the door opens */
+	.wisp {
+		width: 14px;
+		height: 14px;
+		border: 2px solid rgba(0, 0, 0, 0.25);
+		border-top-color: var(--text-on-accent);
+		border-radius: 50%;
+		animation: spin 0.8s linear infinite;
+	}
 
-  button[type="submit"]:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
+	.toggle {
+		text-align: center;
+		margin-top: 1.5rem;
+		font-size: 0.9rem;
+		color: var(--text-faint);
+	}
 
-  .toggle {
-    text-align: center;
-    margin-top: 24px;
-    color: var(--color-gray-500);
-    font-size: 0.9em;
-  }
+	.link {
+		min-height: auto;
+		padding: 0;
+		background: none;
+		border: none;
+		color: var(--accent-bright);
+		font-family: inherit;
+		font-size: inherit;
+		font-weight: 700;
+		cursor: pointer;
+		border-bottom: 1px solid var(--border-gilt);
+		transition: all var(--transition-fast);
+	}
 
-  .link {
-    background: none;
-    border: none;
-    color: var(--color-primary);
-    cursor: pointer;
-    font-weight: 600;
-    text-decoration: none;
-    transition: color 0.15s;
-  }
-
-  .link:hover {
-    color: var(--color-primary-dark);
-    text-decoration: underline;
-  }
-
-  /* Mobile adjustments */
-  @media (max-width: 768px) {
-    .card {
-      padding: 32px 24px;
-    }
-
-    h1 {
-      font-size: 2rem;
-    }
-
-    h2 {
-      font-size: 1rem;
-      margin-bottom: 28px;
-    }
-  }
-
-  @media (max-width: 375px) {
-    .card {
-      padding: 28px 20px;
-    }
-
-    h1 {
-      font-size: 1.75rem;
-    }
-  }
+	.link:hover {
+		color: var(--accent);
+		border-bottom-color: var(--accent);
+	}
 </style>

@@ -1,329 +1,305 @@
 <script>
-  import { onMount } from 'svelte'
-  import { supabase } from '$lib/supabase'
-  import { goto } from '$app/navigation'
-  import { toast, prompt as promptModal } from '$lib/stores/toast.js'
-  import Nav from '$lib/Nav.svelte'
-  
-  let user = null
-  let profile = null
-  let loading = true
-  let saving = false
-  
-  // Form fields
-  let fullName = ''
-  let hourlyRate = 20
-  let venmoUsername = ''
-  let role = 'nanny'
-  
-  onMount(async () => {
-    const { data: { user: currentUser } } = await supabase.auth.getUser()
-    
-    if (!currentUser) {
-      goto('/')
-      return
-    }
-    
-    user = currentUser
-    
-    // Get profile
-    const { data: profileData } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', user.id)
-      .maybeSingle()
+	import { onMount } from 'svelte';
+	import { supabase } from '$lib/supabase';
+	import { goto } from '$app/navigation';
+	import { toast, prompt as promptModal } from '$lib/stores/toast.js';
+	import Nav from '$lib/Nav.svelte';
+	import Icon from '$lib/icons/Icon.svelte';
+	import Skeleton from '$lib/components/Skeleton.svelte';
+	import MoonPhase from '$lib/components/MoonPhase.svelte';
+	import ThemeToggle from '$lib/components/ThemeToggle.svelte';
 
-    profile = profileData
+	/** @type {Record<string, string>} */
+	const ROLE_TITLES = {
+		admin: 'The Keeper',
+		family: 'The Household',
+		nanny: 'The Guardian'
+	};
 
-    // Populate form
-    if (profile) {
-      fullName = profile.full_name || ''
-      hourlyRate = profile.hourly_rate || 20
-      venmoUsername = profile.venmo_username || ''
-      role = profile.role || 'nanny'
-    }
-    
-    loading = false
-  })
-  
-  async function saveSettings() {
-    saving = true
-    
-    try {
-      const updateData = {
-        full_name: fullName
-      }
-      
-      // Only update these fields for nannies or admins
-      if (profile?.role === 'nanny' || profile?.role === 'admin') {
-        updateData.hourly_rate = hourlyRate
-        updateData.venmo_username = venmoUsername
-      }
-      
-      // Only admin can change role
-      if (profile?.role === 'admin') {
-        updateData.role = role
-      }
-      
-      const { error } = await supabase
-        .from('profiles')
-        .update(updateData)
-        .eq('id', user.id)
-      
-      if (error) throw error
-      
-      toast.success('Settings saved!')
-      
-      // Reload profile
-      const { data: updatedProfile } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', user.id)
-        .maybeSingle()
-      
-      profile = updatedProfile
-    } catch (err) {
-      toast.error('Error saving settings: ' + err.message)
-    } finally {
-      saving = false
-    }
-  }
-  
-  async function changePassword() {
-    const newPassword = await promptModal.show({ title: 'Change Password', message: 'Enter your new password (min 6 characters):', placeholder: 'New password', inputType: 'password' })
+	let user = null;
+	/** @type {any} */
+	let profile = null;
+	let loading = true;
+	let saving = false;
 
-    if (!newPassword || newPassword.length < 6) {
-      toast.error('Password must be at least 6 characters')
-      return
-    }
+	// Form fields
+	let fullName = '';
+	let hourlyRate = 20;
+	let venmoUsername = '';
+	let role = 'nanny';
 
-    try {
-      const { error } = await supabase.auth.updateUser({
-        password: newPassword
-      })
+	onMount(async () => {
+		const {
+			data: { user: currentUser }
+		} = await supabase.auth.getUser();
 
-      if (error) throw error
+		if (!currentUser) {
+			goto('/');
+			return;
+		}
 
-      toast.success('Password changed!')
-    } catch (err) {
-      toast.error('Error changing password: ' + err.message)
-    }
-  }
+		user = currentUser;
+
+		// Get profile
+		const { data: profileData } = await supabase
+			.from('profiles')
+			.select('*')
+			.eq('id', user.id)
+			.maybeSingle();
+
+		profile = profileData;
+
+		// Populate form
+		if (profile) {
+			fullName = profile.full_name || '';
+			hourlyRate = profile.hourly_rate || 20;
+			venmoUsername = profile.venmo_username || '';
+			role = profile.role || 'nanny';
+		}
+
+		loading = false;
+	});
+
+	async function saveSettings() {
+		saving = true;
+
+		try {
+			const updateData = {
+				full_name: fullName
+			};
+
+			// Only update these fields for nannies or admins
+			if (profile?.role === 'nanny' || profile?.role === 'admin') {
+				updateData.hourly_rate = hourlyRate;
+				updateData.venmo_username = venmoUsername;
+			}
+
+			// Only admin can change role
+			if (profile?.role === 'admin') {
+				updateData.role = role;
+			}
+
+			const { error } = await supabase.from('profiles').update(updateData).eq('id', user.id);
+
+			if (error) throw error;
+
+			toast.success('Settings saved!');
+
+			// Reload profile
+			const { data: updatedProfile } = await supabase
+				.from('profiles')
+				.select('*')
+				.eq('id', user.id)
+				.maybeSingle();
+
+			profile = updatedProfile;
+		} catch (err) {
+			toast.error('Error saving settings: ' + err.message);
+		} finally {
+			saving = false;
+		}
+	}
+
+	async function changePassword() {
+		const newPassword = await promptModal.show({
+			title: 'Change Password',
+			message: 'Enter your new password (min 6 characters):',
+			placeholder: 'New password',
+			inputType: 'password'
+		});
+
+		if (!newPassword || newPassword.length < 6) {
+			toast.error('Password must be at least 6 characters');
+			return;
+		}
+
+		try {
+			const { error } = await supabase.auth.updateUser({
+				password: newPassword
+			});
+
+			if (error) throw error;
+
+			toast.success('Password changed!');
+		} catch (err) {
+			toast.error('Error changing password: ' + err.message);
+		}
+	}
 </script>
 
 <Nav currentPage="settings" />
 
 {#if loading}
-  <div class="loading">Loading...</div>
+	<div class="container"><Skeleton variant="card" count={2} /></div>
 {:else}
-  <div class="container">
-    <div class="card">
-      <h2>Profile Settings</h2>
-      
-      <div class="info-box">
-        <strong>Email:</strong> {user.email}
-        <br>
-        <strong>Role:</strong> {profile?.role}
-        {#if profile?.role === 'admin'}
-          <span class="admin-badge">ADMIN</span>
-        {/if}
-      </div>
-      
-      <form on:submit|preventDefault={saveSettings}>
-        <div class="form-group">
-          <label for="fullName">Full Name</label>
-          <input
-            id="fullName"
-            type="text"
-            bind:value={fullName}
-            placeholder="Your full name"
-            required
-          />
-        </div>
-        
-        {#if profile?.role === 'admin'}
-          <div class="form-group">
-            <label for="role">Role</label>
-            <select id="role" bind:value={role}>
-              <option value="nanny">Nanny</option>
-              <option value="family">Family</option>
-              <option value="admin">Admin</option>
-            </select>
-            <small>Admin can change their own role</small>
-          </div>
-        {/if}
-        
-        {#if profile?.role === 'nanny' || profile?.role === 'admin'}
-          <div class="form-group">
-            <label for="hourlyRate">Hourly Rate ($)</label>
-            <input
-              id="hourlyRate"
-              type="number"
-              bind:value={hourlyRate}
-              min="0"
-              step="0.50"
-              required
-            />
-            {#if profile?.role === 'admin'}
-              <small>Your personal rate (for testing)</small>
-            {/if}
-          </div>
-          
-          <div class="form-group">
-            <label for="venmo">Venmo Username</label>
-            <input
-              id="venmo"
-              type="text"
-              bind:value={venmoUsername}
-              placeholder="@username"
-            />
-            <small>Used for payment generation</small>
-          </div>
-        {/if}
-        
-        <button type="submit" class="btn btn-primary" disabled={saving}>
-          {saving ? 'Saving...' : 'Save Settings'}
-        </button>
-      </form>
-    </div>
-    
-    <div class="card">
-      <h2>Security</h2>
-      
-      <button class="btn btn-secondary" on:click={changePassword}>
-        Change Password
-      </button>
-    </div>
-    
-    <div class="card">
-      <h2>About</h2>
-      <p>Family Hub - Nanny Time Tracker</p>
-      <p style="color: #718096; font-size: 0.9em;">Version 1.0.0</p>
-    </div>
-  </div>
+	<div class="container">
+		<header class="page-head">
+			<div>
+				<h1>The Self</h1>
+				<p class="lede">Your name, your rate, your candle.</p>
+			</div>
+			<ThemeToggle />
+		</header>
+
+		<div class="card arcana">
+			<h2>Your Card</h2>
+
+			<div class="identity">
+				<span class="sigil" aria-hidden="true"><Icon name="candle" size={28} /></span>
+				<div class="identity-body">
+					<p class="identity-email">{user.email}</p>
+					<div class="identity-badges">
+						<span class="badge badge-gilt">{ROLE_TITLES[profile?.role] || profile?.role}</span>
+						{#if profile?.role === 'admin'}
+							<span class="badge badge-arcane"><Icon name="key" size={16} /> Keys</span>
+						{/if}
+					</div>
+				</div>
+			</div>
+
+			<form on:submit|preventDefault={saveSettings}>
+				<div class="form-group">
+					<label for="fullName">Full name</label>
+					<input
+						id="fullName"
+						type="text"
+						bind:value={fullName}
+						placeholder="Your full name"
+						required
+					/>
+				</div>
+
+				{#if profile?.role === 'admin'}
+					<div class="form-group">
+						<label for="role">Role</label>
+						<select id="role" bind:value={role}>
+							<option value="nanny">Nanny — The Guardian</option>
+							<option value="family">Family — The Household</option>
+							<option value="admin">Admin — The Keeper</option>
+						</select>
+						<small>Keepers may change their own role.</small>
+					</div>
+				{/if}
+
+				{#if profile?.role === 'nanny' || profile?.role === 'admin'}
+					<div class="form-group">
+						<label for="hourlyRate">Hourly rate ($)</label>
+						<input
+							id="hourlyRate"
+							type="number"
+							bind:value={hourlyRate}
+							min="0"
+							step="0.50"
+							required
+						/>
+						{#if profile?.role === 'admin'}
+							<small>Your personal rate, for testing.</small>
+						{/if}
+					</div>
+
+					<div class="form-group">
+						<label for="venmo">Venmo username</label>
+						<input id="venmo" type="text" bind:value={venmoUsername} placeholder="@username" />
+						<small>Used when generating payments.</small>
+					</div>
+				{/if}
+
+				<button type="submit" class="btn btn-primary" disabled={saving}>
+					<Icon name="check" size={16} />
+					{saving ? 'Saving…' : 'Save'}
+				</button>
+			</form>
+		</div>
+
+		<div class="card arcana">
+			<h2>Wards</h2>
+			<p class="section-note">Change the password that guards your account.</p>
+			<button class="btn btn-secondary" on:click={changePassword}>
+				<Icon name="key" size={16} /> Change password
+			</button>
+		</div>
+
+		<div class="card arcana about">
+			<h2>Colophon</h2>
+			<div class="about-body">
+				<MoonPhase size={30} showLabel />
+				<p>Family Hub — a hearth for schedules, shifts and small magics.</p>
+				<p class="version">Version 1.0.0</p>
+			</div>
+		</div>
+	</div>
 {/if}
 
 <style>
-  .container {
-    min-height: 100vh;
-    background: var(--surface-page, #f0f2f8);
-    padding: 40px 20px;
-  }
-  
-  .card {
-    max-width: 600px;
-    margin: 0 auto 30px;
-    background: white;
-    border-radius: 1rem;
-    padding: 30px;
-    box-shadow: var(--shadow-md, 0 4px 6px -1px rgba(0, 0, 0, 0.07)); border: 1px solid rgba(0, 0, 0, 0.04);
-  }
-  
-  h2 {
-    margin: 0 0 20px 0;
-    color: var(--color-gray-800, #2d3748);
-    padding-bottom: 10px;
-    border-bottom: 1px solid var(--color-gray-200, #e2e8f0);
-  }
-  
-  .info-box {
-    background: var(--surface-sunken, #eef1f8);
-    padding: clamp(1rem, 3vw, 1.5rem);
-    border-radius: 0.75rem;
-    margin-bottom: 2rem;
-    color: var(--color-gray-700, #4a5568);
-    line-height: 1.7;
-  }
-  
-  .admin-badge {
-    display: inline-block;
-    margin-left: 10px;
-    padding: 2px 10px;
-    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
-    color: white;
-    border-radius: 12px;
-    font-size: 0.8em;
-    font-weight: bold;
-  }
-  
-  .form-group {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    margin-bottom: 1.5rem;
-  }
+	.page-head h1 {
+		color: var(--accent-bright);
+	}
 
-  label {
-    color: #4a5568;
-    font-weight: 500;
-  }
+	.lede {
+		color: var(--text-faint);
+		font-size: 0.95rem;
+		margin-top: 0.2rem;
+	}
 
-  input, select {
-    width: 100%;
-    padding: 0.75rem;
-    border: 1.5px solid var(--color-gray-200, #e2e8f0);
-    border-radius: 10px;
-    font-size: 1rem;
-  }
+	.identity {
+		display: flex;
+		align-items: center;
+		gap: 1rem;
+		padding: 1.1rem;
+		margin-bottom: 1.5rem;
+		background: var(--surface-2);
+		border: 1px solid var(--border-soft);
+		border-radius: var(--card-radius);
+	}
 
-  input:focus, select:focus {
-    outline: none;
-    border-color: var(--color-primary, #667eea);
-    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
-    background: white;
-  }
-  
-  small {
-    display: block;
-    margin-top: 5px;
-    color: #718096;
-    font-size: 0.85em;
-  }
-  
-  .btn {
-    padding: clamp(0.75rem, 3vw, 1rem) clamp(1.5rem, 4vw, 2rem);
-    border: none;
-    border-radius: 0.75rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-  
-  .btn-primary {
-    width: 100%;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    font-size: clamp(1rem, 2vw, 1.15rem);
-    border-radius: 10px;
-    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
-  }
-  
-  .btn-primary:hover:not(:disabled) {
-    transform: translateY(-1px);
-    box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
-  }
-  
-  .btn-primary:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
+	.sigil {
+		display: grid;
+		place-items: center;
+		width: 52px;
+		height: 52px;
+		flex-shrink: 0;
+		border: 1px solid var(--border-gilt);
+		border-radius: 50%;
+		background: var(--accent-tint);
+		color: var(--text-faint);
+		--icon-accent: var(--accent);
+	}
 
-  .btn-secondary {
-    background: white;
-    color: #667eea;
-    border: 2px solid #667eea;
-  }
+	/* Body face, not Cinzel — an inscriptional roman mangles an email address. */
+	.identity-email {
+		font-size: 1rem;
+		font-weight: 600;
+		color: var(--text);
+		margin-bottom: 0.4rem;
+		word-break: break-word;
+	}
 
-  .btn-secondary:hover {
-    background: #f7fafc;
-  }
+	.identity-badges {
+		display: flex;
+		gap: 0.45rem;
+		flex-wrap: wrap;
+		--icon-accent: var(--arcane);
+	}
 
-  .loading {
-    min-height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--surface-page, #f0f2f8);
-    color: var(--color-gray-500, #718096);
-  }
+	.section-note {
+		color: var(--text-muted);
+		font-size: 0.92rem;
+		margin-bottom: 1rem;
+	}
+
+	.about-body {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.5rem;
+		text-align: center;
+		color: var(--text-muted);
+		font-size: 0.92rem;
+	}
+
+	.version {
+		font-variant-numeric: tabular-nums;
+		color: var(--text-faint);
+		font-size: 0.85rem;
+	}
 </style>

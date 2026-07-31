@@ -1,300 +1,370 @@
 <script>
-  import { onMount } from 'svelte'
-  import { goto } from '$app/navigation'
-  import { toast } from '$lib/stores/toast.js'
-  import { supabase } from '$lib/supabase'
-  
-  let user = null
-  let fullName = ''
-  let role = ''
-  let hourlyRate = 20
-  let venmoUsername = ''
-  let loading = false
-  
-  onMount(async () => {
-    const { data: { user: currentUser } } = await supabase.auth.getUser()
-    
-    if (!currentUser) {
-      goto('/')
-      return
-    }
-    
-    user = currentUser
-    
-    // Pre-fill email as name suggestion
-    fullName = currentUser.email.split('@')[0]
-  })
-  
-  async function completeSetup() {
-    if (!role) {
-      toast.error('Please select your role')
-      return
-    }
-    
-    if (!fullName) {
-      toast.error('Please enter your name')
-      return
-    }
-    
-    loading = true
-    
-    try {
-      const { error } = await supabase
-        .from('profiles')
-        .upsert({
-          id: user.id,
-          role,
-          full_name: fullName,
-          hourly_rate: role === 'nanny' ? hourlyRate : null,
-          venmo_username: role === 'nanny' ? venmoUsername : null
-        })
-      
-      if (error) throw error
-      
-      // Redirect to dashboard
-      goto('/dashboard')
-    } catch (err) {
-      toast.error('Error: ' + err.message)
-      loading = false
-    }
-  }
+	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { toast } from '$lib/stores/toast.js';
+	import { supabase } from '$lib/supabase';
+	import Icon from '$lib/icons/Icon.svelte';
+	import MoonPhase from '$lib/components/MoonPhase.svelte';
+	import ThemeToggle from '$lib/components/ThemeToggle.svelte';
+
+	// The two roles, dressed as minor arcana.
+	const ROLES = [
+		{
+			value: 'family',
+			name: 'Family Member',
+			title: 'The Household',
+			desc: 'Keep the schedules, settle the accounts, mind the calendar.',
+			icon: 'cottage',
+			numeral: 'I'
+		},
+		{
+			value: 'nanny',
+			name: 'Nanny / Caregiver',
+			title: 'The Guardian',
+			desc: 'Track your hours, watch the little ones, collect your due.',
+			icon: 'sprout',
+			numeral: 'II'
+		}
+	];
+
+	let user = null;
+	let fullName = '';
+	let role = '';
+	let hourlyRate = 20;
+	let venmoUsername = '';
+	let loading = false;
+
+	onMount(async () => {
+		const {
+			data: { user: currentUser }
+		} = await supabase.auth.getUser();
+
+		if (!currentUser) {
+			goto('/');
+			return;
+		}
+
+		user = currentUser;
+
+		// Pre-fill email as name suggestion
+		fullName = currentUser.email.split('@')[0];
+	});
+
+	async function completeSetup() {
+		if (!role) {
+			toast.error('Please select your role');
+			return;
+		}
+
+		if (!fullName) {
+			toast.error('Please enter your name');
+			return;
+		}
+
+		loading = true;
+
+		try {
+			const { error } = await supabase.from('profiles').upsert({
+				id: user.id,
+				role,
+				full_name: fullName,
+				hourly_rate: role === 'nanny' ? hourlyRate : null,
+				venmo_username: role === 'nanny' ? venmoUsername : null
+			});
+
+			if (error) throw error;
+
+			// Redirect to dashboard
+			goto('/dashboard');
+		} catch (err) {
+			toast.error('Error: ' + err.message);
+			loading = false;
+		}
+	}
 </script>
 
-<div class="setup-screen">
-  <div class="setup-card">
-    <h1>Welcome to Family Hub!</h1>
-    <h2>Let's get you set up</h2>
-    
-    <div class="role-selection">
-      <p style="margin-bottom: 20px; color: #4a5568;">Who are you?</p>
-      
-      <label class="role-card" class:selected={role === 'family'}>
-        <input type="radio" bind:group={role} value="family" />
-        <div class="role-content">
-          <div class="role-icon">👨‍👩‍👧‍👦</div>
-          <div class="role-name">Family Member</div>
-          <div class="role-desc">Parents, manage schedules & payments</div>
-        </div>
-      </label>
-      
-      <label class="role-card" class:selected={role === 'nanny'}>
-        <input type="radio" bind:group={role} value="nanny" />
-        <div class="role-content">
-          <div class="role-icon">🧑‍🍼</div>
-          <div class="role-name">Nanny / Caregiver</div>
-          <div class="role-desc">Track hours and view payments</div>
-        </div>
-      </label>
-    </div>
-    
-    {#if role}
-      <div class="details-form">
-        <div class="input-group">
-          <label for="name">Full Name</label>
-          <input
-            id="name"
-            type="text"
-            bind:value={fullName}
-            placeholder="Your name"
-            required
-          />
-        </div>
-        
-        {#if role === 'nanny'}
-          <div class="input-group">
-            <label for="rate">Hourly Rate ($)</label>
-            <input
-              id="rate"
-              type="number"
-              bind:value={hourlyRate}
-              placeholder="20"
-              min="0"
-              step="0.50"
-            />
-          </div>
-          
-          <div class="input-group">
-            <label for="venmo">Venmo Username (optional)</label>
-            <input
-              id="venmo"
-              type="text"
-              bind:value={venmoUsername}
-              placeholder="@username"
-            />
-          </div>
-        {/if}
-        
-        <button on:click={completeSetup} disabled={loading}>
-          {loading ? 'Setting up...' : 'Complete Setup'}
-        </button>
-      </div>
-    {/if}
-  </div>
+<div class="gate">
+	<div class="gate-corner">
+		<ThemeToggle compact />
+	</div>
+
+	<div class="arcanum">
+		<header class="crest">
+			<MoonPhase size={34} />
+			<h1>Choose your card</h1>
+			<p class="motto">Every hearth needs its keepers</p>
+		</header>
+
+		<div class="rule" aria-hidden="true"><Icon name="star" size={11} /></div>
+
+		<div class="role-selection">
+			{#each ROLES as option (option.value)}
+				<label class="role-card" class:selected={role === option.value}>
+					<input type="radio" bind:group={role} value={option.value} />
+					<span class="numeral" aria-hidden="true">{option.numeral}</span>
+					<span class="role-icon"><Icon name={option.icon} size={40} /></span>
+					<span class="role-body">
+						<span class="role-name">{option.name}</span>
+						<span class="role-title">{option.title}</span>
+						<span class="role-desc">{option.desc}</span>
+					</span>
+					<span class="tick" aria-hidden="true"><Icon name="check" size={14} /></span>
+				</label>
+			{/each}
+		</div>
+
+		{#if role}
+			<div class="details-form">
+				<div class="rule" aria-hidden="true"><Icon name="quill" size={11} /></div>
+
+				<div class="input-group">
+					<label for="name">Full name</label>
+					<input id="name" type="text" bind:value={fullName} placeholder="Your name" required />
+				</div>
+
+				{#if role === 'nanny'}
+					<div class="input-group">
+						<label for="rate">Hourly rate ($)</label>
+						<input
+							id="rate"
+							type="number"
+							bind:value={hourlyRate}
+							placeholder="20"
+							min="0"
+							step="0.50"
+						/>
+					</div>
+
+					<div class="input-group">
+						<label for="venmo">Venmo username <span class="optional">(optional)</span></label>
+						<input id="venmo" type="text" bind:value={venmoUsername} placeholder="@username" />
+					</div>
+				{/if}
+
+				<button class="btn btn-primary btn-large seal" on:click={completeSetup} disabled={loading}>
+					{#if loading}
+						<span class="wisp" aria-hidden="true"></span>
+						<span>Setting the table…</span>
+					{:else}
+						<Icon name="key" size={16} />
+						<span>Take your place</span>
+					{/if}
+				</button>
+			</div>
+		{/if}
+	</div>
 </div>
 
 <style>
-  .setup-screen {
-    min-height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    padding: clamp(1.5rem, 6vw, 3rem);
-    position: relative;
-  }
+	:global(body) {
+		padding-top: 0 !important;
+		padding-bottom: 0 !important;
+	}
 
-  .setup-screen::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: radial-gradient(circle at 20% 50%, rgba(255,255,255,0.08) 0%, transparent 50%),
-                radial-gradient(circle at 80% 20%, rgba(255,255,255,0.06) 0%, transparent 40%);
-    pointer-events: none;
-  }
+	.gate {
+		position: relative;
+		min-height: 100vh;
+		min-height: 100dvh;
+		display: grid;
+		place-items: center;
+		padding: clamp(1rem, 5vw, 2.5rem);
+		padding-top: calc(clamp(1rem, 5vw, 2.5rem) + var(--safe-top));
+		padding-bottom: calc(clamp(1rem, 5vw, 2.5rem) + var(--safe-bottom));
+	}
 
-  .setup-card {
-    background: white;
-    padding: clamp(1.75rem, 6vw, 3rem);
-    border-radius: clamp(0.75rem, 3vw, 1.25rem);
-    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255,255,255,0.1);
-    max-width: 520px;
-    width: 100%;
-    display: flex;
-    flex-direction: column;
-    gap: 1.75rem;
-    position: relative;
-    z-index: 1;
-    animation: cardEntrance 0.5s cubic-bezier(0.16, 1, 0.3, 1);
-  }
+	.gate-corner {
+		position: absolute;
+		top: calc(1rem + var(--safe-top));
+		right: 1rem;
+	}
 
-  @keyframes cardEntrance {
-    from { opacity: 0; transform: translateY(12px) scale(0.98); }
-    to { opacity: 1; transform: translateY(0) scale(1); }
-  }
+	.arcanum {
+		position: relative;
+		width: 100%;
+		max-width: 480px;
+		padding: clamp(1.75rem, 6vw, 2.5rem);
+		background: var(--surface);
+		background-image: linear-gradient(165deg, var(--accent-tint), transparent 55%);
+		border: 1px solid var(--border-gilt);
+		border-radius: var(--radius-lg);
+		box-shadow: var(--shadow-xl);
+		animation: deal 0.6s var(--ease-out-expo);
+	}
 
-  h1 {
-    text-align: center;
-    font-size: clamp(1.9rem, 3vw, 2.4rem);
-    margin-bottom: 0.25rem;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    letter-spacing: -0.03em;
-  }
+	.arcanum::before {
+		content: '';
+		position: absolute;
+		inset: 7px;
+		border: 1px solid var(--border-soft);
+		border-radius: calc(var(--radius-lg) - 5px);
+		pointer-events: none;
+	}
 
-  h2 {
-    text-align: center;
-    color: #4a5568;
-    font-size: clamp(1.1rem, 2vw, 1.4rem);
-  }
+	@keyframes deal {
+		from {
+			opacity: 0;
+			transform: translateY(20px) scale(0.96);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0) scale(1);
+		}
+	}
 
-  .role-selection {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
+	.crest {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.5rem;
+		text-align: center;
+	}
 
-  .role-card {
-    position: relative;
-    cursor: pointer;
-  }
+	h1 {
+		font-family: var(--font-display);
+		font-size: clamp(1.4rem, 5vw, 1.8rem);
+		font-weight: 700;
+		letter-spacing: 0.05em;
+		color: var(--accent-bright);
+	}
 
-  .role-card input[type="radio"] {
-    position: absolute;
-    opacity: 0;
-  }
+	.motto {
+		font-family: var(--font-body);
+		font-size: 0.72rem;
+		font-weight: 700;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
+		color: var(--text-faint);
+	}
 
-  .role-content {
-    padding: 1.25rem;
-    border: 1.5px solid var(--color-gray-200, #e2e8f0);
-    border-radius: 12px;
-    transition: all 0.3s;
-    text-align: center;
-  }
+	/* ── Role cards: two minor arcana to choose between ── */
+	.role-selection {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+	}
 
-  .role-card:hover .role-content {
-    border-color: #667eea;
-    background: #f7fafc;
-  }
+	.role-card {
+		position: relative;
+		display: flex;
+		align-items: center;
+		gap: 1rem;
+		margin: 0;
+		padding: 1rem 1.1rem;
+		text-transform: none;
+		letter-spacing: normal;
+		font-size: 1rem;
+		font-weight: 400;
+		background: var(--surface-2);
+		border: 1px solid var(--border);
+		border-radius: var(--card-radius);
+		cursor: pointer;
+		transition: all var(--transition-normal);
+		--icon-accent: var(--text-faint);
+		color: var(--text-muted);
+	}
 
-  .role-card.selected .role-content {
-    border-color: var(--color-primary, #667eea);
-    background: linear-gradient(135deg, rgba(102, 126, 234, 0.12) 0%, rgba(118, 75, 162, 0.12) 100%);
-    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
-  }
+	.role-card:hover {
+		border-color: var(--border-gilt);
+		transform: translateY(-2px);
+		--icon-accent: var(--accent);
+	}
 
-  .role-icon {
-    font-size: clamp(2.25rem, 6vw, 3rem);
-    margin-bottom: 0.75rem;
-  }
+	.role-card.selected {
+		border-color: var(--accent);
+		background: var(--accent-tint);
+		box-shadow: var(--glow-gilt);
+		--icon-accent: var(--accent-bright);
+	}
 
-  .role-name {
-    font-size: clamp(1.1rem, 2.5vw, 1.3rem);
-    font-weight: 600;
-    color: #2d3748;
-    margin-bottom: 0.25rem;
-  }
+	.role-card input {
+		position: absolute;
+		opacity: 0;
+		width: 1px;
+		height: 1px;
+	}
 
-  .role-desc {
-    font-size: 0.9rem;
-    color: #718096;
-  }
+	.numeral {
+		position: absolute;
+		top: 0.45rem;
+		right: 0.65rem;
+		font-family: var(--font-display);
+		font-size: 0.72rem;
+		letter-spacing: 0.1em;
+		color: var(--border-gilt);
+	}
 
-  .details-form {
-    border-top: 2px solid #e2e8f0;
-    padding-top: 1.75rem;
-    display: flex;
-    flex-direction: column;
-    gap: 1.25rem;
-  }
+	.role-icon {
+		display: grid;
+		place-items: center;
+		flex-shrink: 0;
+	}
 
-  .input-group {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
+	.role-body {
+		display: flex;
+		flex-direction: column;
+		gap: 0.15rem;
+		min-width: 0;
+	}
 
-  label {
-    color: #4a5568;
-    font-weight: 500;
-  }
+	.role-name {
+		font-family: var(--font-display);
+		font-size: 1.02rem;
+		font-weight: 600;
+		letter-spacing: 0.03em;
+		color: var(--text);
+	}
 
-  input {
-    width: 100%;
-    padding: 0.75rem;
-    border: 1.5px solid var(--color-gray-200, #e2e8f0);
-    border-radius: 10px;
-    font-size: 1rem;
-  }
+	.role-title {
+		font-family: var(--font-body);
+		font-size: 0.68rem;
+		font-weight: 700;
+		letter-spacing: 0.13em;
+		text-transform: uppercase;
+		color: var(--accent);
+	}
 
-  input:focus {
-    outline: none;
-    border-color: #667eea;
-    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
-  }
+	.role-desc {
+		font-size: 0.88rem;
+		color: var(--text-faint);
+		line-height: 1.4;
+	}
 
-  button {
-    width: 100%;
-    padding: clamp(0.85rem, 3vw, 1rem);
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    border: none;
-    border-radius: 10px;
-    font-size: clamp(1rem, 2vw, 1.15rem);
-    font-weight: 600;
-    cursor: pointer;
-    transition: transform 0.2s;
-    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
-  }
+	.tick {
+		margin-left: auto;
+		flex-shrink: 0;
+		color: var(--accent-bright);
+		opacity: 0;
+		transform: scale(0.6);
+		transition: all var(--transition-normal);
+	}
 
-  button:hover:not(:disabled) {
-    transform: translateY(-2px);
-  }
+	.role-card.selected .tick {
+		opacity: 1;
+		transform: scale(1);
+	}
 
-  button:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
+	.details-form {
+		animation: rise 0.4s var(--ease-out-expo);
+	}
+
+	.optional {
+		text-transform: none;
+		letter-spacing: normal;
+		font-weight: 400;
+		opacity: 0.7;
+	}
+
+	.seal {
+		width: 100%;
+		margin-top: 0.5rem;
+	}
+
+	.wisp {
+		width: 14px;
+		height: 14px;
+		border: 2px solid rgba(0, 0, 0, 0.25);
+		border-top-color: var(--text-on-accent);
+		border-radius: 50%;
+		animation: spin 0.8s linear infinite;
+	}
 </style>
-

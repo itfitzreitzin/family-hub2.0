@@ -1,355 +1,375 @@
 <script>
-  import { onMount, onDestroy } from 'svelte'
-  import { supabase } from '$lib/supabase'
-  import Nav from '$lib/Nav.svelte'
-  import { goto } from '$app/navigation'
-  import { toast, confirm as confirmModal } from '$lib/stores/toast.js'
-  import { getWeekBounds, localDateString, formatTime } from '$lib/time.js'
-  import { errorMessage } from '$lib/errors.js'
+	import { onMount, onDestroy } from 'svelte';
+	import { supabase } from '$lib/supabase';
+	import Nav from '$lib/Nav.svelte';
+	import { goto } from '$app/navigation';
+	import { toast, confirm as confirmModal } from '$lib/stores/toast.js';
+	import { getWeekBounds, localDateString, formatTime } from '$lib/time.js';
+	import { errorMessage } from '$lib/errors.js';
+	import Icon from '$lib/icons/Icon.svelte';
+	import MoonPhase from '$lib/components/MoonPhase.svelte';
+	import EmptyState from '$lib/components/EmptyState.svelte';
+	import Skeleton from '$lib/components/Skeleton.svelte';
 
-  let user = null
-  let profile = null
-  let loading = true
-  /** @type {string | null} */
-  let initError = null
-  /** @type {any[]} */
-  let nannies = []
-  /** @type {any[]} */
-  let activeShifts = []
-  /** @type {any[]} */
-  let weekEntries = []
-  let now = Date.now()
-  let showAddNanny = false
-  let selectedNanny = null
-  let nannyEmail = ''
-  let nannyName = ''
-  let nannyRate = 20
-  let nannyVenmo = ''
-  let nannyPassword = ''
+	// Roles, retitled as the household's arcana.
+	/** @type {Record<string, string>} */
+	const ROLE_TITLES = {
+		admin: 'The Keeper',
+		family: 'The Household',
+		nanny: 'The Guardian'
+	};
 
-  /** @type {ReturnType<typeof supabase.channel> | null} */
-  let dashChannel = null
-  /** @type {ReturnType<typeof setInterval> | null} */
-  let pollInterval = null
-  /** @type {ReturnType<typeof setInterval> | null} */
-  let tickInterval = null
-  /** @type {ReturnType<typeof setTimeout> | null} */
-  let reloadTimer = null
+	let user = null;
+	let profile = null;
+	let loading = true;
+	/** @type {string | null} */
+	let initError = null;
+	/** @type {any[]} */
+	let nannies = [];
+	/** @type {any[]} */
+	let activeShifts = [];
+	/** @type {any[]} */
+	let weekEntries = [];
+	let now = Date.now();
+	let showAddNanny = false;
+	let selectedNanny = null;
+	let nannyEmail = '';
+	let nannyName = '';
+	let nannyRate = 20;
+	let nannyVenmo = '';
+	let nannyPassword = '';
 
-  function editNanny(nanny) {
-    selectedNanny = nanny
-    nannyName = nanny.full_name
-    nannyRate = nanny.hourly_rate
-    nannyVenmo = nanny.venmo_username || ''
-    nannyEmail = ''
-    nannyPassword = ''
-    showAddNanny = true
-  }
-  
-  async function saveNanny() {
-    if (!nannyName) {
-      toast.error('Name is required')
-      return
-    }
-    
-    try {
-      if (selectedNanny) {
-        // Update existing nanny
-        const { error } = await supabase
-          .from('profiles')
-          .update({
-            full_name: nannyName,
-            hourly_rate: nannyRate,
-            venmo_username: nannyVenmo
-          })
-          .eq('id', selectedNanny.id)
-        
-        if (error) throw error
-        
-        toast.success('Nanny updated!')
-      } else {
-        // Create new nanny
-        if (!nannyEmail || !nannyPassword) {
-          toast.error('Email and password required for new nanny')
-          return
-        }
-        
-        const { data: authData, error: authError } = await supabase.auth.signUp({
-          email: nannyEmail,
-          password: nannyPassword
-        })
-        
-        if (authError) throw authError
-        
-        // Create profile
-        const { error: profileError } = await supabase
-          .from('profiles')
-          .insert({
-            id: authData.user.id,
-            role: 'nanny',
-            full_name: nannyName,
-            hourly_rate: nannyRate,
-            venmo_username: nannyVenmo
-          })
-        
-        if (profileError) throw profileError
-        
-        toast.success('Nanny created! They can log in with: ' + nannyEmail)
-      }
-      
-      cancelNannyForm()
-      await loadFamilyDashboard()
-    } catch (err) {
-      toast.error('Error: ' + err.message)
-    }
-  }
-  
-  async function deleteNanny(nanny) {
-    const confirmed = await confirmModal.show({
-      title: 'Delete Nanny',
-      message: `Delete ${nanny.full_name}? This will also delete all their time entries.`,
-      confirmText: 'Delete',
-      danger: true
-    })
-    if (!confirmed) return
-    
-    try {
-      // Delete time entries first
-      await supabase
-        .from('time_entries')
-        .delete()
-        .eq('nanny_id', nanny.id)
-      
-      // Delete profile
-      const { error } = await supabase
-        .from('profiles')
-        .delete()
-        .eq('id', nanny.id)
-      
-      if (error) throw error
-      
-      toast.success('Nanny deleted')
-      await loadFamilyDashboard()
-    } catch (err) {
-      toast.error('Error deleting: ' + err.message)
-    }
-  }
-  
-  function cancelNannyForm() {
-    showAddNanny = false
-    selectedNanny = null
-    nannyEmail = ''
-    nannyName = ''
-    nannyRate = 20
-    nannyVenmo = ''
-    nannyPassword = ''
-  }
-onMount(() => {
-  initDashboard()
+	/** @type {ReturnType<typeof supabase.channel> | null} */
+	let dashChannel = null;
+	/** @type {ReturnType<typeof setInterval> | null} */
+	let pollInterval = null;
+	/** @type {ReturnType<typeof setInterval> | null} */
+	let tickInterval = null;
+	/** @type {ReturnType<typeof setTimeout> | null} */
+	let reloadTimer = null;
 
-  tickInterval = setInterval(() => {
-    now = Date.now()
-  }, 1000)
+	function editNanny(nanny) {
+		selectedNanny = nanny;
+		nannyName = nanny.full_name;
+		nannyRate = nanny.hourly_rate;
+		nannyVenmo = nanny.venmo_username || '';
+		nannyEmail = '';
+		nannyPassword = '';
+		showAddNanny = true;
+	}
 
-  // Fallback refresh in case a realtime event is missed or unavailable
-  pollInterval = setInterval(() => {
-    reloadDashboard()
-  }, 30000)
-})
+	async function saveNanny() {
+		if (!nannyName) {
+			toast.error('Name is required');
+			return;
+		}
 
-onDestroy(() => {
-  if (dashChannel) supabase.removeChannel(dashChannel)
-  if (pollInterval) clearInterval(pollInterval)
-  if (tickInterval) clearInterval(tickInterval)
-  if (reloadTimer) clearTimeout(reloadTimer)
-})
+		try {
+			if (selectedNanny) {
+				// Update existing nanny
+				const { error } = await supabase
+					.from('profiles')
+					.update({
+						full_name: nannyName,
+						hourly_rate: nannyRate,
+						venmo_username: nannyVenmo
+					})
+					.eq('id', selectedNanny.id);
 
-async function initDashboard() {
-  loading = true
-  initError = null
+				if (error) throw error;
 
-  try {
-    const { data: { user: currentUser } } = await supabase.auth.getUser()
+				toast.success('Nanny updated!');
+			} else {
+				// Create new nanny
+				if (!nannyEmail || !nannyPassword) {
+					toast.error('Email and password required for new nanny');
+					return;
+				}
 
-    if (!currentUser) {
-      goto('/')
-      return
-    }
+				const { data: authData, error: authError } = await supabase.auth.signUp({
+					email: nannyEmail,
+					password: nannyPassword
+				});
 
-    user = currentUser
+				if (authError) throw authError;
 
-    const { data: profileData, error: profileError } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', user.id)
-      .maybeSingle()
+				// Create profile
+				const { error: profileError } = await supabase.from('profiles').insert({
+					id: authData.user.id,
+					role: 'nanny',
+					full_name: nannyName,
+					hourly_rate: nannyRate,
+					venmo_username: nannyVenmo
+				});
 
-    if (profileError) throw profileError
-    profile = profileData
+				if (profileError) throw profileError;
 
-    // If no profile or missing role, send to setup
-    if (!profile || !profile.role) {
-      goto('/setup')
-      return
-    }
+				toast.success('Nanny created! They can log in with: ' + nannyEmail);
+			}
 
-    if (profile?.role === 'family' || profile?.role === 'admin') {
-      await loadFamilyDashboard()
-    } else if (profile?.role === 'nanny') {
-      await loadNannyDashboard()
-    }
+			cancelNannyForm();
+			await loadFamilyDashboard();
+		} catch (err) {
+			toast.error('Error: ' + err.message);
+		}
+	}
 
-    if (!dashChannel) {
-      subscribeToShifts()
-    }
+	async function deleteNanny(nanny) {
+		const confirmed = await confirmModal.show({
+			title: 'Delete Nanny',
+			message: `Delete ${nanny.full_name}? This will also delete all their time entries.`,
+			confirmText: 'Delete',
+			danger: true
+		});
+		if (!confirmed) return;
 
-    loading = false
-  } catch (err) {
-    initError = errorMessage(err)
-    loading = false
-  }
-}
+		try {
+			// Delete time entries first
+			await supabase.from('time_entries').delete().eq('nanny_id', nanny.id);
 
-async function reloadDashboard() {
-  if (!profile) return
+			// Delete profile
+			const { error } = await supabase.from('profiles').delete().eq('id', nanny.id);
 
-  try {
-    if (profile.role === 'family' || profile.role === 'admin') {
-      await loadFamilyDashboard()
-    } else if (profile.role === 'nanny') {
-      await loadNannyDashboard()
-    }
-  } catch (err) {
-    // Background refresh: keep showing the last good data
-    console.warn('Dashboard refresh failed:', errorMessage(err))
-  }
-}
+			if (error) throw error;
 
-function scheduleReload() {
-  if (reloadTimer) clearTimeout(reloadTimer)
-  reloadTimer = setTimeout(() => {
-    reloadTimer = null
-    reloadDashboard()
-  }, 300)
-}
+			toast.success('Nanny deleted');
+			await loadFamilyDashboard();
+		} catch (err) {
+			toast.error('Error deleting: ' + err.message);
+		}
+	}
 
-function handleVisibilityChange() {
-  if (document.visibilityState === 'visible' && !loading) {
-    scheduleReload()
-  }
-}
+	function cancelNannyForm() {
+		showAddNanny = false;
+		selectedNanny = null;
+		nannyEmail = '';
+		nannyName = '';
+		nannyRate = 20;
+		nannyVenmo = '';
+		nannyPassword = '';
+	}
+	onMount(() => {
+		initDashboard();
 
-async function loadFamilyDashboard() {
-  // Get all nannies
-  const { data: nanniesData, error: nanniesError } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('role', 'nanny')
-    .order('full_name')
+		tickInterval = setInterval(() => {
+			now = Date.now();
+		}, 1000);
 
-  if (nanniesError) throw nanniesError
-  nannies = nanniesData || []
+		// Fallback refresh in case a realtime event is missed or unavailable
+		pollInterval = setInterval(() => {
+			reloadDashboard();
+		}, 30000);
+	});
 
-  // Get active shifts (not clocked out)
-  const { data: shiftsData, error: shiftsError } = await supabase
-    .from('time_entries')
-    .select('*')
-    .is('clock_out', null)
+	onDestroy(() => {
+		if (dashChannel) supabase.removeChannel(dashChannel);
+		if (pollInterval) clearInterval(pollInterval);
+		if (tickInterval) clearInterval(tickInterval);
+		if (reloadTimer) clearTimeout(reloadTimer);
+	});
 
-  if (shiftsError) throw shiftsError
-  activeShifts = shiftsData || []
+	async function initDashboard() {
+		loading = true;
+		initError = null;
 
-  // This week's entries, all nannies — the stat tiles derive from these
-  const bounds = getWeekBounds(0)
-  const { data: weekData, error: weekError } = await supabase
-    .from('time_entries')
-    .select('*')
-    .gte('clock_in', bounds.start.toISOString())
-    .lte('clock_in', bounds.end.toISOString())
+		try {
+			const {
+				data: { user: currentUser }
+			} = await supabase.auth.getUser();
 
-  if (weekError) throw weekError
-  weekEntries = weekData || []
-}
+			if (!currentUser) {
+				goto('/');
+				return;
+			}
 
-  async function loadNannyDashboard() {
-    // Get nanny's active shift
-    const { data: shiftData, error } = await supabase
-      .from('time_entries')
-      .select('*')
-      .eq('nanny_id', user.id)
-      .is('clock_out', null)
-      .order('clock_in', { ascending: false })
-      .limit(1)
-      .maybeSingle()
+			user = currentUser;
 
-    if (error) throw error
+			const { data: profileData, error: profileError } = await supabase
+				.from('profiles')
+				.select('*')
+				.eq('id', user.id)
+				.maybeSingle();
 
-    if (shiftData) {
-      activeShifts = [shiftData]
-    } else {
-      activeShifts = []
-    }
-  }
+			if (profileError) throw profileError;
+			profile = profileData;
 
-function subscribeToShifts() {
-  // Subscribe without a clock_out filter: a clock-out UPDATE removes the row
-  // from the filtered set, so filtered subscriptions never deliver it.
-  dashChannel = supabase
-    .channel('active_shifts')
-    .on('postgres_changes', {
-      event: '*',
-      schema: 'public',
-      table: 'time_entries'
-    }, () => {
-      scheduleReload()
-    })
-    .subscribe()
-}
-  function isNannyActive(nannyId) {
-    return activeShifts.some(shift => shift.nanny_id === nannyId)
-  }
-  
-  function getActiveShift(nannyId) {
-    return activeShifts.find(shift => shift.nanny_id === nannyId)
-  }
-  
-  /**
-   * @param {string} dateString
-   * @param {number} nowMs
-   */
-  function getTimeSince(dateString, nowMs) {
-    const diff = Math.max(0, nowMs - new Date(dateString).getTime())
+			// If no profile or missing role, send to setup
+			if (!profile || !profile.role) {
+				goto('/setup');
+				return;
+			}
 
-    const hours = Math.floor(diff / (1000 * 60 * 60))
-    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
+			if (profile?.role === 'family' || profile?.role === 'admin') {
+				await loadFamilyDashboard();
+			} else if (profile?.role === 'nanny') {
+				await loadNannyDashboard();
+			}
 
-    return `${hours}h ${minutes}m`
-  }
+			if (!dashChannel) {
+				subscribeToShifts();
+			}
 
-  /**
-   * @param {any} entry
-   * @param {number} nowMs
-   */
-  function entryHours(entry, nowMs) {
-    if (entry.clock_out) return parseFloat(entry.hours) || 0
-    return (nowMs - new Date(entry.clock_in).getTime()) / (1000 * 60 * 60)
-  }
+			loading = false;
+		} catch (err) {
+			initError = errorMessage(err);
+			loading = false;
+		}
+	}
 
-  // Hours worked today across all nannies: completed shifts keep their value
-  // after clock-out, open shifts tick up live.
-  $: hoursToday = weekEntries
-    .filter(e => localDateString(new Date(e.clock_in)) === localDateString(new Date(now)))
-    .reduce((sum, e) => sum + entryHours(e, now), 0)
-    .toFixed(1)
+	async function reloadDashboard() {
+		if (!profile) return;
 
-  // Total cost of this week's shifts (completed + in progress) at each
-  // nanny's rate.
-  $: weeklyTotal = weekEntries
-    .reduce((sum, e) => {
-      const rate = nannies.find(n => n.id === e.nanny_id)?.hourly_rate || 20
-      return sum + entryHours(e, now) * rate
-    }, 0)
-    .toFixed(2)
+		try {
+			if (profile.role === 'family' || profile.role === 'admin') {
+				await loadFamilyDashboard();
+			} else if (profile.role === 'nanny') {
+				await loadNannyDashboard();
+			}
+		} catch (err) {
+			// Background refresh: keep showing the last good data
+			console.warn('Dashboard refresh failed:', errorMessage(err));
+		}
+	}
+
+	function scheduleReload() {
+		if (reloadTimer) clearTimeout(reloadTimer);
+		reloadTimer = setTimeout(() => {
+			reloadTimer = null;
+			reloadDashboard();
+		}, 300);
+	}
+
+	function handleVisibilityChange() {
+		if (document.visibilityState === 'visible' && !loading) {
+			scheduleReload();
+		}
+	}
+
+	async function loadFamilyDashboard() {
+		// Get all nannies
+		const { data: nanniesData, error: nanniesError } = await supabase
+			.from('profiles')
+			.select('*')
+			.eq('role', 'nanny')
+			.order('full_name');
+
+		if (nanniesError) throw nanniesError;
+		nannies = nanniesData || [];
+
+		// Get active shifts (not clocked out)
+		const { data: shiftsData, error: shiftsError } = await supabase
+			.from('time_entries')
+			.select('*')
+			.is('clock_out', null);
+
+		if (shiftsError) throw shiftsError;
+		activeShifts = shiftsData || [];
+
+		// This week's entries, all nannies — the stat tiles derive from these
+		const bounds = getWeekBounds(0);
+		const { data: weekData, error: weekError } = await supabase
+			.from('time_entries')
+			.select('*')
+			.gte('clock_in', bounds.start.toISOString())
+			.lte('clock_in', bounds.end.toISOString());
+
+		if (weekError) throw weekError;
+		weekEntries = weekData || [];
+	}
+
+	async function loadNannyDashboard() {
+		// Get nanny's active shift
+		const { data: shiftData, error } = await supabase
+			.from('time_entries')
+			.select('*')
+			.eq('nanny_id', user.id)
+			.is('clock_out', null)
+			.order('clock_in', { ascending: false })
+			.limit(1)
+			.maybeSingle();
+
+		if (error) throw error;
+
+		if (shiftData) {
+			activeShifts = [shiftData];
+		} else {
+			activeShifts = [];
+		}
+	}
+
+	function subscribeToShifts() {
+		// Subscribe without a clock_out filter: a clock-out UPDATE removes the row
+		// from the filtered set, so filtered subscriptions never deliver it.
+		dashChannel = supabase
+			.channel('active_shifts')
+			.on(
+				'postgres_changes',
+				{
+					event: '*',
+					schema: 'public',
+					table: 'time_entries'
+				},
+				() => {
+					scheduleReload();
+				}
+			)
+			.subscribe();
+	}
+	function isNannyActive(nannyId) {
+		return activeShifts.some((shift) => shift.nanny_id === nannyId);
+	}
+
+	function getActiveShift(nannyId) {
+		return activeShifts.find((shift) => shift.nanny_id === nannyId);
+	}
+
+	/**
+	 * @param {string} dateString
+	 * @param {number} nowMs
+	 */
+	function getTimeSince(dateString, nowMs) {
+		const diff = Math.max(0, nowMs - new Date(dateString).getTime());
+
+		const hours = Math.floor(diff / (1000 * 60 * 60));
+		const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+
+		return `${hours}h ${minutes}m`;
+	}
+
+	/**
+	 * @param {any} entry
+	 * @param {number} nowMs
+	 */
+	function entryHours(entry, nowMs) {
+		if (entry.clock_out) return parseFloat(entry.hours) || 0;
+		return (nowMs - new Date(entry.clock_in).getTime()) / (1000 * 60 * 60);
+	}
+
+	// Hours worked today across all nannies: completed shifts keep their value
+	// after clock-out, open shifts tick up live.
+	$: hoursToday = weekEntries
+		.filter((e) => localDateString(new Date(e.clock_in)) === localDateString(new Date(now)))
+		.reduce((sum, e) => sum + entryHours(e, now), 0)
+		.toFixed(1);
+
+	// Total cost of this week's shifts (completed + in progress) at each
+	// nanny's rate.
+	$: weeklyTotal = weekEntries
+		.reduce((sum, e) => {
+			const rate = nannies.find((n) => n.id === e.nanny_id)?.hourly_rate || 20;
+			return sum + entryHours(e, now) * rate;
+		}, 0)
+		.toFixed(2);
+
+	// Greeting shifts with the hour, so the hearth feels awake at the right times.
+	$: greeting = (() => {
+		const hour = new Date(now).getHours();
+		if (hour < 5) return 'Still awake';
+		if (hour < 12) return 'Good morning';
+		if (hour < 17) return 'Good afternoon';
+		if (hour < 21) return 'Good evening';
+		return 'Good night';
+	})();
 </script>
 
 <svelte:document on:visibilitychange={handleVisibilityChange} />
@@ -357,710 +377,642 @@ function subscribeToShifts() {
 <Nav currentPage="dashboard" />
 
 {#if loading}
-  <div class="loading-screen">
-    <div class="spinner"></div>
-    <p>Loading...</p>
-  </div>
+	<div class="container">
+		<div class="welcome">
+			<div class="skeleton skeleton-line" style="width: 40%; height: 2rem"></div>
+		</div>
+		<Skeleton variant="stats" count={4} />
+		<div style="height: var(--section-gap)"></div>
+		<Skeleton variant="card" count={3} />
+	</div>
 {:else if initError}
-  <div class="container">
-    <div class="content">
-      <div class="card error-card">
-        <h2>Couldn't load the dashboard</h2>
-        <p>{initError}</p>
-        <button class="btn btn-primary" on:click={initDashboard}>Retry</button>
-      </div>
-    </div>
-  </div>
+	<div class="container">
+		<div class="card arcana error-card">
+			<EmptyState icon="warning" title="The scrying pool is clouded" hint={initError}>
+				<button class="btn btn-primary" on:click={initDashboard}>
+					<Icon name="star" size={14} /> Try again
+				</button>
+			</EmptyState>
+		</div>
+	</div>
 {:else}
-  <div class="container">
-    <div class="content">
-      <div class="welcome">
-        <h1>Welcome back, {profile?.full_name || 'there'}!</h1>
-        <p class="role-badge">{profile?.role}</p>
-      </div>
-            <!-- Add after the welcome section -->
-{#if profile?.role === 'family' || profile?.role === 'admin'}
-  <div class="stats-row">
-    <div class="stat-card">
-      <div class="stat-icon">👥</div>
-      <div class="stat-value">{nannies.length}</div>
-      <div class="stat-label">Total Nannies</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-icon">🟢</div>
-      <div class="stat-value">{activeShifts.length}</div>
-      <div class="stat-label">Currently Active</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-icon">⏱️</div>
-      <div class="stat-value">{hoursToday}</div>
-      <div class="stat-label">Hours Today</div>
-    </div>
-    <div class="stat-card">
-    <div class="stat-icon">💰</div>
-     <div class="stat-value">${weeklyTotal}</div>
-      <div class="stat-label">Week Total</div>
-    </div>
-  </div>
-{/if}
-     {#if profile?.role === 'family' || profile?.role === 'admin'}
-  <!-- Family/Admin View -->
-  <div class="card">
-    <div class="card-header">
-      <h2>Nanny Status</h2>
-      {#if profile?.role === 'family' || profile?.role === 'admin'}
-        <button class="btn btn-primary" on:click={() => showAddNanny = true}>
-          + Add Nanny
-        </button>
-      {/if}
-    </div>
-    
-    {#if nannies.length === 0}
-      <div class="empty-state">
-        <p>No nannies added yet</p>
-        <button class="btn btn-primary" on:click={() => showAddNanny = true}>
-          Add Your First Nanny
-        </button>
-      </div>
-    {:else}
-      <div class="nanny-grid">
-        {#each nannies as nanny}
-          {@const activeShift = getActiveShift(nanny.id)}
-          {@const isActive = isNannyActive(nanny.id)}
-          
-          <div class="nanny-status-card" class:active={isActive}>
-            <div class="nanny-header">
-              <h3>{nanny.full_name}</h3>
-              <span class="status-indicator" class:on={isActive}>
-                {isActive ? '🟢 On Clock' : '⚪ Off Clock'}
-              </span>
-            </div>
-            
-            <div class="nanny-details">
-              <p><strong>Rate:</strong> ${nanny.hourly_rate}/hr</p>
-              {#if nanny.venmo_username}
-                <p><strong>Venmo:</strong> @{nanny.venmo_username}</p>
-              {/if}
-            </div>
-            
-            {#if isActive && activeShift}
-              <div class="active-shift">
-                <p><strong>Clocked in:</strong> {formatTime(activeShift.clock_in)}</p>
-                <p><strong>Duration:</strong> {getTimeSince(activeShift.clock_in, now)}</p>
-              </div>
-            {/if}
-            
-            <div class="nanny-actions">
-              <a href="/history?nanny={nanny.id}" class="btn-small">View History</a>
-              <button class="btn-small btn-edit" on:click={() => editNanny(nanny)}>Edit</button>
-              <button class="btn-small btn-delete" on:click={() => deleteNanny(nanny)}>Delete</button>
-            </div>
-          </div>
-        {/each}
-      </div>
-    {/if}
-  </div>
-        
-        <div class="quick-actions">
-          <h2>Quick Actions</h2>
-          <div class="action-grid">
-            <a href="/history" class="action-card">
-              <div class="action-icon">📊</div>
-              <div class="action-title">View All History</div>
-              <div class="action-desc">See all time entries</div>
-            </a>
-            {#if profile?.role === 'admin'}
-              <a href="/admin" class="action-card">
-                <div class="action-icon">⚙️</div>
-                <div class="action-title">Admin Dashboard</div>
-                <div class="action-desc">Manage nannies</div>
-              </a>
-            {/if}
-            <a href="/settings" class="action-card">
-              <div class="action-icon">👤</div>
-              <div class="action-title">Settings</div>
-              <div class="action-desc">Update your profile</div>
-            </a>
-          </div>
-        </div>
-        
-      {:else if profile?.role === 'nanny'}
-        <!-- Nanny View -->
-        <div class="card">
-          <h2>Your Status</h2>
-          
-          {#if activeShifts.length > 0}
-            {@const shift = activeShifts[0]}
-            <div class="active-shift-banner">
-              <div class="shift-info">
-                <h3>🟢 Currently On Clock</h3>
-                <p><strong>Clocked in:</strong> {formatTime(shift.clock_in)}</p>
-                <p><strong>Duration:</strong> {getTimeSince(shift.clock_in, now)}</p>
-              </div>
-              <a href="/tracker" class="btn btn-large btn-primary">Go to Tracker</a>
-            </div>
-          {:else}
-            <div class="inactive-shift-banner">
-              <h3>⚪ Not Clocked In</h3>
-              <p>Ready to start your shift?</p>
-              <a href="/tracker" class="btn btn-large btn-success">Clock In</a>
-            </div>
-          {/if}
-        </div>
-        
-        <div class="quick-actions">
-          <h2>Quick Actions</h2>
-          <div class="action-grid">
-            <a href="/tracker" class="action-card">
-              <div class="action-icon">⏰</div>
-              <div class="action-title">Time Tracker</div>
-              <div class="action-desc">Clock in/out</div>
-            </a>
-            <a href="/history" class="action-card">
-              <div class="action-icon">📊</div>
-              <div class="action-title">Your History</div>
-              <div class="action-desc">View your shifts</div>
-            </a>
-            <a href="/settings" class="action-card">
-              <div class="action-icon">👤</div>
-              <div class="action-title">Settings</div>
-              <div class="action-desc">Update your profile</div>
-            </a>
-          </div>
-        </div>
-      {/if}
-    </div>
-  </div>
-{/if}
-{#if showAddNanny}
-  <div class="modal" on:click={cancelNannyForm}>
-    <div class="modal-content" on:click|stopPropagation>
-      <h2>{selectedNanny ? 'Edit Nanny' : 'Add New Nanny'}</h2>
-      
-      <form on:submit|preventDefault={saveNanny}>
-        <div class="form-group">
-          <label>Full Name *</label>
-          <input type="text" bind:value={nannyName} required />
-        </div>
-        
-        {#if !selectedNanny}
-          <div class="form-group">
-            <label>Email *</label>
-            <input type="email" bind:value={nannyEmail} required />
-          </div>
-          
-          <div class="form-group">
-            <label>Password * (min 6 characters)</label>
-            <input type="password" bind:value={nannyPassword} minlength="6" required />
-          </div>
-        {/if}
-        
-        <div class="form-group">
-          <label>Hourly Rate ($)</label>
-          <input type="number" bind:value={nannyRate} min="0" step="0.50" />
-        </div>
-        
-        <div class="form-group">
-          <label>Venmo Username</label>
-          <input type="text" bind:value={nannyVenmo} placeholder="@username" />
-        </div>
-        
-        <div class="button-row">
-          <button type="submit" class="btn btn-primary">
-            {selectedNanny ? 'Save Changes' : 'Create Nanny'}
-          </button>
-          <button type="button" class="btn btn-secondary" on:click={cancelNannyForm}>
-            Cancel
-          </button>
-        </div>
-      </form>
-    </div>
-  </div>
+	<div class="container">
+		<!-- ── Greeting ─────────────────────────────────────── -->
+		<header class="welcome">
+			<div class="welcome-text">
+				<p class="greeting">{greeting}</p>
+				<h1>{profile?.full_name || 'friend'}</h1>
+				<div class="welcome-meta">
+					<span class="badge badge-gilt">{ROLE_TITLES[profile?.role] || profile?.role}</span>
+					<MoonPhase size={16} showLabel />
+				</div>
+			</div>
+			<div class="welcome-glyph" aria-hidden="true">
+				<Icon name={profile?.role === 'nanny' ? 'sprout' : 'cottage'} size={72} />
+			</div>
+		</header>
+
+		{#if profile?.role === 'family' || profile?.role === 'admin'}
+			<!-- ── The four suits ─────────────────────────────── -->
+			<div class="stats-row rise-in">
+				{#each [{ icon: 'person', value: nannies.length, label: 'Keepers', numeral: 'I' }, { icon: 'sprout', value: activeShifts.length, label: 'On the clock', numeral: 'II', live: activeShifts.length > 0 }, { icon: 'hourglass', value: hoursToday, label: 'Hours today', numeral: 'III' }, { icon: 'coin', value: '$' + weeklyTotal, label: 'Week total', numeral: 'IV' }] as stat (stat.numeral)}
+					<div class="stat-card" class:live={stat.live}>
+						<span class="numeral" aria-hidden="true">{stat.numeral}</span>
+						<span class="stat-icon"><Icon name={stat.icon} size={26} /></span>
+						<span class="stat-value">{stat.value}</span>
+						<span class="stat-label">{stat.label}</span>
+					</div>
+				{/each}
+			</div>
+
+			<!-- ── Nanny roster ───────────────────────────────── -->
+			<div class="card arcana">
+				<div class="card-header">
+					<h2>The Keepers</h2>
+					<button class="btn btn-primary btn-small" on:click={() => (showAddNanny = true)}>
+						<Icon name="plus" size={13} /> Add
+					</button>
+				</div>
+
+				{#if nannies.length === 0}
+					<EmptyState
+						icon="cauldron"
+						title="The cauldron is cold"
+						hint="No keepers have joined the hearth yet. Add the first and their hours will start filling this ledger."
+					>
+						<button class="btn btn-primary" on:click={() => (showAddNanny = true)}>
+							<Icon name="plus" size={14} /> Add your first keeper
+						</button>
+					</EmptyState>
+				{:else}
+					<div class="nanny-grid rise-in">
+						{#each nannies as nanny (nanny.id)}
+							{@const activeShift = getActiveShift(nanny.id)}
+							{@const isActive = isNannyActive(nanny.id)}
+
+							<article class="nanny-card" class:active={isActive}>
+								<header class="nanny-header">
+									<h3>{nanny.full_name}</h3>
+									{#if isActive}
+										<span class="badge badge-live"><span class="live-dot"></span> On clock</span>
+									{:else}
+										<span class="badge">Resting</span>
+									{/if}
+								</header>
+
+								<dl class="nanny-details">
+									<div>
+										<dt>Rate</dt>
+										<dd>${nanny.hourly_rate}/hr</dd>
+									</div>
+									{#if nanny.venmo_username}
+										<div>
+											<dt>Venmo</dt>
+											<dd>@{nanny.venmo_username}</dd>
+										</div>
+									{/if}
+								</dl>
+
+								{#if isActive && activeShift}
+									<div class="active-shift">
+										<Icon name="hourglass" size={18} />
+										<div>
+											<span class="shift-since">Since {formatTime(activeShift.clock_in)}</span>
+											<span class="shift-elapsed">{getTimeSince(activeShift.clock_in, now)}</span>
+										</div>
+									</div>
+								{/if}
+
+								<footer class="nanny-actions">
+									<a href="/history?nanny={nanny.id}" class="btn-small">
+										<Icon name="scroll" size={13} /> Ledger
+									</a>
+									<button class="btn-small" on:click={() => editNanny(nanny)}>
+										<Icon name="quill" size={13} /> Edit
+									</button>
+									<button class="btn-small danger" on:click={() => deleteNanny(nanny)}>
+										<Icon name="urn" size={13} />
+										<span class="visually-hidden">Delete {nanny.full_name}</span>
+									</button>
+								</footer>
+							</article>
+						{/each}
+					</div>
+				{/if}
+			</div>
+
+			<!-- ── Quick actions ──────────────────────────────── -->
+			<section class="quick-actions">
+				<h2>The Ways</h2>
+				<div class="action-grid rise-in">
+					<a href="/history" class="action-card">
+						<Icon name="scroll" size={36} />
+						<span class="action-title">The Ledger</span>
+						<span class="action-desc">Every shift, recorded</span>
+					</a>
+					{#if profile?.role === 'admin'}
+						<a href="/admin" class="action-card">
+							<Icon name="key" size={36} />
+							<span class="action-title">The Keys</span>
+							<span class="action-desc">Manage the household</span>
+						</a>
+					{/if}
+					<a href="/settings" class="action-card">
+						<Icon name="candle" size={36} />
+						<span class="action-title">The Self</span>
+						<span class="action-desc">Tend your own profile</span>
+					</a>
+				</div>
+			</section>
+		{:else if profile?.role === 'nanny'}
+			<!-- ── Nanny view ─────────────────────────────────── -->
+			<div class="card arcana">
+				<h2>Your Watch</h2>
+
+				{#if activeShifts.length > 0}
+					{@const shift = activeShifts[0]}
+					<div class="watch-banner active">
+						<div class="watch-glyph" aria-hidden="true"><Icon name="hourglass" size={48} /></div>
+						<span class="badge badge-live"><span class="live-dot"></span> On the clock</span>
+						<p class="watch-elapsed">{getTimeSince(shift.clock_in, now)}</p>
+						<p class="watch-since">Since {formatTime(shift.clock_in)}</p>
+						<a href="/tracker" class="btn btn-primary">
+							<Icon name="hourglass" size={15} /> Go to the tracker
+						</a>
+					</div>
+				{:else}
+					<div class="watch-banner">
+						<div class="watch-glyph" aria-hidden="true"><Icon name="candle" size={48} /></div>
+						<span class="badge">Not clocked in</span>
+						<p class="watch-elapsed dim">00:00:00</p>
+						<p class="watch-since">Ready when you are</p>
+						<a href="/tracker" class="btn btn-success">
+							<Icon name="sprout" size={15} /> Begin your shift
+						</a>
+					</div>
+				{/if}
+			</div>
+
+			<section class="quick-actions">
+				<h2>The Ways</h2>
+				<div class="action-grid rise-in">
+					<a href="/tracker" class="action-card">
+						<Icon name="hourglass" size={36} />
+						<span class="action-title">The Hours</span>
+						<span class="action-desc">Clock in and out</span>
+					</a>
+					<a href="/history" class="action-card">
+						<Icon name="scroll" size={36} />
+						<span class="action-title">Your Ledger</span>
+						<span class="action-desc">Shifts and earnings</span>
+					</a>
+					<a href="/settings" class="action-card">
+						<Icon name="candle" size={36} />
+						<span class="action-title">The Self</span>
+						<span class="action-desc">Rate, name and Venmo</span>
+					</a>
+				</div>
+			</section>
+		{/if}
+	</div>
 {/if}
 
+<!-- ── Add / edit keeper ──────────────────────────────── -->
+{#if showAddNanny}
+	<div class="modal-overlay" on:click={cancelNannyForm} role="presentation">
+		<div class="modal-content" on:click|stopPropagation role="dialog" aria-modal="true">
+			<h2>{selectedNanny ? 'Edit keeper' : 'Add a keeper'}</h2>
+
+			<form on:submit|preventDefault={saveNanny}>
+				<div class="form-group">
+					<label for="nn">Full name *</label>
+					<input id="nn" type="text" bind:value={nannyName} required />
+				</div>
+
+				{#if !selectedNanny}
+					<div class="form-group">
+						<label for="ne">Email *</label>
+						<input id="ne" type="email" bind:value={nannyEmail} required />
+					</div>
+
+					<div class="form-group">
+						<label for="np">Password * <span class="hint">(min 6 characters)</span></label>
+						<input id="np" type="password" bind:value={nannyPassword} minlength="6" required />
+					</div>
+				{/if}
+
+				<div class="form-group">
+					<label for="nr">Hourly rate ($)</label>
+					<input id="nr" type="number" bind:value={nannyRate} min="0" step="0.50" />
+				</div>
+
+				<div class="form-group">
+					<label for="nv">Venmo username</label>
+					<input id="nv" type="text" bind:value={nannyVenmo} placeholder="@username" />
+				</div>
+
+				<div class="button-row">
+					<button type="submit" class="btn btn-primary">
+						<Icon name="check" size={14} />
+						{selectedNanny ? 'Save changes' : 'Add to the hearth'}
+					</button>
+					<button type="button" class="btn btn-secondary" on:click={cancelNannyForm}>Cancel</button>
+				</div>
+			</form>
+		</div>
+	</div>
+{/if}
 
 <style>
-.loading-screen {
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-  }
-
-  .spinner {
-    width: 44px;
-    height: 44px;
-    border: 3px solid rgba(255,255,255,0.25);
-    border-top-color: white;
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
-
-  .container {
-    min-height: 100vh;
-    background: var(--surface-page, #f0f2f8);
-  }
-
-  .content {
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 36px 20px;
-  }
-
-  .welcome {
-    margin-bottom: 32px;
-  }
-
-  .welcome h1 {
-    color: var(--color-gray-900, #1a202c);
-    margin-bottom: 8px;
-    font-size: clamp(1.5rem, 3vw, 2rem);
-    letter-spacing: -0.025em;
-  }
-
-  .role-badge {
-    display: inline-block;
-    padding: 4px 14px;
-    background: var(--gradient-subtle, rgba(102, 126, 234, 0.1));
-    color: var(--color-primary, #667eea);
-    border-radius: 20px;
-    font-size: 0.85em;
-    font-weight: 600;
-    text-transform: capitalize;
-    border: 1px solid rgba(102, 126, 234, 0.15);
-  }
-
-  .card {
-    background: var(--surface-card, white);
-    border-radius: 1rem;
-    padding: 28px;
-    margin-bottom: 24px;
-    box-shadow: var(--shadow-md, 0 4px 6px -1px rgba(0, 0, 0, 0.07));
-    border: 1px solid rgba(0, 0, 0, 0.04);
-  }
-
-  h2 {
-    margin: 0 0 20px 0;
-    color: var(--color-gray-800, #2d3748);
-    padding-bottom: 12px;
-    border-bottom: 1px solid var(--color-gray-200, #e2e8f0);
-    font-size: 1.2em;
-    letter-spacing: -0.015em;
-  }
-
-  .empty-state {
-    text-align: center;
-    padding: 48px 20px;
-    color: var(--color-gray-500, #718096);
-  }
-
-  .nanny-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-    gap: 16px;
-  }
-
-  .nanny-status-card {
-    background: var(--surface-card, white);
-    padding: 20px;
-    border-radius: 12px;
-    border: 1.5px solid var(--color-gray-200, #e2e8f0);
-    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-    position: relative;
-  }
-
-  .nanny-status-card:hover {
-    box-shadow: var(--shadow-md, 0 4px 12px rgba(0,0,0,0.08));
-    transform: translateY(-1px);
-  }
-
-  .nanny-status-card.active {
-    border-color: rgba(72, 187, 120, 0.4);
-    background: linear-gradient(to bottom, #f0fff4, #ffffff);
-    box-shadow: 0 4px 16px rgba(72, 187, 120, 0.12);
-  }
-
-  .nanny-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 14px;
-  }
-
-  .nanny-header h3 {
-    margin: 0;
-    color: var(--color-gray-800, #2d3748);
-    font-size: 1.05em;
-  }
-
-  .status-indicator {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    padding: 4px 12px;
-    border-radius: 20px;
-    font-size: 0.8em;
-    font-weight: 600;
-    background: var(--surface-sunken, #eef1f8);
-    color: var(--color-gray-500, #718096);
-  }
-
-  .status-indicator.on {
-    background: linear-gradient(135deg, #48bb78, #38a169);
-    color: white;
-    box-shadow: 0 2px 8px rgba(72, 187, 120, 0.3);
-    animation: subtlePulse 2.5s ease-in-out infinite;
-  }
-
-  @keyframes subtlePulse {
-    0%, 100% { box-shadow: 0 2px 8px rgba(72, 187, 120, 0.3); }
-    50% { box-shadow: 0 2px 12px rgba(72, 187, 120, 0.5); }
-  }
-
-  .nanny-details {
-    margin-bottom: 14px;
-    color: var(--color-gray-700, #4a5568);
-    font-size: 0.9em;
-  }
-
-  .nanny-details p {
-    margin: 4px 0;
-  }
-
-  .active-shift {
-    background: var(--surface-sunken, #eef1f8);
-    padding: 10px 12px;
-    border-radius: 8px;
-    margin-bottom: 14px;
-    border-left: 3px solid #48bb78;
-  }
-
-  .active-shift p {
-    margin: 4px 0;
-    color: var(--color-gray-800, #2d3748);
-    font-size: 0.9em;
-  }
-
-  .nanny-actions {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-
-  .btn-small {
-    padding: 6px 14px;
-    background: var(--surface-card, white);
-    color: var(--color-primary, #667eea);
-    border: 1.5px solid var(--color-gray-200, #e2e8f0);
-    border-radius: 8px;
-    text-decoration: none;
-    font-weight: 500;
-    font-size: 0.85em;
-    transition: all 0.2s;
-  }
-
-  .btn-small:hover {
-    border-color: var(--color-primary, #667eea);
-    background: rgba(102, 126, 234, 0.04);
-  }
-
-  .active-shift-banner, .inactive-shift-banner {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    padding: 32px;
-    border-radius: 14px;
-    text-align: center;
-    box-shadow: 0 8px 24px rgba(102, 126, 234, 0.25);
-  }
-
-  .inactive-shift-banner {
-    background: linear-gradient(135deg, #64748b 0%, #475569 100%);
-    box-shadow: 0 8px 24px rgba(71, 85, 105, 0.2);
-  }
-
-  .shift-info h3, .inactive-shift-banner h3 {
-    margin: 0 0 14px 0;
-    font-size: 1.4em;
-    letter-spacing: -0.02em;
-  }
-
-  .shift-info p {
-    margin: 4px 0;
-    opacity: 0.9;
-  }
-
-  .btn {
-    padding: 12px 24px;
-    border: none;
-    border-radius: 10px;
-    font-weight: 600;
-    cursor: pointer;
-    text-decoration: none;
-    display: inline-block;
-    margin-top: 20px;
-    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-
-  .btn-large {
-    padding: 14px 32px;
-    font-size: 1.05em;
-  }
-
-  .btn-primary {
-    background: white;
-    color: var(--color-primary, #667eea);
-  }
-
-  .btn-primary:hover {
-    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-    transform: translateY(-1px);
-  }
-
-  .btn-success {
-    background: #48bb78;
-    color: white;
-  }
-
-  .quick-actions {
-    margin-top: 28px;
-  }
-
-  .quick-actions h2 {
-    border-bottom: none;
-    padding-bottom: 0;
-    margin-bottom: 16px;
-    font-size: 1.15em;
-  }
-
-  .action-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 14px;
-    margin-top: 0;
-  }
-
-  .action-card {
-    background: var(--surface-card, white);
-    padding: 24px 18px;
-    border-radius: 12px;
-    text-align: center;
-    text-decoration: none;
-    border: 1.5px solid var(--color-gray-200, #e2e8f0);
-    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-
-  .action-card:hover {
-    border-color: var(--color-primary, #667eea);
-    transform: translateY(-3px);
-    box-shadow: var(--shadow-lg, 0 10px 25px rgba(0,0,0,0.08));
-  }
-
-  .action-icon {
-    font-size: 2.5em;
-    margin-bottom: 8px;
-  }
-
-  .action-title {
-    font-size: 1em;
-    font-weight: 600;
-    color: var(--color-gray-800, #2d3748);
-    margin-bottom: 4px;
-  }
-
-  .action-desc {
-    font-size: 0.85em;
-    color: var(--color-gray-500, #718096);
-  }
-
-  .card-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 20px;
-  }
-
-  .card-header h2 {
-    margin: 0;
-    padding: 0;
-    border: none;
-  }
-
-  .btn-edit {
-    background: #3b82f6;
-    color: white;
-    border: none;
-    border-radius: 8px;
-  }
-
-  .btn-delete {
-    background: transparent;
-    color: #ef4444;
-    border: 1.5px solid #fecaca;
-  }
-
-  .btn-delete:hover {
-    background: #fef2f2;
-  }
-
-  .modal {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(15, 23, 42, 0.45);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-    animation: fadeIn 0.2s ease;
-  }
-
-  @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
-
-  .modal-content {
-    background: white;
-    padding: 30px;
-    border-radius: 1.125rem;
-    max-width: 500px;
-    width: 90%;
-    max-height: 80vh;
-    overflow-y: auto;
-    box-shadow: var(--shadow-xl, 0 20px 40px rgba(0,0,0,0.15));
-    animation: modalSlideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-
-  @keyframes modalSlideUp {
-    from { opacity: 0; transform: translateY(10px) scale(0.98); }
-    to { opacity: 1; transform: translateY(0) scale(1); }
-  }
-
-  .form-group {
-    margin-bottom: 18px;
-  }
-
-  .form-group label {
-    display: block;
-    margin-bottom: 6px;
-    color: var(--color-gray-700, #4a5568);
-    font-weight: 500;
-    font-size: 0.9em;
-  }
-
-  .form-group input {
-    width: 100%;
-    padding: 11px 14px;
-    border: 1.5px solid var(--color-gray-200, #e2e8f0);
-    border-radius: 10px;
-    font-size: 1em;
-    background: var(--color-gray-50, #f7fafc);
-    transition: all 0.2s;
-  }
-
-  .form-group input:focus {
-    outline: none;
-    border-color: var(--color-primary, #667eea);
-    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
-    background: white;
-  }
-
-  .button-row {
-    display: flex;
-    gap: 10px;
-  }
-
-  .button-row .btn {
-    flex: 1;
-  }
-
-  .btn-secondary {
-    background: var(--surface-card, white);
-    color: var(--color-primary, #667eea);
-    border: 1.5px solid var(--color-gray-200, #e2e8f0);
-  }
-
-  /* ── Stat Cards ── */
-  .stats-row {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-    gap: 14px;
-    margin-bottom: 24px;
-  }
-
-  .stat-card {
-    background: var(--surface-card, white);
-    border-radius: 14px;
-    padding: 20px 16px;
-    box-shadow: var(--shadow-sm, 0 1px 3px rgba(0,0,0,0.06));
-    border: 1px solid rgba(0, 0, 0, 0.04);
-    text-align: center;
-    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-
-  .stat-card:hover {
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-md, 0 4px 12px rgba(0,0,0,0.08));
-  }
-
-  .stat-icon {
-    font-size: 1.5em;
-    margin-bottom: 8px;
-    opacity: 0.9;
-  }
-
-  .stat-value {
-    font-size: 1.75em;
-    font-weight: 700;
-    color: var(--color-gray-900, #1a202c);
-    margin-bottom: 4px;
-    letter-spacing: -0.02em;
-  }
-
-  .stat-label {
-    color: var(--color-gray-500, #718096);
-    font-size: 0.75em;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    font-weight: 500;
-  }
-
-  @media (max-width: 768px) {
-    .stat-card {
-      padding: 16px 12px;
-    }
-
-    .stat-icon {
-      font-size: 1.3em;
-    }
-
-    .stat-value {
-      font-size: 1.5em;
-    }
-
-    .content {
-      padding: 24px 16px;
-    }
-  }
-
-  .error-card {
-    text-align: center;
-    padding: 40px 30px;
-  }
-
-  .error-card p {
-    color: #718096;
-    margin: 10px 0 20px;
-  }
+	/* ── Greeting ──────────────────────────────────────────── */
+	.welcome {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1.5rem;
+		margin-bottom: var(--section-gap);
+		padding-bottom: 1.25rem;
+		border-bottom: 1px solid var(--border-soft);
+	}
+
+	.greeting {
+		font-family: var(--font-body);
+		font-size: 0.72rem;
+		font-weight: 700;
+		letter-spacing: 0.16em;
+		text-transform: uppercase;
+		color: var(--text-faint);
+		margin-bottom: 0.15rem;
+	}
+
+	.welcome h1 {
+		font-family: var(--font-display);
+		color: var(--text);
+		margin-bottom: 0.6rem;
+	}
+
+	.welcome-meta {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		flex-wrap: wrap;
+	}
+
+	.welcome-glyph {
+		flex-shrink: 0;
+		color: var(--text-faint);
+		opacity: 0.55;
+		--icon-accent: var(--accent);
+		animation: flicker 5s ease-in-out infinite;
+	}
+
+	/* ── Stat cards: the four suits ────────────────────────── */
+	.stats-row {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+		gap: var(--grid-gap);
+		margin-bottom: var(--section-gap);
+	}
+
+	.stat-card {
+		position: relative;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.3rem;
+		padding: 1.4rem 1rem 1.1rem;
+		background: var(--surface);
+		background-image: linear-gradient(160deg, var(--accent-tint), transparent 55%);
+		border: 1px solid var(--border);
+		border-radius: var(--card-radius);
+		box-shadow: var(--shadow-md);
+		color: var(--text-faint);
+		transition: all var(--transition-normal);
+		--icon-accent: var(--accent);
+	}
+
+	.stat-card:hover {
+		transform: translateY(-3px);
+		border-color: var(--border-gilt);
+		box-shadow: var(--shadow-lg);
+	}
+
+	.stat-card.live {
+		border-color: rgba(111, 191, 115, 0.45);
+		box-shadow: var(--glow-moss);
+		--icon-accent: var(--growing);
+	}
+
+	.stat-card.live .stat-value {
+		color: var(--growing);
+	}
+
+	.numeral {
+		position: absolute;
+		top: 0.55rem;
+		left: 0.8rem;
+		font-family: var(--font-display);
+		font-size: 0.78rem;
+		font-weight: 600;
+		letter-spacing: 0.1em;
+		color: var(--accent);
+		opacity: 0.55;
+	}
+
+	.stat-icon {
+		display: grid;
+		place-items: center;
+		margin-bottom: 0.3rem;
+	}
+
+	/*
+   * Tabular body figures, not the pixel face: these are money and hours the
+   * household acts on, and Pixelify's 5 and 8 are too alike to risk here. The
+   * pixel face stays on the big shift timer, where size removes any doubt.
+   */
+	.stat-value {
+		font-size: clamp(1.45rem, 3.5vw, 1.85rem);
+		font-weight: 700;
+		font-variant-numeric: tabular-nums;
+		line-height: 1.1;
+		color: var(--text);
+	}
+
+	.stat-label {
+		font-family: var(--font-body);
+		font-size: 0.68rem;
+		font-weight: 700;
+		letter-spacing: 0.13em;
+		text-transform: uppercase;
+	}
+
+	/* ── Keeper cards ──────────────────────────────────────── */
+	.nanny-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(min(290px, 100%), 1fr));
+		gap: var(--grid-gap);
+	}
+
+	.nanny-card {
+		position: relative;
+		display: flex;
+		flex-direction: column;
+		gap: 0.8rem;
+		padding: 1.15rem;
+		background: var(--surface-2);
+		border: 1px solid var(--border);
+		border-radius: var(--card-radius);
+		transition: all var(--transition-normal);
+		overflow: hidden;
+	}
+
+	.nanny-card:hover {
+		transform: translateY(-2px);
+		border-color: var(--border-gilt);
+		box-shadow: var(--shadow-md);
+	}
+
+	/* An active keeper's card grows a soft moss glow and a creeping top edge. */
+	.nanny-card.active {
+		border-color: rgba(111, 191, 115, 0.45);
+		box-shadow: var(--glow-moss);
+	}
+
+	.nanny-card.active::before {
+		content: '';
+		position: absolute;
+		top: 0;
+		left: 0;
+		right: 0;
+		height: 2px;
+		background: linear-gradient(90deg, transparent, var(--growing), transparent);
+		animation: creep 3s ease-in-out infinite;
+	}
+
+	@keyframes creep {
+		0%,
+		100% {
+			opacity: 0.35;
+			transform: translateX(-30%);
+		}
+		50% {
+			opacity: 1;
+			transform: translateX(30%);
+		}
+	}
+
+	.nanny-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.6rem;
+		flex-wrap: wrap;
+	}
+
+	.nanny-header h3 {
+		font-family: var(--font-display);
+		font-size: 1.02rem;
+		color: var(--text);
+	}
+
+	.nanny-details {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.35rem 1.25rem;
+		font-size: 0.9rem;
+	}
+
+	.nanny-details div {
+		display: flex;
+		gap: 0.4rem;
+		align-items: baseline;
+	}
+
+	.nanny-details dt {
+		font-family: var(--font-body);
+		font-size: 0.66rem;
+		font-weight: 700;
+		letter-spacing: 0.11em;
+		text-transform: uppercase;
+		color: var(--text-faint);
+	}
+
+	.nanny-details dd {
+		color: var(--text-muted);
+	}
+
+	.active-shift {
+		display: flex;
+		align-items: center;
+		gap: 0.7rem;
+		padding: 0.65rem 0.8rem;
+		background: var(--growing-dim);
+		border-left: 2px solid var(--growing);
+		border-radius: var(--radius-sm);
+		color: var(--growing);
+		--icon-accent: var(--growing);
+	}
+
+	.active-shift div {
+		display: flex;
+		flex-direction: column;
+	}
+
+	.shift-since {
+		font-size: 0.72rem;
+		font-weight: 700;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		opacity: 0.75;
+	}
+
+	.shift-elapsed {
+		font-family: var(--font-pixel);
+		font-size: 1.05rem;
+		font-weight: 600;
+	}
+
+	.nanny-actions {
+		display: flex;
+		gap: 0.4rem;
+		flex-wrap: wrap;
+		margin-top: auto;
+	}
+
+	.nanny-actions .danger:hover {
+		color: var(--danger);
+		border-color: var(--danger);
+		background: var(--danger-dim);
+	}
+
+	/* ── Quick actions ─────────────────────────────────────── */
+	.quick-actions {
+		margin-top: var(--section-gap);
+	}
+
+	.quick-actions h2 {
+		margin-bottom: 0.9rem;
+		color: var(--accent-bright);
+		font-size: 1rem;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+	}
+
+	.action-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(min(200px, 100%), 1fr));
+		gap: var(--grid-gap);
+	}
+
+	.action-card {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.35rem;
+		padding: 1.6rem 1rem;
+		text-align: center;
+		text-decoration: none;
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: var(--card-radius);
+		color: var(--text-faint);
+		transition: all var(--transition-normal);
+		--icon-accent: var(--accent);
+	}
+
+	.action-card:hover {
+		transform: translateY(-4px);
+		border-color: var(--border-gilt);
+		box-shadow: var(--shadow-lg);
+		background-image: linear-gradient(160deg, var(--accent-tint), transparent 60%);
+	}
+
+	.action-title {
+		font-family: var(--font-display);
+		font-size: 0.98rem;
+		font-weight: 600;
+		letter-spacing: 0.04em;
+		color: var(--text);
+		margin-top: 0.4rem;
+	}
+
+	.action-desc {
+		font-size: 0.85rem;
+	}
+
+	/* ── Nanny watch banner ────────────────────────────────── */
+	.watch-banner {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.55rem;
+		padding: clamp(1.75rem, 6vw, 2.75rem) 1.25rem;
+		text-align: center;
+		background: var(--surface-2);
+		border: 1px solid var(--border);
+		border-radius: var(--card-radius);
+	}
+
+	.watch-banner.active {
+		border-color: rgba(111, 191, 115, 0.45);
+		box-shadow: var(--glow-moss);
+		background-image: radial-gradient(60% 80% at 50% 0%, var(--growing-dim), transparent 70%);
+	}
+
+	.watch-glyph {
+		color: var(--text-faint);
+		--icon-accent: var(--accent);
+		margin-bottom: 0.35rem;
+	}
+
+	.watch-banner.active .watch-glyph {
+		color: var(--growing);
+		--icon-accent: var(--growing);
+	}
+
+	.watch-elapsed {
+		font-family: var(--font-pixel);
+		font-size: clamp(2rem, 8vw, 3rem);
+		font-weight: 600;
+		letter-spacing: 0.03em;
+		color: var(--growing);
+		text-shadow: 0 0 26px var(--growing-dim);
+	}
+
+	.watch-elapsed.dim {
+		color: var(--text-faint);
+		text-shadow: none;
+	}
+
+	.watch-since {
+		font-size: 0.9rem;
+		color: var(--text-muted);
+		margin-bottom: 0.75rem;
+	}
+
+	/* ── Misc ──────────────────────────────────────────────── */
+	.error-card {
+		padding: 0;
+	}
+
+	.hint {
+		text-transform: none;
+		letter-spacing: normal;
+		font-weight: 400;
+		opacity: 0.7;
+	}
+
+	@media (max-width: 768px) {
+		.welcome-glyph {
+			display: none;
+		}
+
+		.stats-row {
+			grid-template-columns: repeat(2, 1fr);
+		}
+
+		.nanny-actions {
+			gap: 0.35rem;
+		}
+	}
 </style>

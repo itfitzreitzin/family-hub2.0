@@ -55,6 +55,8 @@
   let payments = []
   let showClockInConfirm = false
   let clockInTime = '09:00'
+  let showClockOutConfirm = false
+  let clockOutTime = '17:00'
   let showManualEntry = false
   /** @type {any} */
   let editingEntry = null
@@ -357,6 +359,11 @@
       
       const clockInDateTime = combineLocalDateTime(localDateString(), clockInTime)
 
+      if (clockInDateTime.getTime() > Date.now() + 60 * 1000) {
+        toast.error("Clock-in time can't be in the future")
+        return
+      }
+
       const { data, error } = await supabase
         .from('time_entries')
         .insert({
@@ -478,7 +485,36 @@
 
   function clockOut() {
     if (!currentEntry) return
-    performClockOut(new Date())
+    clockOutTime = localTimeString()
+    showClockOutConfirm = true
+  }
+
+  async function confirmClockOut() {
+    if (!currentEntry) return
+
+    const end = combineLocalDateTime(localDateString(), clockOutTime)
+    const start = new Date(currentEntry.clock_in)
+
+    if (end.getTime() <= start.getTime()) {
+      toast.error(`End time must be after clock-in (${formatTime(currentEntry.clock_in)})`)
+      return
+    }
+
+    if (end.getTime() > Date.now() + 60 * 1000) {
+      toast.error("Clock-out time can't be in the future")
+      return
+    }
+
+    const ok = await performClockOut(end)
+    if (ok) showClockOutConfirm = false
+  }
+
+  /** @param {KeyboardEvent} event */
+  function handleModalKeydown(event) {
+    if (event.key !== 'Escape') return
+    if (showClockOutConfirm) showClockOutConfirm = false
+    else if (showClockInConfirm) showClockInConfirm = false
+    else if (showManualEntry) showManualEntry = false
   }
   
   async function generateVenmoPayment() {
@@ -904,7 +940,7 @@
 </script>
 
 <svelte:document on:visibilitychange={handleVisibility} />
-<svelte:window on:focus={handleVisibility} />
+<svelte:window on:focus={handleVisibility} on:keydown={handleModalKeydown} />
 
 <Nav currentPage="tracker" />
 
@@ -1262,6 +1298,35 @@
             {clockingIn ? 'Clocking in…' : 'Confirm Clock In'}
           </button>
           <button class="btn btn-secondary" on:click={() => showClockInConfirm = false} disabled={clockingIn}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Clock Out Confirmation Modal -->
+{#if showClockOutConfirm && currentEntry}
+  <div class="modal-overlay" on:click={() => showClockOutConfirm = false}>
+    <div class="modal-content" on:click|stopPropagation>
+      <h3>Confirm Clock Out Time</h3>
+
+      <div class="clock-in-confirm">
+        <p>Clocking out <strong>{getSelectedNannyName()}</strong></p>
+        <p class="shift-start-note">Shift started at {formatTime(currentEntry.clock_in)} · {timerDisplay} elapsed</p>
+
+        <div class="form-group">
+          <label>Clock Out Time</label>
+          <input type="time" bind:value={clockOutTime} />
+          <small>Adjust if they actually finished earlier</small>
+        </div>
+
+        <div class="button-row">
+          <button class="btn btn-primary" on:click={confirmClockOut} disabled={clockingOut}>
+            {clockingOut ? 'Clocking out…' : 'Confirm Clock Out'}
+          </button>
+          <button class="btn btn-secondary" on:click={() => showClockOutConfirm = false} disabled={clockingOut}>
             Cancel
           </button>
         </div>
@@ -2058,6 +2123,12 @@
   .pay-chip.none {
     background: #edf2f7;
     color: #718096;
+  }
+
+  .shift-start-note {
+    font-size: 0.85em;
+    color: #718096;
+    margin-top: -6px;
   }
 
   .error-card {

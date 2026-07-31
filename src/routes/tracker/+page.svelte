@@ -20,6 +20,7 @@
   } from '$lib/time.js'
   import { errorMessage } from '$lib/errors.js'
   import { normalizeVenmoHandle, isMobileDevice, buildVenmoNote, buildVenmoLink } from '$lib/venmo.js'
+  import { buildTimesheetCsv, timesheetFilename, downloadCsv } from '$lib/csv.js'
   
   /** @type {any} */
   let user = null
@@ -716,28 +717,16 @@
   }
   
   function exportCSV() {
-    const headers = ['Date', 'Clock In', 'Clock Out', 'Hours', 'Earnings', 'Notes']
     const rate = selectedNanny?.hourly_rate || 20
-    const rows = filteredEntries.map(e => [
-      formatDate(e.clock_in),
-      formatTime(e.clock_in),
-      formatTime(e.clock_out),
-      (parseFloat(e.hours) || 0).toFixed(2),
-      ((parseFloat(e.hours) || 0) * rate).toFixed(2),
-      e.notes || ''
-    ])
-    
-    const csv = [
-      headers.join(','),
-      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
-    ].join('\n')
-    
-    const blob = new Blob([csv], { type: 'text/csv' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `timesheet-${new Date().toISOString().split('T')[0]}.csv`
-    a.click()
+
+    downloadCsv(
+      timesheetFilename({
+        nannyName: selectedNanny?.full_name,
+        weekStart: currentWeekStart,
+        weekEnd: currentWeekEnd
+      }),
+      buildTimesheetCsv(filteredEntries, () => rate)
+    )
   }
   
   function getSelectedNannyName() {

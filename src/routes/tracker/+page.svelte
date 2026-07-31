@@ -11,6 +11,7 @@
     combineLocalDateTime,
     getWeekBounds,
     formatDuration,
+    hoursBetween,
     formatTime,
     formatDate,
     formatDateShort,
@@ -18,20 +19,39 @@
   } from '$lib/time.js'
   import { errorMessage } from '$lib/errors.js'
   
+  /** @type {any} */
   let user = null
+  /** @type {any} */
   let profile = null
+  /** @type {any[]} */
   let nannies = []
+  /** @type {string | null} */
   let selectedNannyId = null
+  /** @type {any} */
   let currentEntry = null
   let timerDisplay = '00:00:00'
   /** @type {ReturnType<typeof setInterval> | null} */
   let timerInterval = null
-  let loading = true
+  let initializing = true
+  /** @type {string | null} */
+  let initError = null
+  let clockingIn = false
+  let clockingOut = false
+  let weekLoading = false
+  let generatingPayment = false
+  /** @type {string | number | null} */
+  let paymentBusyId = null
+  let entryLoadToken = 0
+  let weekLoadToken = 0
+  let paymentsLoadToken = 0
+  /** @type {any[]} */
   let entries = []
+  /** @type {any[]} */
   let payments = []
   let showClockInConfirm = false
   let clockInTime = '09:00'
   let showManualEntry = false
+  /** @type {any} */
   let editingEntry = null
   let saving = false
   let manualEntryForm = {
@@ -58,6 +78,9 @@
   })
 
   async function initTracker() {
+    initializing = true
+    initError = null
+
     try {
       const { data: { user: currentUser } } = await supabase.auth.getUser()
 
@@ -95,19 +118,17 @@
         selectedNannyId = user.id
       }
 
-      await checkCurrentEntry()
-      await loadWeekData()
-      loading = false
+      await Promise.all([checkCurrentEntry(), loadWeekData(), loadPayments()])
+      initializing = false
     } catch (err) {
-      toast.error('Error loading tracker: ' + errorMessage(err))
-      loading = false
+      initError = errorMessage(err)
+      initializing = false
     }
   }
 
   async function handleNannyChange() {
     try {
-      await checkCurrentEntry()
-      await loadWeekData()
+      await Promise.all([checkCurrentEntry(), loadWeekData(), loadPayments()])
     } catch (err) {
       toast.error('Error loading data: ' + errorMessage(err))
     }
@@ -121,16 +142,22 @@
   async function checkCurrentEntry() {
     if (!selectedNannyId) return
 
+    // Tokens drop responses that arrive after a newer request or a nanny
+    // switch, so rapid interactions can't apply stale data.
+    const token = ++entryLoadToken
+    const nannyId = selectedNannyId
+
     const { data, error } = await supabase
       .from('time_entries')
       .select('*')
-      .eq('nanny_id', selectedNannyId)
+      .eq('nanny_id', nannyId)
       .is('clock_out', null)
       .order('clock_in', { ascending: false })
       .limit(1)
       .maybeSingle()
 
     if (error) throw error
+    if (token !== entryLoadToken || nannyId !== selectedNannyId) return
 
     if (data) {
       currentEntry = data
@@ -141,38 +168,50 @@
     }
   }
 
-  async function loadWeekData() {
+  async function loadWeekData(quiet = false) {
     if (!selectedNannyId) return
 
-    const bounds = getWeekBounds(currentWeekOffset)
-    currentWeekStart = bounds.start
-    currentWeekEnd = bounds.end
+    const token = ++weekLoadToken
+    const nannyId = selectedNannyId
+    if (!quiet) weekLoading = true
 
-    const { data, error } = await supabase
-      .from('time_entries')
-      .select('*')
-      .eq('nanny_id', selectedNannyId)
-      .gte('clock_in', bounds.start.toISOString())
-      .lte('clock_in', bounds.end.toISOString())
-      .order('clock_in', { ascending: false })
+    try {
+      const bounds = getWeekBounds(currentWeekOffset)
+      currentWeekStart = bounds.start
+      currentWeekEnd = bounds.end
 
-    if (error) throw error
+      const { data, error } = await supabase
+        .from('time_entries')
+        .select('*')
+        .eq('nanny_id', nannyId)
+        .gte('clock_in', bounds.start.toISOString())
+        .lte('clock_in', bounds.end.toISOString())
+        .order('clock_in', { ascending: false })
 
-    entries = data || []
-    await loadPayments()
+      if (error) throw error
+      if (token !== weekLoadToken || nannyId !== selectedNannyId) return
+
+      entries = data || []
+    } finally {
+      if (token === weekLoadToken) weekLoading = false
+    }
   }
 
   async function loadPayments() {
     if (!selectedNannyId) return
 
+    const token = ++paymentsLoadToken
+    const nannyId = selectedNannyId
+
     const { data, error } = await supabase
       .from('payments')
       .select('*')
-      .eq('nanny_id', selectedNannyId)
+      .eq('nanny_id', nannyId)
       .order('week_start', { ascending: false })
       .limit(20)
 
     if (error) throw error
+    if (token !== paymentsLoadToken || nannyId !== selectedNannyId) return
 
     payments = data || []
   }
@@ -219,8 +258,8 @@
   }
 
   async function confirmClockIn() {
-    if (loading) return
-    loading = true
+    if (clockingIn) return
+    clockingIn = true
 
     try {
       const { data: activeEntry } = await supabase
@@ -232,7 +271,6 @@
 
       if (activeEntry) {
         toast.error(`${activeEntry.profiles?.full_name || 'Another nanny'} is already clocked in. Only one nanny can be on the clock at a time.`)
-        loading = false
         showClockInConfirm = false
         return
       }
@@ -252,25 +290,48 @@
       
       currentEntry = data
       startTimer()
-      await loadWeekData()
       showClockInConfirm = false
     } catch (err) {
-      if (err.code === '23505') {
+      if (/** @type {any} */ (err).code === '23505') {
         // Unique index one_open_shift_per_nanny: an open shift already exists
         toast.error('This nanny is already clocked in.')
         showClockInConfirm = false
-        await checkCurrentEntry()
+        await checkCurrentEntry().catch(() => {})
       } else {
-        toast.error('Error clocking in: ' + err.message)
+        toast.error('Error clocking in: ' + errorMessage(err))
       }
     } finally {
-      loading = false
+      clockingIn = false
     }
   }
+
+  // Replace an entry in the week table (or remove it) without a refetch.
+  /** @param {any} row */
+  function mergeEntry(row) {
+    if (!row) return
+
+    const rest = entries.filter(e => e.id !== row.id)
+    const inViewedWeek =
+      row.nanny_id === selectedNannyId &&
+      currentWeekStart &&
+      currentWeekEnd &&
+      new Date(row.clock_in) >= currentWeekStart &&
+      new Date(row.clock_in) <= currentWeekEnd
+
+    if (!inViewedWeek) {
+      entries = rest
+      return
+    }
+
+    entries = [...rest, row].sort(
+      (a, b) => new Date(b.clock_in).getTime() - new Date(a.clock_in).getTime()
+    )
+  }
   
-  async function clockOut() {
-    if (loading) return
-    loading = true
+  /** @param {Date} endTime */
+  async function performClockOut(endTime) {
+    if (clockingOut) return false
+    clockingOut = true
 
     try {
       // Fetch ALL open shifts for this nanny. Duplicates can exist (e.g. from
@@ -286,8 +347,7 @@
 
       if (!openEntries || openEntries.length === 0) {
         toast.error('No active shift found for this nanny')
-        loading = false
-        return
+        return false
       }
 
       // The newest open entry is the shift the timer displays; any older open
@@ -308,31 +368,37 @@
         if (staleError) throw staleError
       }
 
-      const clockOutTime = new Date()
-      const clockInTime = new Date(activeEntry.clock_in)
-      const hours = (clockOutTime - clockInTime) / (1000 * 60 * 60)
+      const hours = hoursBetween(new Date(activeEntry.clock_in), endTime)
 
-      const { error: updateError } = await supabase
+      const { data: closedRow, error: updateError } = await supabase
         .from('time_entries')
         .update({
-          clock_out: clockOutTime.toISOString(),
+          clock_out: endTime.toISOString(),
           hours: hours.toFixed(2)
         })
         .eq('id', activeEntry.id)
+        .select()
+        .single()
 
       if (updateError) throw updateError
-      
+
       toast.success(`Clocked out! Worked ${hours.toFixed(2)} hours`)
-      
+
       currentEntry = null
       stopTimer()
-      await checkCurrentEntry()
-      await loadWeekData()
+      mergeEntry(closedRow)
+      return true
     } catch (err) {
-      toast.error('Error clocking out: ' + err.message)
+      toast.error('Error clocking out: ' + errorMessage(err))
+      return false
     } finally {
-      loading = false
+      clockingOut = false
     }
+  }
+
+  function clockOut() {
+    if (!currentEntry) return
+    performClockOut(new Date())
   }
   
   async function generateVenmoPayment() {
@@ -394,40 +460,46 @@ Total: $${weekPay.toFixed(2)}`
     }
   }
 
-  async function markPaid(paymentId) {
+  // Flip paid state optimistically, then confirm with the returned row —
+  // reverting (with a toast) if the update fails.
+  /**
+   * @param {string | number} paymentId
+   * @param {{ is_paid: boolean, paid_date: string | null }} patch
+   */
+  async function setPaidState(paymentId, patch) {
+    if (paymentBusyId) return
+    paymentBusyId = paymentId
+
+    const previous = payments
+    payments = payments.map(p => (p.id === paymentId ? { ...p, ...patch } : p))
+
     try {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('payments')
-        .update({
-          is_paid: true,
-          paid_date: new Date().toISOString()
-        })
+        .update(patch)
         .eq('id', paymentId)
+        .select()
+        .single()
 
       if (error) throw error
 
-      await loadPayments()
+      payments = payments.map(p => (p.id === paymentId ? data : p))
     } catch (err) {
-      toast.error('Error marking as paid: ' + err.message)
+      payments = previous
+      toast.error('Error updating payment: ' + errorMessage(err))
+    } finally {
+      paymentBusyId = null
     }
   }
 
-  async function markUnpaid(paymentId) {
-    try {
-      const { error } = await supabase
-        .from('payments')
-        .update({
-          is_paid: false,
-          paid_date: null
-        })
-        .eq('id', paymentId)
+  /** @param {string | number} paymentId */
+  function markPaid(paymentId) {
+    setPaidState(paymentId, { is_paid: true, paid_date: new Date().toISOString() })
+  }
 
-      if (error) throw error
-
-      await loadPayments()
-    } catch (err) {
-      toast.error('Error marking as unpaid: ' + err.message)
-    }
+  /** @param {string | number} paymentId */
+  function markUnpaid(paymentId) {
+    setPaidState(paymentId, { is_paid: false, paid_date: null })
   }
   
   function exportCSV() {
@@ -460,24 +532,30 @@ Total: $${weekPay.toFixed(2)}`
     return nannies.find(n => n.id === selectedNannyId)?.full_name || 'Select a nanny'
   }
   
+  /** @param {string | number} paymentId */
   async function deletePayment(paymentId) {
     const confirmed = await confirmModal.show({ title: 'Delete Payment', message: 'Delete this payment record? This cannot be undone.', confirmText: 'Delete', danger: true })
     if (!confirmed) {
       return
     }
-    
+
+    if (paymentBusyId) return
+    paymentBusyId = paymentId
+
     try {
       const { error } = await supabase
         .from('payments')
         .delete()
         .eq('id', paymentId)
-      
+
       if (error) throw error
-      
-      await loadPayments()
+
+      payments = payments.filter(p => p.id !== paymentId)
       toast.success('Payment record deleted')
     } catch (err) {
-      toast.error('Error deleting payment: ' + err.message)
+      toast.error('Error deleting payment: ' + errorMessage(err))
+    } finally {
+      paymentBusyId = null
     }
   }
   
@@ -566,8 +644,9 @@ Total: $${weekPay.toFixed(2)}`
     saving = true
 
     try {
+      let savedRow
       if (editingEntry) {
-        const { error } = await supabase
+        const { data, error } = await supabase
           .from('time_entries')
           .update({
             clock_in: clockIn.toISOString(),
@@ -576,10 +655,13 @@ Total: $${weekPay.toFixed(2)}`
             notes: manualEntryForm.notes
           })
           .eq('id', editingEntry.id)
-        
+          .select()
+          .single()
+
         if (error) throw error
+        savedRow = data
       } else {
-        const { error } = await supabase
+        const { data, error } = await supabase
           .from('time_entries')
           .insert({
             nanny_id: selectedNannyId,
@@ -588,36 +670,40 @@ Total: $${weekPay.toFixed(2)}`
             hours: hours.toFixed(2),
             notes: manualEntryForm.notes
           })
-        
+          .select()
+          .single()
+
         if (error) throw error
+        savedRow = data
       }
-      
+
       showManualEntry = false
-      await loadWeekData()
+      mergeEntry(savedRow)
       toast.success('Entry saved!')
     } catch (err) {
-      toast.error('Error: ' + err.message)
+      toast.error('Error: ' + errorMessage(err))
     } finally {
       saving = false
     }
   }
 
+  /** @param {string | number} entryId */
   async function deleteEntry(entryId) {
     const confirmed = await confirmModal.show({ title: 'Delete Entry', message: 'Delete this entry?', confirmText: 'Delete', danger: true })
     if (!confirmed) return
-    
+
     try {
       const { error } = await supabase
         .from('time_entries')
         .delete()
         .eq('id', entryId)
-      
+
       if (error) throw error
-      
-      await loadWeekData()
+
+      entries = entries.filter(e => e.id !== entryId)
       toast.success('Entry deleted')
     } catch (err) {
-      toast.error('Error deleting: ' + err.message)
+      toast.error('Error deleting: ' + errorMessage(err))
     }
   }
 </script>
@@ -625,8 +711,14 @@ Total: $${weekPay.toFixed(2)}`
 <Nav currentPage="tracker" />
 
 <div class="container">
-  {#if loading}
+  {#if initializing}
     <div class="loading">Loading...</div>
+  {:else if initError}
+    <div class="card error-card">
+      <h2>Couldn't load the tracker</h2>
+      <p>{initError}</p>
+      <button class="btn btn-primary" on:click={initTracker}>Retry</button>
+    </div>
   {:else}
     <!-- Nanny Selector -->
     {#if (profile?.role === 'family' || profile?.role === 'admin') && nannies.length > 0}
@@ -656,12 +748,12 @@ Total: $${weekPay.toFixed(2)}`
       
       <div class="button-container">
         {#if currentEntry}
-          <button class="btn btn-clock-out" on:click={clockOut} disabled={loading}>
-            Clock Out
+          <button class="btn btn-clock-out" on:click={clockOut} disabled={clockingOut}>
+            {clockingOut ? 'Clocking out…' : 'Clock Out'}
           </button>
         {:else}
-          <button class="btn btn-clock-in" on:click={clockIn} disabled={loading || !selectedNannyId}>
-            Clock In
+          <button class="btn btn-clock-in" on:click={clockIn} disabled={clockingIn || !selectedNannyId}>
+            {clockingIn ? 'Clocking in…' : 'Clock In'}
           </button>
         {/if}
       </div>
@@ -687,7 +779,10 @@ Total: $${weekPay.toFixed(2)}`
         <h2>📊 Week Summary</h2>
         <div class="week-nav">
           <button on:click={() => changeWeek(-1)}>←</button>
-          <span>{currentWeekStart && currentWeekEnd ? formatWeekDisplay(currentWeekStart, currentWeekEnd) : 'Loading...'}</span>
+          <span>
+            {currentWeekStart && currentWeekEnd ? formatWeekDisplay(currentWeekStart, currentWeekEnd) : 'Loading...'}
+            {#if weekLoading}<span class="week-updating">Updating…</span>{/if}
+          </span>
           <button on:click={() => changeWeek(1)}>→</button>
         </div>
       </div>
@@ -703,10 +798,10 @@ Total: $${weekPay.toFixed(2)}`
       </div>
       
       {#if filteredEntries.length === 0}
-        <div class="empty-state">No entries for this week</div>
+        <div class="empty-state" class:refreshing={weekLoading}>No entries for this week</div>
       {:else}
         <!-- Desktop table view -->
-        <div class="desktop-table">
+        <div class="desktop-table" class:refreshing={weekLoading}>
           <table>
             <thead>
               <tr>
@@ -743,7 +838,7 @@ Total: $${weekPay.toFixed(2)}`
         </div>
         
         <!-- Mobile card view -->
-        <div class="mobile-cards">
+        <div class="mobile-cards" class:refreshing={weekLoading}>
           {#if mobileView === 'summary'}
             <!-- Summary View -->
             <div class="summary-grid">
@@ -814,12 +909,12 @@ Total: $${weekPay.toFixed(2)}`
             <span class="total-hours">({weekTotal.toFixed(1)} hours)</span>
           </div>
           {#if profile?.role === 'family' || profile?.role === 'admin'}
-            <button class="btn btn-primary" on:click={generateVenmoPayment}>
-              Generate Venmo Payment
+            <button class="btn btn-primary" on:click={generateVenmoPayment} disabled={generatingPayment}>
+              {generatingPayment ? 'Preparing…' : 'Generate Venmo Payment'}
             </button>
           {:else if profile?.role === 'nanny'}
-            <button class="btn btn-primary" on:click={requestPayment}>
-              Request Payment
+            <button class="btn btn-primary" on:click={requestPayment} disabled={generatingPayment}>
+              {generatingPayment ? 'Preparing…' : 'Request Payment'}
             </button>
           {/if}
         </div>
@@ -865,15 +960,15 @@ Total: $${weekPay.toFixed(2)}`
                   {#if profile?.role === 'family' || profile?.role === 'admin'}
                     <td>
                       {#if payment.is_paid}
-                        <button class="btn-sm btn-warning" on:click={() => markUnpaid(payment.id)}>
+                        <button class="btn-sm btn-warning" on:click={() => markUnpaid(payment.id)} disabled={paymentBusyId === payment.id}>
                           Unpaid
                         </button>
                       {:else}
-                        <button class="btn-sm btn-success" on:click={() => markPaid(payment.id)}>
+                        <button class="btn-sm btn-success" on:click={() => markPaid(payment.id)} disabled={paymentBusyId === payment.id}>
                           Paid
                         </button>
                       {/if}
-                      <button class="btn-sm btn-danger" on:click={() => deletePayment(payment.id)}>
+                      <button class="btn-sm btn-danger" on:click={() => deletePayment(payment.id)} disabled={paymentBusyId === payment.id}>
                         Delete
                       </button>
                     </td>
@@ -911,15 +1006,15 @@ Total: $${weekPay.toFixed(2)}`
                   {#if profile?.role === 'family' || profile?.role === 'admin'}
                     <td class="cell-actions">
                       {#if payment.is_paid}
-                        <button class="btn-status btn-status-paid" on:click={() => markUnpaid(payment.id)} title="Mark unpaid">
+                        <button class="btn-status btn-status-paid" on:click={() => markUnpaid(payment.id)} title="Mark unpaid" disabled={paymentBusyId === payment.id}>
                           Paid ✓
                         </button>
                       {:else}
-                        <button class="btn-status btn-status-unpaid" on:click={() => markPaid(payment.id)} title="Mark paid">
+                        <button class="btn-status btn-status-unpaid" on:click={() => markPaid(payment.id)} title="Mark paid" disabled={paymentBusyId === payment.id}>
                           Pay
                         </button>
                       {/if}
-                      <button class="btn-delete-inline" on:click={() => deletePayment(payment.id)} title="Delete">
+                      <button class="btn-delete-inline" on:click={() => deletePayment(payment.id)} title="Delete" disabled={paymentBusyId === payment.id}>
                         ✕
                       </button>
                     </td>
@@ -950,10 +1045,10 @@ Total: $${weekPay.toFixed(2)}`
         </div>
         
         <div class="button-row">
-          <button class="btn btn-primary" on:click={confirmClockIn} disabled={loading}>
-            Confirm Clock In
+          <button class="btn btn-primary" on:click={confirmClockIn} disabled={clockingIn}>
+            {clockingIn ? 'Clocking in…' : 'Confirm Clock In'}
           </button>
-          <button class="btn btn-secondary" on:click={() => showClockInConfirm = false}>
+          <button class="btn btn-secondary" on:click={() => showClockInConfirm = false} disabled={clockingIn}>
             Cancel
           </button>
         </div>
@@ -1716,5 +1811,26 @@ Total: $${weekPay.toFixed(2)}`
     .cell-week .week-dates {
       font-size: 0.85em;
     }
+  }
+
+  .refreshing {
+    opacity: 0.55;
+    transition: opacity 0.15s;
+  }
+
+  .week-updating {
+    margin-left: 8px;
+    font-size: 0.8em;
+    color: #718096;
+    font-weight: normal;
+  }
+
+  .error-card {
+    text-align: center;
+  }
+
+  .error-card p {
+    color: #718096;
+    margin: 10px 0 20px;
   }
 </style>

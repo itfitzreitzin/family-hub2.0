@@ -867,9 +867,9 @@
 	}
 
 	.shift-elapsed {
-		font-family: var(--font-pixel);
 		font-size: 1.05rem;
-		font-weight: 600;
+		font-weight: 700;
+		font-variant-numeric: tabular-nums;
 	}
 
 	.nanny-actions {

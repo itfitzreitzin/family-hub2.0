@@ -1056,7 +1056,7 @@
 									style="
                     top: {Math.max(eventTop(nEvent.startTime), 0)}px;
                     height: {eventHeight(nEvent.startTime, nEvent.endTime)}px;
-                    border-left-color: {nEvent.color || '#ed8936'};
+                    border-left-color: {nEvent.color || '#e0664e'};
                   "
 									title="{nEvent.nannyName}: {nEvent.title} (unavailable)"
 									on:click|stopPropagation

@@ -18,7 +18,7 @@
 		calendar_type: 'ical',
 		calendar_url: '',
 		calendar_id: '',
-		color: '#667eea'
+		color: '#a877e8'
 	};
 
 	let manualForm = {
@@ -33,14 +33,14 @@
 	};
 
 	const calendarColors = [
-		'#667eea',
-		'#f56565',
-		'#48bb78',
-		'#ed8936',
-		'#9f7aea',
-		'#38b2ac',
-		'#fc8181',
-		'#4299e1'
+		'#a877e8',
+		'#e0664e',
+		'#6fbf73',
+		'#d9a441',
+		'#8b9ef5',
+		'#4fb8a8',
+		'#e88ba7',
+		'#5a7bd6'
 	];
 
 	const weekDays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
@@ -270,7 +270,7 @@
 			calendar_type: 'ical',
 			calendar_url: '',
 			calendar_id: '',
-			color: '#667eea'
+			color: '#a877e8'
 		};
 	}
 

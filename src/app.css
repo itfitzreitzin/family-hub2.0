@@ -106,7 +106,8 @@
 	--edge: #cdb787;
 
 	--gilt: #9a6f14;
-	--gilt-bright: #b8862a;
+	/* On parchment, emphasis needs the *darker* gold or text drops below AA. */
+	--gilt-bright: #8a6110;
 	--gilt-deep: #6d4d0b;
 	--moss: #47804a;
 	--moss-deep: #2f5c33;
@@ -637,6 +638,9 @@ button:disabled {
 	border-color: var(--accent);
 	color: var(--text-on-accent);
 	box-shadow: var(--shadow-sm);
+	--icon-accent: currentColor;
+	--icon-growing: currentColor;
+	--icon-hi: currentColor;
 }
 
 .btn-primary:hover:not(:disabled) {
@@ -662,6 +666,10 @@ button:disabled {
 	background: linear-gradient(160deg, var(--moss), var(--moss-deep));
 	border-color: var(--moss-deep);
 	color: #f4f9f0;
+	/* Sprite colour slots follow the label, or the sprout vanishes moss-on-moss. */
+	--icon-accent: currentColor;
+	--icon-growing: currentColor;
+	--icon-hi: currentColor;
 }
 
 .btn-success:hover:not(:disabled) {

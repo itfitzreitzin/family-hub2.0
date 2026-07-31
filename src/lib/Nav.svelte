@@ -417,6 +417,59 @@
 		--icon-accent: var(--danger);
 	}
 
+	/*
+	 * Between the mobile breakpoint and a roomy desktop the six titled links
+	 * don't fit at full size, so the bar sheds weight in steps: tighter
+	 * padding, then the wordmark and "Leave" label, then the link titles
+	 * themselves (kept for screen readers via the clip pattern).
+	 */
+	@media (max-width: 1180px) {
+		.nav-content {
+			gap: 0.75rem;
+		}
+
+		.nav-links {
+			gap: 0;
+		}
+
+		.nav-links a {
+			gap: 0.35rem;
+			padding: 0.45rem 0.55rem;
+			font-size: 0.78rem;
+		}
+	}
+
+	@media (max-width: 1010px) {
+		.desktop-nav .wordmark {
+			display: none;
+		}
+
+		.sign-out span {
+			display: none;
+		}
+
+		.sign-out {
+			width: 38px;
+			padding: 0;
+			justify-content: center;
+		}
+	}
+
+	@media (max-width: 890px) {
+		.nav-links a span {
+			position: absolute;
+			width: 1px;
+			height: 1px;
+			overflow: hidden;
+			clip: rect(0, 0, 0, 0);
+			white-space: nowrap;
+		}
+
+		.nav-links a {
+			padding: 0.5rem 0.7rem;
+		}
+	}
+
 	/* ── Mobile top bar ────────────────────────────────────── */
 	.mobile-nav {
 		position: fixed;

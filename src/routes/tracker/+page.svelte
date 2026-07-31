@@ -1,10 +1,21 @@
 <script>
-  import { onMount } from 'svelte'
+  import { onMount, onDestroy } from 'svelte'
   import { supabase } from '$lib/supabase'
   import { goto } from '$app/navigation'
   import { toast } from '$lib/stores/toast.js'
-  import { confirm as confirmModal, prompt as promptModal } from '$lib/stores/toast.js'
+  import { confirm as confirmModal } from '$lib/stores/toast.js'
   import Nav from '$lib/Nav.svelte'
+  import {
+    localDateString,
+    localTimeString,
+    combineLocalDateTime,
+    getWeekBounds,
+    formatDuration,
+    formatTime,
+    formatDate,
+    formatDateShort,
+    formatWeekDisplay
+  } from '$lib/time.js'
   
   let user = null
   let profile = null
@@ -22,7 +33,7 @@
   let editingEntry = null
   let saving = false
   let manualEntryForm = {
-    date: new Date().toISOString().split('T')[0],
+    date: localDateString(),
     clockIn: '09:00',
     clockOut: '17:00',
     notes: ''
@@ -36,49 +47,68 @@
   // Mobile table view toggle
   let mobileView = 'summary' // 'summary' or 'details'
   
-  onMount(async () => {
-    const { data: { user: currentUser } } = await supabase.auth.getUser()
-    
-    if (!currentUser) {
-      goto('/')
-      return
-    }
-    
-    user = currentUser
-    
-    const { data: profileData } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', user.id)
-      .maybeSingle()
+  onMount(() => {
+    initTracker()
+  })
 
-    profile = profileData
+  onDestroy(() => {
+    if (timerInterval) clearInterval(timerInterval)
+  })
 
-    // Load nannies for family/admin
-    if (profile?.role === 'family' || profile?.role === 'admin') {
-      const { data: nanniesData } = await supabase
+  async function initTracker() {
+    try {
+      const { data: { user: currentUser } } = await supabase.auth.getUser()
+
+      if (!currentUser) {
+        goto('/')
+        return
+      }
+
+      user = currentUser
+
+      const { data: profileData, error: profileError } = await supabase
         .from('profiles')
         .select('*')
-        .eq('role', 'nanny')
-        .order('full_name')
-      
-      nannies = nanniesData || []
-      
-      if (nannies.length > 0) {
-        selectedNannyId = nannies[0].id
+        .eq('id', user.id)
+        .maybeSingle()
+
+      if (profileError) throw profileError
+      profile = profileData
+
+      // Load nannies for family/admin
+      if (profile?.role === 'family' || profile?.role === 'admin') {
+        const { data: nanniesData, error: nanniesError } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('role', 'nanny')
+          .order('full_name')
+
+        if (nanniesError) throw nanniesError
+        nannies = nanniesData || []
+
+        if (nannies.length > 0) {
+          selectedNannyId = nannies[0].id
+        }
+      } else if (profile?.role === 'nanny') {
+        selectedNannyId = user.id
       }
-    } else if (profile?.role === 'nanny') {
-      selectedNannyId = user.id
+
+      await checkCurrentEntry()
+      await loadWeekData()
+      loading = false
+    } catch (err) {
+      toast.error('Error loading tracker: ' + err.message)
+      loading = false
     }
-    
-    await checkCurrentEntry()
-    await loadWeekData()
-    loading = false
-  })
-  
+  }
+
   async function handleNannyChange() {
-    await checkCurrentEntry()
-    await loadWeekData()
+    try {
+      await checkCurrentEntry()
+      await loadWeekData()
+    } catch (err) {
+      toast.error('Error loading data: ' + err.message)
+    }
   }
   
   $: filteredEntries = entries.filter(e => e.clock_out)
@@ -88,8 +118,8 @@
   
   async function checkCurrentEntry() {
     if (!selectedNannyId) return
-    
-    const { data } = await supabase
+
+    const { data, error } = await supabase
       .from('time_entries')
       .select('*')
       .eq('nanny_id', selectedNannyId)
@@ -97,7 +127,9 @@
       .order('clock_in', { ascending: false })
       .limit(1)
       .maybeSingle()
-    
+
+    if (error) throw error
+
     if (data) {
       currentEntry = data
       startTimer()
@@ -106,103 +138,59 @@
       stopTimer()
     }
   }
-  
+
   async function loadWeekData() {
     if (!selectedNannyId) return
-    
+
     const bounds = getWeekBounds(currentWeekOffset)
     currentWeekStart = bounds.start
     currentWeekEnd = bounds.end
-    
-    const { data } = await supabase
+
+    const { data, error } = await supabase
       .from('time_entries')
       .select('*')
       .eq('nanny_id', selectedNannyId)
       .gte('clock_in', bounds.start.toISOString())
       .lte('clock_in', bounds.end.toISOString())
       .order('clock_in', { ascending: false })
-    
+
+    if (error) throw error
+
     entries = data || []
     await loadPayments()
   }
-  
+
   async function loadPayments() {
     if (!selectedNannyId) return
-    
-    const { data } = await supabase
+
+    const { data, error } = await supabase
       .from('payments')
       .select('*')
       .eq('nanny_id', selectedNannyId)
       .order('week_start', { ascending: false })
       .limit(20)
-    
+
+    if (error) throw error
+
     payments = data || []
   }
-  
-  function getWeekBounds(offset = 0) {
-    const now = new Date()
-    const weekStart = new Date(now)
-    weekStart.setDate(now.getDate() - now.getDay())
-    weekStart.setHours(0, 0, 0, 0)
-    weekStart.setDate(weekStart.getDate() + (offset * 7))
-    
-    const weekEnd = new Date(weekStart)
-    weekEnd.setDate(weekEnd.getDate() + 6)
-    weekEnd.setHours(23, 59, 59, 999)
-    
-    return { start: weekStart, end: weekEnd }
-  }
-  
-  function formatTime(dateString) {
-    return new Date(dateString).toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit'
-    })
-  }
-  
-  function formatDate(dateString) {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      month: 'numeric',
-      day: 'numeric',
-      year: 'numeric'
-    })
-  }
-  
-  function formatDateShort(dateString) {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric'
-    })
-  }
-  
+
   function changeWeek(direction) {
     currentWeekOffset += direction
-    loadWeekData()
+    loadWeekData().catch(err => {
+      toast.error('Error loading week: ' + err.message)
+    })
   }
-  
-  function formatWeekDisplay(start, end) {
-    return `${start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, ${start.getFullYear()}`
+
+  function updateTimerDisplay() {
+    if (!currentEntry) return
+    timerDisplay = formatDuration(Date.now() - new Date(currentEntry.clock_in).getTime())
   }
-  
+
   function startTimer() {
     if (timerInterval) clearInterval(timerInterval)
-    
-    timerInterval = setInterval(() => {
-      if (!currentEntry) return
-      
-      const clockInTime = new Date(currentEntry.clock_in)
-      const now = new Date()
-      const diff = now - clockInTime
-      
-      const hours = Math.floor(diff / (1000 * 60 * 60))
-      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
-      const seconds = Math.floor((diff % (1000 * 60)) / 1000)
-      
-      timerDisplay = 
-        String(hours).padStart(2, '0') + ':' +
-        String(minutes).padStart(2, '0') + ':' +
-        String(seconds).padStart(2, '0')
-    }, 1000)
+    updateTimerDisplay()
+    timerInterval = setInterval(updateTimerDisplay, 1000)
   }
   
   function stopTimer() {
@@ -225,7 +213,7 @@
     }
     
     showClockInConfirm = true
-    clockInTime = new Date().toTimeString().slice(0, 5)
+    clockInTime = localTimeString()
   }
 
   async function confirmClockIn() {
@@ -247,9 +235,8 @@
         return
       }
       
-      const today = new Date().toISOString().split('T')[0]
-      const clockInDateTime = new Date(`${today}T${clockInTime}`)
-      
+      const clockInDateTime = combineLocalDateTime(localDateString(), clockInTime)
+
       const { data, error } = await supabase
         .from('time_entries')
         .insert({
@@ -385,49 +372,56 @@ Total: $${weekPay.toFixed(2)}`
   
   async function createPaymentRecord() {
     try {
-      await supabase
+      const { error } = await supabase
         .from('payments')
         .insert({
           nanny_id: selectedNannyId,
-          week_start: currentWeekStart.toISOString().split('T')[0],
-          week_end: currentWeekEnd.toISOString().split('T')[0],
+          week_start: localDateString(currentWeekStart),
+          week_end: localDateString(currentWeekEnd),
           hours: weekTotal,
           amount: weekPay,
           is_paid: false,
           payment_method: 'Venmo'
         })
-      
+
+      if (error) throw error
+
       await loadPayments()
     } catch (err) {
+      toast.error('Error saving payment record: ' + err.message)
     }
   }
-  
+
   async function markPaid(paymentId) {
     try {
-      await supabase
+      const { error } = await supabase
         .from('payments')
         .update({
           is_paid: true,
           paid_date: new Date().toISOString()
         })
         .eq('id', paymentId)
-      
+
+      if (error) throw error
+
       await loadPayments()
     } catch (err) {
       toast.error('Error marking as paid: ' + err.message)
     }
   }
-  
+
   async function markUnpaid(paymentId) {
     try {
-      await supabase
+      const { error } = await supabase
         .from('payments')
         .update({
           is_paid: false,
           paid_date: null
         })
         .eq('id', paymentId)
-      
+
+      if (error) throw error
+
       await loadPayments()
     } catch (err) {
       toast.error('Error marking as unpaid: ' + err.message)
@@ -536,7 +530,7 @@ Total: $${weekPay.toFixed(2)}`
   function openManualEntry() {
     editingEntry = null
     manualEntryForm = {
-      date: new Date().toISOString().split('T')[0],
+      date: localDateString(),
       clockIn: '09:00',
       clockOut: '17:00',
       notes: ''
@@ -547,9 +541,9 @@ Total: $${weekPay.toFixed(2)}`
   function editEntry(entry) {
     editingEntry = entry
     manualEntryForm = {
-      date: new Date(entry.clock_in).toISOString().split('T')[0],
-      clockIn: new Date(entry.clock_in).toTimeString().slice(0, 5),
-      clockOut: entry.clock_out ? new Date(entry.clock_out).toTimeString().slice(0, 5) : '17:00',
+      date: localDateString(new Date(entry.clock_in)),
+      clockIn: localTimeString(new Date(entry.clock_in)),
+      clockOut: entry.clock_out ? localTimeString(new Date(entry.clock_out)) : '17:00',
       notes: entry.notes || ''
     }
     showManualEntry = true
@@ -558,8 +552,8 @@ Total: $${weekPay.toFixed(2)}`
   async function saveManualEntry() {
     if (saving) return
 
-    const clockIn = new Date(`${manualEntryForm.date}T${manualEntryForm.clockIn}`)
-    const clockOut = new Date(`${manualEntryForm.date}T${manualEntryForm.clockOut}`)
+    const clockIn = combineLocalDateTime(manualEntryForm.date, manualEntryForm.clockIn)
+    const clockOut = combineLocalDateTime(manualEntryForm.date, manualEntryForm.clockOut)
     const hours = (clockOut - clockIn) / (1000 * 60 * 60)
 
     if (hours <= 0) {

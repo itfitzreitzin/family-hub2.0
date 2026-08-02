@@ -74,9 +74,14 @@ export function expandRecurringInstances(event, rangeStart, rangeEnd) {
 		const dayName = cursor.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
 		if (!event.recurring_days || !event.recurring_days.includes(dayName)) continue;
 
-		const weeksDiff = Math.floor(
-			(cursor.getTime() - startDate.getTime()) / (7 * 24 * 60 * 60 * 1000)
+		// Day-level week difference. The old expander subtracted the series' full
+		// timestamp from day midnights, which inverted biweekly alternation for
+		// any series not created at exactly midnight. Math.round absorbs the ±1h
+		// a DST boundary adds to the day count.
+		const daysDiff = Math.round(
+			(cursor.getTime() - seriesStartDay.getTime()) / (24 * 60 * 60 * 1000)
 		);
+		const weeksDiff = Math.floor(daysDiff / 7);
 		if (event.recurring_pattern === 'biweekly' && weeksDiff % 2 !== 0) continue;
 
 		if (until && cursor > until) continue;

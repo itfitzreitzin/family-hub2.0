@@ -1,13 +1,31 @@
 <script>
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, tick } from 'svelte';
 	import { supabase } from '$lib/supabase';
 	import Nav from '$lib/Nav.svelte';
 	import CalendarManager from '$lib/components/CalendarManager.svelte';
+	import MonthGrid from '$lib/components/MonthGrid.svelte';
+	import MonthSidePanel from '$lib/components/MonthSidePanel.svelte';
 	import Icon from '$lib/icons/Icon.svelte';
 	import { goto } from '$app/navigation';
 	import { toast, confirm as confirmModal } from '$lib/stores/toast.js';
-	import { normalizeDateValue } from '$lib/time.js';
-	import { expandRecurringInstances } from '$lib/calendar.js';
+	import {
+		normalizeDateValue,
+		localDateString,
+		parseLocalDate,
+		buildMonthGrid,
+		getMonthGridRange,
+		addMonths
+	} from '$lib/time.js';
+	import {
+		expandRecurringInstances,
+		fetchShiftsInRange,
+		fetchBusyEventsInRange,
+		fetchManualBusyInRange,
+		fetchPaymentsDueInRange,
+		toCalendarItems,
+		groupItemsByDay,
+		upcomingItems
+	} from '$lib/calendar.js';
 
 	let user = null;
 	let profile = null;
@@ -20,6 +38,27 @@
 	let nannies = [];
 	let editingShiftId = null;
 	let isMobile = false;
+
+	// Month view state — the default view. Week state above only initializes
+	// on the first toggle to Week.
+	let view = 'month';
+	const _initialNow = new Date();
+	let monthYear = _initialNow.getFullYear();
+	let monthMonth = _initialNow.getMonth();
+	/** @type {import('$lib/calendar.js').CalendarItem[]} */
+	let monthItems = [];
+	/** @type {Record<string, import('$lib/calendar.js').CalendarItem[]>} */
+	let monthItemsByDay = {};
+	let monthLoading = false;
+	let monthError = null;
+	let monthInitialized = false;
+	let monthLoadToken = 0;
+	let selectedDateStr = localDateString();
+
+	const MONTH_NAMES = [
+		'January', 'February', 'March', 'April', 'May', 'June',
+		'July', 'August', 'September', 'October', 'November', 'December'
+	];
 
 	let shiftForm = {
 		nannyId: null,
@@ -85,7 +124,11 @@
 			shiftForm.nannyId = profile?.id || null;
 		}
 
-		await setCurrentWeek(0);
+		if (view === 'month') {
+			await loadMonthData();
+		} else {
+			await setCurrentWeek(0);
+		}
 		loading = false;
 
 		// Prevent body from scrolling — only the grid body should scroll
@@ -100,7 +143,12 @@
 		mql.addEventListener('change', handleResize);
 		mqlCleanup = () => mql.removeEventListener('change', handleResize);
 
-		// Auto-scroll grid to current hour
+		if (view === 'week') scrollGridToNow();
+	});
+
+	// Auto-scroll the week grid to the current hour. The .grid-body node only
+	// exists while the week view is mounted.
+	function scrollGridToNow() {
 		setTimeout(() => {
 			const gridBody = document.querySelector('.grid-body');
 			if (gridBody) {
@@ -108,7 +156,7 @@
 				gridBody.scrollTop = scrollToHour * HOUR_HEIGHT;
 			}
 		}, 50);
-	});
+	}
 
 	let mqlCleanup = null;
 	onDestroy(() => {
@@ -509,27 +557,38 @@
 
 			resetShiftForm();
 
-			// Navigate to the week containing the saved shift so it's visible
-			const shiftDate = new Date(savedDate + 'T00:00:00');
-			const weekEnd = new Date(currentWeekStart);
-			weekEnd.setDate(weekEnd.getDate() + 6);
-
-			if (shiftDate < currentWeekStart || shiftDate > weekEnd) {
-				// Calculate the week offset for the shift's week
-				const now = new Date();
-				const currentSunday = new Date(now);
-				currentSunday.setDate(now.getDate() - now.getDay());
-				currentSunday.setHours(0, 0, 0, 0);
-
-				const shiftSunday = new Date(shiftDate);
-				shiftSunday.setDate(shiftDate.getDate() - shiftDate.getDay());
-				shiftSunday.setHours(0, 0, 0, 0);
-
-				const newOffset = Math.round((shiftSunday - currentSunday) / (7 * 24 * 60 * 60 * 1000));
-				await setCurrentWeek(newOffset);
+			if (view === 'month') {
+				// Jump the viewed month to the saved shift so it's visible
+				const shiftDate = parseLocalDate(savedDate);
+				if (shiftDate.getFullYear() !== monthYear || shiftDate.getMonth() !== monthMonth) {
+					monthYear = shiftDate.getFullYear();
+					monthMonth = shiftDate.getMonth();
+				}
+				selectedDateStr = normalizeDateValue(savedDate);
+				await loadMonthData();
 			} else {
-				// Same week — just reload data via setCurrentWeek
-				await setCurrentWeek(weekOffset);
+				// Navigate to the week containing the saved shift so it's visible
+				const shiftDate = new Date(savedDate + 'T00:00:00');
+				const weekEnd = new Date(currentWeekStart);
+				weekEnd.setDate(weekEnd.getDate() + 6);
+
+				if (shiftDate < currentWeekStart || shiftDate > weekEnd) {
+					// Calculate the week offset for the shift's week
+					const now = new Date();
+					const currentSunday = new Date(now);
+					currentSunday.setDate(now.getDate() - now.getDay());
+					currentSunday.setHours(0, 0, 0, 0);
+
+					const shiftSunday = new Date(shiftDate);
+					shiftSunday.setDate(shiftDate.getDate() - shiftDate.getDay());
+					shiftSunday.setHours(0, 0, 0, 0);
+
+					const newOffset = Math.round((shiftSunday - currentSunday) / (7 * 24 * 60 * 60 * 1000));
+					await setCurrentWeek(newOffset);
+				} else {
+					// Same week — just reload data via setCurrentWeek
+					await setCurrentWeek(weekOffset);
+				}
 			}
 
 			toast.success(isEditing ? 'Shift updated!' : 'Shift saved!');
@@ -660,7 +719,11 @@
 		try {
 			const { error } = await supabase.from('schedules').delete().eq('id', shiftId);
 			if (error) throw error;
-			await loadShifts();
+			if (view === 'month') {
+				await loadMonthData();
+			} else {
+				await loadShifts();
+			}
 		} catch (err) {
 			toast.error('Error deleting shift');
 		}
@@ -780,11 +843,25 @@
 		if (!shiftForm.nannyId || !shiftForm.date || !shiftForm.startTime || !shiftForm.endTime)
 			return [];
 
-		const nannyEvents = nannyCalendarEvents[shiftForm.nannyId] || [];
-		if (nannyEvents.length === 0) return [];
-
 		const shiftStart = new Date(`${shiftForm.date}T${shiftForm.startTime}:00`);
 		const shiftEnd = new Date(`${shiftForm.date}T${shiftForm.endTime}:00`);
+
+		// Month view builds its conflicts from the unified item list; week view
+		// keeps its per-nanny event dictionary.
+		if (view === 'month') {
+			return monthItems
+				.filter(
+					(item) =>
+						item.kind === 'nanny-busy' &&
+						item.ownerId === shiftForm.nannyId &&
+						item.start < shiftEnd &&
+						item.end > shiftStart
+				)
+				.map((item) => ({ title: item.title, startTime: item.start, endTime: item.end }));
+		}
+
+		const nannyEvents = nannyCalendarEvents[shiftForm.nannyId] || [];
+		if (nannyEvents.length === 0) return [];
 
 		return nannyEvents.filter((event) => event.startTime < shiftEnd && event.endTime > shiftStart);
 	}
@@ -824,11 +901,112 @@
 	}
 
 	function handleCalendarUpdate() {
-		loadCalendarEvents();
+		if (view === 'month') {
+			loadMonthData();
+		} else {
+			loadCalendarEvents();
+		}
 	}
 
 	function goToToday() {
 		setCurrentWeek(0);
+	}
+
+	// --- Month view ---
+
+	async function loadMonthData() {
+		const token = ++monthLoadToken;
+		monthLoading = true;
+		monthError = null;
+
+		try {
+			const { gridStart, gridEnd, startStr, endStr } = getMonthGridRange(monthYear, monthMonth);
+			const isNanny = profile?.role === 'nanny';
+			const nannyScope = isNanny ? user.id : null;
+
+			const [shiftRows, busyRows, manualRows, paymentRows] = await Promise.all([
+				fetchShiftsInRange(supabase, startStr, endStr, nannyScope),
+				fetchBusyEventsInRange(supabase, gridStart, gridEnd),
+				isNanny ? Promise.resolve([]) : fetchManualBusyInRange(supabase, gridStart, gridEnd),
+				fetchPaymentsDueInRange(supabase, startStr, endStr, nannyScope)
+			]);
+
+			if (token !== monthLoadToken) return;
+
+			const familyIds = new Set(familyMembers.map((m) => m.id));
+			const nannyIds = new Set(nannies.map((n) => n.id));
+
+			// Nannies see their own shifts and their own busy events only.
+			const scopedBusy = isNanny
+				? busyRows.filter((e) => (e.parent_calendars?.user_id ?? e.user_id) === user.id)
+				: busyRows;
+			// Family view keeps week-view parity: manual rows from family members only.
+			const scopedManual = isNanny ? [] : manualRows.filter((m) => familyIds.has(m.user_id));
+
+			monthItems = toCalendarItems({
+				shifts: shiftRows,
+				busyEvents: scopedBusy,
+				manualInstances: scopedManual,
+				payments: paymentRows,
+				familyIds: isNanny ? new Set() : familyIds,
+				nannyIds: isNanny ? new Set([user.id]) : nannyIds,
+				getNannyName
+			});
+			monthItemsByDay = groupItemsByDay(monthItems, gridStart, gridEnd);
+			monthInitialized = true;
+		} catch (err) {
+			if (token !== monthLoadToken) return;
+			console.error('[schedule] loadMonthData ERROR:', err);
+			monthError = err?.message || 'Could not load the month.';
+		} finally {
+			if (token === monthLoadToken) monthLoading = false;
+		}
+	}
+
+	/** @param {'prev'|'next'} direction */
+	function changeMonth(direction) {
+		const next = addMonths(monthYear, monthMonth, direction === 'prev' ? -1 : 1);
+		monthYear = next.year;
+		monthMonth = next.month;
+		loadMonthData();
+	}
+
+	function monthGoToToday() {
+		const now = new Date();
+		selectedDateStr = localDateString(now);
+		const changed = monthYear !== now.getFullYear() || monthMonth !== now.getMonth();
+		monthYear = now.getFullYear();
+		monthMonth = now.getMonth();
+		if (changed) loadMonthData();
+	}
+
+	/** @param {'month'|'week'} next */
+	async function setView(next) {
+		if (next === view) return;
+		view = next;
+		if (next === 'week') {
+			if (!currentWeekStart) await setCurrentWeek(0);
+			await tick();
+			scrollGridToNow();
+		} else if (!monthInitialized) {
+			await loadMonthData();
+		}
+	}
+
+	/** @param {CustomEvent<{ dateStr: string }>} event */
+	function handleSelectDay(event) {
+		selectedDateStr = event.detail.dateStr;
+	}
+
+	/** @param {CustomEvent<{ dateStr: string }>} event */
+	function handleAddShiftFromMonth(event) {
+		openAddShift(parseLocalDate(event.detail.dateStr));
+	}
+
+	/** @param {CustomEvent<{ item: import('$lib/calendar.js').CalendarItem }>} event */
+	function handleEditItemFromMonth(event) {
+		const item = event.detail.item;
+		if (item.kind === 'shift') editShift(item.raw);
 	}
 </script>
 
@@ -838,7 +1016,7 @@
 	{#if loading}
 		<div class="loading">
 			<div class="loading-spinner"></div>
-			<span>Loading schedule...</span>
+			<span>Loading calendar...</span>
 		</div>
 	{:else}
 		<!-- Top Bar -->
@@ -846,26 +1024,101 @@
 			<div class="top-left">
 				<h1>Calendar</h1>
 				<span class="week-label">
-					{currentWeekStart?.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+					{#if view === 'month'}
+						{MONTH_NAMES[monthMonth]} {monthYear}
+					{:else}
+						{currentWeekStart?.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+					{/if}
 				</span>
 			</div>
 			<div class="top-right">
-				<button class="top-btn" on:click={() => (showCalendarManager = true)}>
+				<div class="view-toggle" role="group" aria-label="Calendar view">
+					<button
+						type="button"
+						class="toggle-btn"
+						class:active={view === 'month'}
+						aria-pressed={view === 'month'}
+						on:click={() => setView('month')}
+					>
+						Month
+					</button>
+					<button
+						type="button"
+						class="toggle-btn"
+						class:active={view === 'week'}
+						aria-pressed={view === 'week'}
+						on:click={() => setView('week')}
+					>
+						Week
+					</button>
+				</div>
+				<button type="button" class="top-btn" on:click={() => (showCalendarManager = true)}>
 					<Icon name="grimoire" size={16} />
 					{profile?.role === 'nanny' ? 'My Availability' : 'Calendars'}
 				</button>
 				<div class="week-nav">
-					<button class="nav-btn" on:click={() => changeWeek('prev')}>
+					<button
+						type="button"
+						class="nav-btn"
+						aria-label="Previous {view}"
+						on:click={() => (view === 'month' ? changeMonth('prev') : changeWeek('prev'))}
+					>
 						<Icon name="chevron-left" size={16} />
 					</button>
-					<button class="today-btn" on:click={goToToday}>Today</button>
-					<button class="nav-btn" on:click={() => changeWeek('next')}>
+					<button
+						type="button"
+						class="today-btn"
+						on:click={() => (view === 'month' ? monthGoToToday() : goToToday())}
+					>
+						Today
+					</button>
+					<button
+						type="button"
+						class="nav-btn"
+						aria-label="Next {view}"
+						on:click={() => (view === 'month' ? changeMonth('next') : changeWeek('next'))}
+					>
 						<Icon name="chevron-right" size={16} />
 					</button>
 				</div>
 			</div>
 		</div>
 
+		{#if view === 'month'}
+			<!-- ── Month view ─────────────────────────────────── -->
+			{#if monthError}
+				<div class="month-error">
+					<Icon name="warning" size={20} />
+					<span>{monthError}</span>
+					<button type="button" class="top-btn" on:click={loadMonthData}>Try again</button>
+				</div>
+			{:else if monthLoading && !monthInitialized}
+				<div class="loading">
+					<div class="loading-spinner"></div>
+					<span>Reading the month...</span>
+				</div>
+			{:else}
+				<div class="month-layout" class:refreshing={monthLoading}>
+					<MonthGrid
+						weeks={buildMonthGrid(monthYear, monthMonth, localDateString())}
+						itemsByDay={monthItemsByDay}
+						{selectedDateStr}
+						on:selectday={handleSelectDay}
+					/>
+					<MonthSidePanel
+						{selectedDateStr}
+						selectedItems={monthItemsByDay[selectedDateStr] || []}
+						upcoming={upcomingItems(monthItems)}
+						todayStr={localDateString()}
+						canEdit={profile?.role === 'family' || profile?.role === 'admin'}
+						on:addshift={handleAddShiftFromMonth}
+						on:edititem={handleEditItemFromMonth}
+					/>
+				</div>
+			{/if}
+		{/if}
+
+		{#if view === 'week'}
 		<!-- Coverage Gap Alert -->
 		{#if (profile?.role === 'family' || profile?.role === 'admin') && getCoverageGaps().length > 0}
 			<div class="gap-banner">
@@ -1093,6 +1346,7 @@
 				<span class="legend-hint">Click a time slot to add a shift</span>
 			{/if}
 		</div>
+		{/if}
 	{/if}
 </div>
 
@@ -1364,6 +1618,73 @@
 	.nav-btn:hover {
 		color: var(--accent-bright);
 		background: var(--accent-tint);
+	}
+
+	/* ── View toggle ──────────────────────────────────────── */
+	.view-toggle {
+		display: flex;
+		align-items: center;
+		gap: 0.2rem;
+		padding: 0.2rem;
+		background: var(--surface-2);
+		border: 1px solid var(--border-soft);
+		border-radius: var(--radius-sm);
+	}
+
+	.toggle-btn {
+		min-height: 34px;
+		padding: 0.3rem 0.85rem;
+		background: none;
+		border: none;
+		border-radius: 6px;
+		color: var(--text-muted);
+		font-family: var(--font-body);
+		font-size: 0.78rem;
+		font-weight: 700;
+		letter-spacing: 0.06em;
+		cursor: pointer;
+		transition: all var(--transition-fast);
+	}
+
+	.toggle-btn:hover {
+		color: var(--accent-bright);
+	}
+
+	.toggle-btn.active {
+		background: var(--accent-dim);
+		color: var(--accent-bright);
+	}
+
+	/* ── Month layout ─────────────────────────────────────── */
+	.month-layout {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) 320px;
+		gap: var(--grid-gap);
+		align-items: start;
+		transition: opacity var(--transition-fast);
+	}
+
+	.month-layout.refreshing {
+		opacity: 0.75;
+	}
+
+	@media (max-width: 1024px) {
+		.month-layout {
+			grid-template-columns: 1fr;
+		}
+	}
+
+	.month-error {
+		display: flex;
+		align-items: center;
+		gap: 0.7rem;
+		flex-wrap: wrap;
+		padding: 1rem 1.2rem;
+		background: var(--danger-dim);
+		border: 1px solid var(--danger);
+		border-radius: var(--card-radius);
+		color: var(--danger);
+		--icon-accent: var(--danger);
 	}
 
 	/* ── Banners ──────────────────────────────────────────── */

@@ -42,6 +42,7 @@ import {
  * @returns {any[]} rows shaped like the input with concrete start/end ISO times
  */
 export function expandRecurringInstances(event, rangeStart, rangeEnd) {
+	/** @type {any[]} */
 	const instances = [];
 	const startDate = new Date(event.start_time);
 	const endDate = new Date(event.end_time);
@@ -73,7 +74,9 @@ export function expandRecurringInstances(event, rangeStart, rangeEnd) {
 		const dayName = cursor.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
 		if (!event.recurring_days || !event.recurring_days.includes(dayName)) continue;
 
-		const weeksDiff = Math.floor((cursor.getTime() - startDate.getTime()) / (7 * 24 * 60 * 60 * 1000));
+		const weeksDiff = Math.floor(
+			(cursor.getTime() - startDate.getTime()) / (7 * 24 * 60 * 60 * 1000)
+		);
 		if (event.recurring_pattern === 'biweekly' && weeksDiff % 2 !== 0) continue;
 
 		if (until && cursor > until) continue;
@@ -114,7 +117,10 @@ export async function fetchShiftsInRange(supabase, startStr, endStr, nannyId = n
 	const { data, error } = await query;
 	if (error) throw error;
 
-	return (data || []).map((shift) => ({ ...shift, date: normalizeDateValue(shift.date) }));
+	return (data || []).map((/** @type {any} */ shift) => ({
+		...shift,
+		date: normalizeDateValue(shift.date)
+	}));
 }
 
 /**
@@ -167,6 +173,7 @@ export async function fetchManualBusyInRange(supabase, rangeStart, rangeEnd) {
 
 	if (error) throw error;
 
+	/** @type {any[]} */
 	const rows = data || [];
 	const oneOffs = rows.filter((r) => !r.recurring);
 	const expanded = rows

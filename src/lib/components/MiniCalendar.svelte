@@ -10,8 +10,18 @@
 
 	const DAY_HEADERS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 	const MONTH_NAMES = [
-		'January', 'February', 'March', 'April', 'May', 'June',
-		'July', 'August', 'September', 'October', 'November', 'December'
+		'January',
+		'February',
+		'March',
+		'April',
+		'May',
+		'June',
+		'July',
+		'August',
+		'September',
+		'October',
+		'November',
+		'December'
 	];
 
 	let today = new Date();
@@ -34,14 +44,18 @@
 	}
 
 	function prevMonth() {
-		if (viewMonth === 0) { viewYear--; viewMonth = 11; }
-		else viewMonth--;
+		if (viewMonth === 0) {
+			viewYear--;
+			viewMonth = 11;
+		} else viewMonth--;
 		notifyMonth();
 	}
 
 	function nextMonth() {
-		if (viewMonth === 11) { viewYear++; viewMonth = 0; }
-		else viewMonth++;
+		if (viewMonth === 11) {
+			viewYear++;
+			viewMonth = 0;
+		} else viewMonth++;
 		notifyMonth();
 	}
 
@@ -79,10 +93,7 @@
 			{#each weeks as week, wi (wi)}
 				<tr>
 					{#each week as cell (cell.dateStr)}
-						<td
-							class:outside={!cell.current}
-							class:today={cell.isToday}
-						>
+						<td class:outside={!cell.current} class:today={cell.isToday}>
 							<span class="day-num">{cell.day}</span>
 							{#if shiftSet.has(cell.dateStr)}
 								<span class="dot shift-dot" aria-hidden="true"></span>
@@ -96,7 +107,9 @@
 	</table>
 
 	<div class="cal-legend">
-		<span class="legend-item"><span class="dot shift-dot" aria-hidden="true"></span> Nanny Shift</span>
+		<span class="legend-item"
+			><span class="dot shift-dot" aria-hidden="true"></span> Nanny Shift</span
+		>
 	</div>
 </div>
 

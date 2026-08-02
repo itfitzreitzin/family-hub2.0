@@ -19,29 +19,28 @@
 
 	// Each destination gets a sprite. The labels double as tarot-ish titles.
 	const LINKS = [
-		{ href: '/dashboard', key: 'dashboard', label: 'Hearth', icon: 'cottage', short: 'Hearth' },
-		{ href: '/tracker', key: 'tracker', label: 'The Hours', icon: 'hourglass', short: 'Hours' },
+		{ href: '/dashboard', key: 'dashboard', label: 'Today', icon: 'cottage', short: 'Today' },
+		{ href: '/tracker', key: 'tracker', label: 'Tracker', icon: 'hourglass', short: 'Tracker' },
 		{
 			href: '/schedule',
 			key: 'schedule',
-			label: 'The Moons',
-			icon: 'moon',
-			short: 'Moons',
+			label: 'Calendar',
+			icon: 'calendar',
+			short: 'Calendar',
 			roles: ['family', 'admin']
 		},
-		{ href: '/history', key: 'history', label: 'The Ledger', icon: 'scroll', short: 'Ledger' },
+		{ href: '/history', key: 'history', label: 'Payments', icon: 'coin', short: 'Payments' },
 		{
 			href: '/admin',
 			key: 'admin',
-			label: 'The Keys',
+			label: 'Admin',
 			icon: 'key',
-			short: 'Keys',
+			short: 'Admin',
 			adminOnly: true
 		},
-		{ href: '/settings', key: 'settings', label: 'The Self', icon: 'candle', short: 'Self' }
+		{ href: '/settings', key: 'settings', label: 'Settings', icon: 'candle', short: 'Settings' }
 	];
 
-	// Bottom bar carries the three most-tapped destinations, plus a menu button.
 	const BOTTOM = ['dashboard', 'tracker', 'history'];
 
 	// Both sides of this are constant, so it never needs to recompute.

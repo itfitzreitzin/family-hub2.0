@@ -54,54 +54,64 @@ export async function POST({ request }) {
   }
 
   try {
-    // Fetch and parse the iCal feed
-    const events = await fetchAndParseICal(calendar.calendar_url)
-
-    // Filter to events within a reasonable window (past 30 days to future 90 days)
+    // Sync window: far enough back for history, far enough out that browsing
+    // future months in the month view finds data. Recurrence expansion in the
+    // parser is bounded by the same window.
     const now = new Date()
     const windowStart = new Date(now)
-    windowStart.setDate(windowStart.getDate() - 30)
+    windowStart.setDate(windowStart.getDate() - 180)
     const windowEnd = new Date(now)
-    windowEnd.setDate(windowEnd.getDate() + 90)
+    windowEnd.setDate(windowEnd.getDate() + 365)
+
+    // Fetch and parse the iCal feed (recurrences expanded per-instance)
+    const events = await fetchAndParseICal(calendar.calendar_url, {
+      rangeStart: windowStart,
+      rangeEnd: windowEnd
+    })
 
     const relevantEvents = events.filter(e =>
       e.end > windowStart && e.start < windowEnd
     )
 
-    // Upsert events into calendar_events table
-    // Using the unique (calendar_id, event_id) constraint for dedup
+    // Batch upserts — an expanded feed can be 1,000+ rows and one round-trip
+    // per row is far too slow. The (calendar_id, event_id) unique index dedups.
     let synced = 0
     let errors = 0
+    const CHUNK = 200
 
-    for (const event of relevantEvents) {
+    for (let i = 0; i < relevantEvents.length; i += CHUNK) {
+      const chunk = relevantEvents.slice(i, i + CHUNK).map(event => ({
+        calendar_id: calendar.id,
+        user_id: calendar.user_id,
+        event_id: event.uid,
+        title: event.summary || 'Busy',
+        start_time: event.start.toISOString(),
+        end_time: event.end.toISOString(),
+        is_busy: event.isBusy
+      }))
+
       const { error: upsertError } = await supabase
         .from('calendar_events')
-        .upsert(
-          {
-            calendar_id: calendar.id,
-            user_id: calendar.user_id,
-            event_id: event.uid,
-            title: event.summary || 'Busy',
-            start_time: event.start.toISOString(),
-            end_time: event.end.toISOString(),
-            is_busy: event.isBusy
-          },
-          { onConflict: 'calendar_id,event_id' }
-        )
+        .upsert(chunk, { onConflict: 'calendar_id,event_id' })
 
       if (upsertError) {
-        errors++
+        errors += chunk.length
       } else {
-        synced++
+        synced += chunk.length
       }
     }
 
-    // Clean up old events that are no longer in the feed
+    // Remove events the feed no longer contains — but only inside the sync
+    // window. Rows outside it (older history, far future) are left alone so
+    // browsing distant months doesn't show falsely-empty data purged by an
+    // earlier, narrower sync.
     const feedUids = new Set(relevantEvents.map(e => e.uid))
     const { data: existingEvents } = await supabase
       .from('calendar_events')
-      .select('id, event_id')
+      .select('id, event_id, start_time, end_time')
       .eq('calendar_id', calendar.id)
+      .lt('start_time', windowEnd.toISOString())
+      .gt('end_time', windowStart.toISOString())
 
     if (existingEvents) {
       const toDelete = existingEvents.filter(e => !feedUids.has(e.event_id))
@@ -126,11 +136,7 @@ export async function POST({ request }) {
       total: relevantEvents.length
     })
   } catch (err) {
-    return json({ error: 'Failed to sync calendar: ' + err.message }, { status: 500 })
+    const message = err instanceof Error ? err.message : String(err)
+    return json({ error: 'Failed to sync calendar: ' + message }, { status: 500 })
   }
 }
-
-/**
- * POST /api/calendar/sync-all
- * Convenience: sync all calendars for a user.
- */

@@ -885,7 +885,7 @@
 		<!-- Top Bar -->
 		<div class="top-bar">
 			<div class="top-left">
-				<h1>Schedule</h1>
+				<h1>Calendar</h1>
 				<span class="week-label">
 					{currentWeekStart?.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
 				</span>

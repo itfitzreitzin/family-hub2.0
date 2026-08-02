@@ -1,9 +1,12 @@
 <script>
+	import { createEventDispatcher } from 'svelte';
 	import Icon from '$lib/icons/Icon.svelte';
-	import { localDateString } from '$lib/time.js';
+	import { localDateString, buildMonthGrid, getMonthGridRange } from '$lib/time.js';
 
 	/** @type {string[]} dates in YYYY-MM-DD format that have shifts */
 	export let shiftDates = [];
+
+	const dispatch = createEventDispatcher();
 
 	const DAY_HEADERS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 	const MONTH_NAMES = [
@@ -17,62 +20,36 @@
 
 	$: todayStr = localDateString(today);
 	$: monthLabel = `${MONTH_NAMES[viewMonth]} ${viewYear}`;
-	$: weeks = buildWeeks(viewYear, viewMonth);
+	/*
+	 * Dependencies must appear in the reactive statement itself: reads inside
+	 * an extracted function body are invisible to legacy dependency tracking,
+	 * which is exactly how the shift dots previously went stale.
+	 */
+	$: weeks = buildMonthGrid(viewYear, viewMonth, todayStr);
+	$: shiftSet = new Set(shiftDates);
 
-	/** @param {number} year @param {number} month */
-	function buildWeeks(year, month) {
-		const firstDay = new Date(year, month, 1).getDay();
-		const daysInMonth = new Date(year, month + 1, 0).getDate();
-		const daysInPrev = new Date(year, month, 0).getDate();
-
-		/** @type {{ day: number, current: boolean, dateStr: string, isToday: boolean, hasShift: boolean }[]} */
-		const cells = [];
-
-		for (let i = firstDay - 1; i >= 0; i--) {
-			const d = daysInPrev - i;
-			const m = month === 0 ? 12 : month;
-			const y = month === 0 ? year - 1 : year;
-			const ds = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-			cells.push({ day: d, current: false, dateStr: ds, isToday: false, hasShift: shiftDates.includes(ds) });
-		}
-
-		for (let d = 1; d <= daysInMonth; d++) {
-			const ds = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-			cells.push({ day: d, current: true, dateStr: ds, isToday: ds === todayStr, hasShift: shiftDates.includes(ds) });
-		}
-
-		const remaining = 7 - (cells.length % 7);
-		if (remaining < 7) {
-			const nm = month === 11 ? 1 : month + 2;
-			const ny = month === 11 ? year + 1 : year;
-			for (let d = 1; d <= remaining; d++) {
-				const ds = `${ny}-${String(nm).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-				cells.push({ day: d, current: false, dateStr: ds, isToday: false, hasShift: shiftDates.includes(ds) });
-			}
-		}
-
-		/** @type {typeof cells[]} */
-		const rows = [];
-		for (let i = 0; i < cells.length; i += 7) {
-			rows.push(cells.slice(i, i + 7));
-		}
-		return rows;
+	function notifyMonth() {
+		const { startStr, endStr } = getMonthGridRange(viewYear, viewMonth);
+		dispatch('monthchange', { year: viewYear, month: viewMonth, startStr, endStr });
 	}
 
 	function prevMonth() {
 		if (viewMonth === 0) { viewYear--; viewMonth = 11; }
 		else viewMonth--;
+		notifyMonth();
 	}
 
 	function nextMonth() {
 		if (viewMonth === 11) { viewYear++; viewMonth = 0; }
 		else viewMonth++;
+		notifyMonth();
 	}
 
 	function goToday() {
 		today = new Date();
 		viewYear = today.getFullYear();
 		viewMonth = today.getMonth();
+		notifyMonth();
 	}
 </script>
 
@@ -80,35 +57,36 @@
 	<div class="cal-nav">
 		<span class="cal-month">{monthLabel}</span>
 		<div class="cal-arrows">
-			<button on:click={prevMonth} aria-label="Previous month" class="cal-arrow">
+			<button type="button" on:click={prevMonth} aria-label="Previous month" class="cal-arrow">
 				<Icon name="chevron-left" size={12} />
 			</button>
-			<button on:click={goToday} class="cal-today-btn">Today</button>
-			<button on:click={nextMonth} aria-label="Next month" class="cal-arrow">
+			<button type="button" on:click={goToday} class="cal-today-btn">Today</button>
+			<button type="button" on:click={nextMonth} aria-label="Next month" class="cal-arrow">
 				<Icon name="chevron-right" size={12} />
 			</button>
 		</div>
 	</div>
 
-	<table class="cal-grid" aria-label="Calendar">
+	<table class="cal-grid" aria-label={'Calendar, ' + monthLabel}>
 		<thead>
 			<tr>
-				{#each DAY_HEADERS as d}
-					<th>{d}</th>
+				{#each DAY_HEADERS as d (d)}
+					<th scope="col">{d}</th>
 				{/each}
 			</tr>
 		</thead>
 		<tbody>
-			{#each weeks as week}
+			{#each weeks as week, wi (wi)}
 				<tr>
-					{#each week as cell}
+					{#each week as cell (cell.dateStr)}
 						<td
 							class:outside={!cell.current}
 							class:today={cell.isToday}
 						>
 							<span class="day-num">{cell.day}</span>
-							{#if cell.hasShift}
-								<span class="dot shift-dot" aria-label="Nanny shift"></span>
+							{#if shiftSet.has(cell.dateStr)}
+								<span class="dot shift-dot" aria-hidden="true"></span>
+								<span class="visually-hidden">Nanny shift</span>
 							{/if}
 						</td>
 					{/each}
@@ -118,7 +96,7 @@
 	</table>
 
 	<div class="cal-legend">
-		<span class="legend-item"><span class="dot shift-dot"></span> Nanny Shift</span>
+		<span class="legend-item"><span class="dot shift-dot" aria-hidden="true"></span> Nanny Shift</span>
 	</div>
 </div>
 

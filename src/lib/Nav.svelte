@@ -17,7 +17,8 @@
 	let lastScrollY = 0;
 	let hideNav = false;
 
-	// Each destination gets a sprite. The labels double as tarot-ish titles.
+	// Each destination gets a sprite. Labels stay practical; the arcana voice
+	// lives in page ledes and card names instead.
 	const LINKS = [
 		{ href: '/dashboard', key: 'dashboard', label: 'Today', icon: 'cottage', short: 'Today' },
 		{ href: '/tracker', key: 'tracker', label: 'Tracker', icon: 'hourglass', short: 'Tracker' },
@@ -29,7 +30,7 @@
 			short: 'Calendar',
 			roles: ['family', 'admin']
 		},
-		{ href: '/history', key: 'history', label: 'Payments', icon: 'coin', short: 'Payments' },
+		{ href: '/history', key: 'history', label: 'History', icon: 'scroll', short: 'History' },
 		{
 			href: '/admin',
 			key: 'admin',
@@ -730,5 +731,6 @@
 		font-weight: 700;
 		letter-spacing: 0.09em;
 		text-transform: uppercase;
+		white-space: nowrap;
 	}
 </style>

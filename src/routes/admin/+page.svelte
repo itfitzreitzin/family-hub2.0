@@ -181,8 +181,8 @@
 	<div class="container">
 		<header class="page-head">
 			<div>
-				<h1>The Keys</h1>
-				<p class="lede">Everything the household can change.</p>
+				<h1>Admin</h1>
+				<p class="lede">The Keys — everything the household can change.</p>
 			</div>
 			<button class="btn btn-primary" on:click={() => (showAddNanny = true)}>
 				<Icon name="plus" size={16} /> Add a keeper

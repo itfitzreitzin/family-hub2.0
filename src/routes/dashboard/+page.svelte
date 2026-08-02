@@ -4,7 +4,17 @@
 	import Nav from '$lib/Nav.svelte';
 	import { goto } from '$app/navigation';
 	import { toast, confirm as confirmModal } from '$lib/stores/toast.js';
-	import { getWeekBounds, localDateString, formatTime, formatDateWeekday, parseLocalDate } from '$lib/time.js';
+	import {
+		getWeekBounds,
+		localDateString,
+		localTimeString,
+		formatTime,
+		formatDateWeekday,
+		formatShiftLength,
+		parseLocalDate,
+		normalizeDateValue,
+		getMonthGridRange
+	} from '$lib/time.js';
 	import { errorMessage } from '$lib/errors.js';
 	import Icon from '$lib/icons/Icon.svelte';
 	import MoonPhase from '$lib/components/MoonPhase.svelte';
@@ -34,6 +44,8 @@
 	let upcomingShift = null;
 	/** @type {string[]} */
 	let monthShiftDates = [];
+	/** @type {{ startStr: string, endStr: string } | null} */
+	let monthRange = null;
 	/** @type {any[]} */
 	let unpaidPayments = [];
 	let now = Date.now();
@@ -255,38 +267,56 @@
 	async function loadUpcomingShift() {
 		const todayStr = localDateString();
 		try {
-			const { data, error } = await supabase
+			let query = supabase
 				.from('schedules')
 				.select('*')
 				.gte('date', todayStr)
 				.order('date', { ascending: true })
 				.order('start_time', { ascending: true })
-				.limit(1)
-				.maybeSingle();
+				.limit(3);
 
+			if (profile?.role === 'nanny') query = query.eq('nanny_id', user.id);
+
+			const { data, error } = await query;
 			if (error) throw error;
-			upcomingShift = data;
-		} catch {
+
+			// Skip shifts that already ended earlier today — they aren't "upcoming".
+			const nowTime = localTimeString();
+			upcomingShift =
+				(data || [])
+					.map((s) => ({ ...s, date: normalizeDateValue(s.date) }))
+					.find((s) => !(s.date === todayStr && (s.end_time || '').slice(0, 5) <= nowTime)) ||
+				null;
+		} catch (err) {
+			console.warn('Upcoming shift load failed:', errorMessage(err));
 			upcomingShift = null;
 		}
 	}
 
 	async function loadMonthShifts() {
-		const d = new Date();
-		const monthStart = localDateString(new Date(d.getFullYear(), d.getMonth(), 1));
-		const monthEnd = localDateString(new Date(d.getFullYear(), d.getMonth() + 1, 0));
+		if (!monthRange) {
+			const d = new Date();
+			monthRange = getMonthGridRange(d.getFullYear(), d.getMonth());
+		}
 		try {
 			const { data, error } = await supabase
 				.from('schedules')
 				.select('date')
-				.gte('date', monthStart)
-				.lte('date', monthEnd);
+				.gte('date', monthRange.startStr)
+				.lte('date', monthRange.endStr);
 
 			if (error) throw error;
-			monthShiftDates = (data || []).map(s => s.date);
-		} catch {
+			monthShiftDates = (data || []).map((s) => normalizeDateValue(s.date));
+		} catch (err) {
+			console.warn('Month shifts load failed:', errorMessage(err));
 			monthShiftDates = [];
 		}
+	}
+
+	/** @param {CustomEvent<{ year: number, month: number, startStr: string, endStr: string }>} event */
+	function handleMonthChange(event) {
+		monthRange = event.detail;
+		loadMonthShifts();
 	}
 
 	async function loadUnpaidPayments() {
@@ -294,11 +324,12 @@
 			const { data, error } = await supabase
 				.from('payments')
 				.select('*')
-				.eq('is_paid', false);
+				.or('is_paid.is.null,is_paid.eq.false');
 
 			if (error) throw error;
 			unpaidPayments = data || [];
-		} catch {
+		} catch (err) {
+			console.warn('Unpaid payments load failed:', errorMessage(err));
 			unpaidPayments = [];
 		}
 	}
@@ -358,14 +389,6 @@
 		const ampm = h >= 12 ? 'PM' : 'AM';
 		const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
 		return `${h12}:${String(m).padStart(2, '0')} ${ampm}`;
-	}
-
-	function shiftDuration(start, end) {
-		if (!start || !end) return '';
-		const [sh, sm] = start.split(':').map(Number);
-		const [eh, em] = end.split(':').map(Number);
-		const hours = (eh * 60 + em - sh * 60 - sm) / 60;
-		return hours > 0 ? `${hours.toFixed(0)} hours` : '';
 	}
 
 	$: hoursToday = weekEntries
@@ -468,7 +491,7 @@
 									{formatShiftTime(upcomingShift.start_time)} &ndash; {formatShiftTime(upcomingShift.end_time)}
 								</span>
 							</div>
-							<span class="shift-duration">{shiftDuration(upcomingShift.start_time, upcomingShift.end_time)}</span>
+							<span class="shift-duration">{formatShiftLength(upcomingShift.start_time, upcomingShift.end_time)}</span>
 							{#if upcomingShift.nanny_id}
 								<div class="shift-info-row">
 									<Icon name="person" size={14} />
@@ -537,7 +560,7 @@
 						<h2>Calendar Preview</h2>
 						<a href="/schedule" class="header-link">View Calendar <Icon name="chevron-right" size={10} /></a>
 					</div>
-					<MiniCalendar shiftDates={monthShiftDates} />
+					<MiniCalendar shiftDates={monthShiftDates} on:monthchange={handleMonthChange} />
 				</section>
 
 				<!-- ── Quick Actions ────────────────────────── -->
@@ -555,11 +578,11 @@
 							</div>
 							<Icon name="chevron-right" size={12} />
 						</a>
-						<a href="/tracker" class="action-row approve">
-							<span class="action-icon"><Icon name="check" size={20} /></span>
+						<a href="/schedule" class="action-row schedule">
+							<span class="action-icon"><Icon name="calendar" size={20} /></span>
 							<div class="action-text">
-								<span class="action-name">Approve Hours</span>
-								<span class="action-hint">Review and approve time</span>
+								<span class="action-name">Schedule a Shift</span>
+								<span class="action-hint">Plan the week ahead</span>
 							</div>
 							<Icon name="chevron-right" size={12} />
 						</a>
@@ -571,13 +594,23 @@
 							</div>
 							<Icon name="chevron-right" size={12} />
 						</a>
+						{#if profile?.role === 'admin'}
+							<a href="/admin" class="action-row admin">
+								<span class="action-icon"><Icon name="key" size={20} /></span>
+								<div class="action-text">
+									<span class="action-name">Admin</span>
+									<span class="action-hint">Manage the household</span>
+								</div>
+								<Icon name="chevron-right" size={12} />
+							</a>
+						{/if}
 					</div>
 				</section>
 			</div>
 
 			<!-- ── Nanny Roster (collapsible) ──────────────── -->
 			<section class="roster-section">
-				<button class="roster-toggle" on:click={() => showRoster = !showRoster}>
+				<button type="button" class="roster-toggle" on:click={() => showRoster = !showRoster}>
 					<Icon name="person" size={16} />
 					<span>Nanny Roster ({nannies.length})</span>
 					<span class="roster-chevron" class:open={showRoster}>
@@ -701,11 +734,45 @@
 							<div class="watch-status">
 								<span class="badge">Not clocked in</span>
 							</div>
-							<p class="watch-elapsed dim">00:00</p>
+							<p class="watch-elapsed dim">0h 0m</p>
 							<p class="watch-since">Ready when you are</p>
 							<a href="/tracker" class="tcard-action growing">
 								<Icon name="sprout" size={12} /> Begin your shift
 							</a>
+						</div>
+					{/if}
+				</section>
+
+				<!-- ── Upcoming Shift ───────────────────────── -->
+				<section class="tcard upcoming-card">
+					<div class="tcard-header">
+						<Icon name="calendar" size={16} />
+						<h2>Upcoming Shift</h2>
+					</div>
+
+					{#if upcomingShift}
+						<div class="shift-date-pill">
+							{formatDateWeekday(parseLocalDate(upcomingShift.date))}
+						</div>
+						<div class="shift-info">
+							<div class="shift-info-row">
+								<Icon name="clock" size={14} />
+								<span class="shift-time-range">
+									{formatShiftTime(upcomingShift.start_time)} &ndash; {formatShiftTime(upcomingShift.end_time)}
+								</span>
+							</div>
+							<span class="shift-duration">{formatShiftLength(upcomingShift.start_time, upcomingShift.end_time)}</span>
+							{#if upcomingShift.notes}
+								<div class="shift-info-row">
+									<Icon name="scroll" size={14} />
+									<span class="shift-notes">{upcomingShift.notes}</span>
+								</div>
+							{/if}
+						</div>
+					{:else}
+						<div class="tcard-empty">
+							<Icon name="moon" size={32} />
+							<p>No upcoming shifts scheduled</p>
 						</div>
 					{/if}
 				</section>
@@ -814,14 +881,15 @@
 	.calendar-card { grid-column: 1 / 3; grid-row: 2; }
 	.actions-card  { grid-column: 3; grid-row: 2; }
 
-	/* Nanny view uses a simpler 2+1 layout */
+	/* Nanny view uses a 2x2 layout */
 	.nanny-grid-layout {
 		grid-template-columns: 1fr 1fr;
 	}
 
-	.nanny-grid-layout .hero-card    { grid-column: 1; grid-row: 1; }
-	.nanny-grid-layout .shift-card   { grid-column: 2; grid-row: 1; }
-	.nanny-grid-layout .actions-card { grid-column: 1 / 3; grid-row: 2; }
+	.nanny-grid-layout .hero-card     { grid-column: 1; grid-row: 1; }
+	.nanny-grid-layout .shift-card    { grid-column: 2; grid-row: 1; }
+	.nanny-grid-layout .upcoming-card { grid-column: 1; grid-row: 2; }
+	.nanny-grid-layout .actions-card  { grid-column: 2; grid-row: 2; }
 
 	@media (max-width: 1024px) {
 		.today-grid {
@@ -842,7 +910,7 @@
 		}
 
 		.hero-card, .shift-card, .approval-card,
-		.calendar-card, .actions-card {
+		.calendar-card, .actions-card, .upcoming-card {
 			grid-column: 1 !important;
 			grid-row: auto !important;
 		}
@@ -1204,13 +1272,19 @@
 		--icon-accent: var(--growing);
 	}
 
-	.action-row.approve .action-icon {
+	.action-row.schedule .action-icon {
 		background: var(--accent-dim);
 		color: var(--accent);
 		--icon-accent: var(--accent);
 	}
 
 	.action-row.pay .action-icon {
+		background: var(--accent-dim);
+		color: var(--accent);
+		--icon-accent: var(--accent);
+	}
+
+	.action-row.admin .action-icon {
 		background: var(--arcane-dim);
 		color: var(--arcane);
 		--icon-accent: var(--arcane);
@@ -1471,6 +1545,11 @@
 	/* ═══════════════════════════════════════════════════════
 	   MISC
 	   ═══════════════════════════════════════════════════════ */
+
+	/* The loading skeleton's title bar still uses this class. */
+	.welcome {
+		margin-bottom: var(--section-gap);
+	}
 
 	.error-card {
 		padding: 0;

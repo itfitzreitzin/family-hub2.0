@@ -135,8 +135,8 @@
 	<div class="container">
 		<header class="page-head">
 			<div>
-				<h1>The Self</h1>
-				<p class="lede">Your name, your rate, your candle.</p>
+				<h1>Settings</h1>
+				<p class="lede">The Self — your name, your rate, your candle.</p>
 			</div>
 			<ThemeToggle />
 		</header>

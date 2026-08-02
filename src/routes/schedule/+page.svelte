@@ -6,6 +6,8 @@
 	import Icon from '$lib/icons/Icon.svelte';
 	import { goto } from '$app/navigation';
 	import { toast, confirm as confirmModal } from '$lib/stores/toast.js';
+	import { normalizeDateValue } from '$lib/time.js';
+	import { expandRecurringInstances } from '$lib/calendar.js';
 
 	let user = null;
 	let profile = null;
@@ -333,45 +335,10 @@
 	async function processRecurringEvents(manualTimes, weekStart, weekEnd) {
 		const recurringEvents = [];
 		for (const manual of manualTimes.filter((m) => m.recurring)) {
-			const instances = generateRecurringInstances(manual, weekStart, weekEnd);
+			const instances = expandRecurringInstances(manual, weekStart, weekEnd);
 			recurringEvents.push(...instances);
 		}
 		return recurringEvents;
-	}
-
-	function generateRecurringInstances(event, weekStart, weekEnd) {
-		const instances = [];
-		const startDate = new Date(event.start_time);
-		const endDate = new Date(event.end_time);
-		const duration = endDate - startDate;
-
-		if (event.recurring_pattern === 'weekly' || event.recurring_pattern === 'biweekly') {
-			for (let i = 0; i < 7; i++) {
-				const d = new Date(weekStart);
-				d.setDate(d.getDate() + i);
-				const dayName = d.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
-
-				if (event.recurring_days && event.recurring_days.includes(dayName)) {
-					const weeksDiff = Math.floor((d - startDate) / (7 * 24 * 60 * 60 * 1000));
-
-					if (event.recurring_pattern === 'weekly' || weeksDiff % 2 === 0) {
-						if (!event.recurring_until || d <= new Date(event.recurring_until)) {
-							const instanceStart = new Date(d);
-							instanceStart.setHours(startDate.getHours(), startDate.getMinutes(), 0);
-							const instanceEnd = new Date(instanceStart.getTime() + duration);
-
-							instances.push({
-								...event,
-								start_time: instanceStart.toISOString(),
-								end_time: instanceEnd.toISOString()
-							});
-						}
-					}
-				}
-			}
-		}
-
-		return instances;
 	}
 
 	async function setCurrentWeek(offset) {
@@ -397,14 +364,6 @@
 		const m = String(date.getMonth() + 1).padStart(2, '0');
 		const d = String(date.getDate()).padStart(2, '0');
 		return `${y}-${m}-${d}`;
-	}
-
-	function normalizeDateValue(value) {
-		if (!value) return '';
-		if (value instanceof Date) return ymd(value);
-		if (typeof value === 'string') return value.length > 10 ? value.slice(0, 10) : value;
-		const parsed = new Date(value);
-		return Number.isNaN(parsed.getTime()) ? '' : ymd(parsed);
 	}
 
 	function getNannyName(id) {

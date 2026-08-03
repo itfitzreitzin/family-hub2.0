@@ -1,15 +1,38 @@
 <script>
 	import Icon from '$lib/icons/Icon.svelte';
+	import { ART } from '$lib/art.js';
 
 	/** Sprite name to show in the vignette. */
 	export let icon = 'cauldron';
 	export let title = 'Nothing here yet';
 	export let hint = '';
+
+	/**
+	 * Sprites that have a painted counterpart get the illustration instead —
+	 * every call site upgrades without being touched. `warning` stays a sprite
+	 * on purpose: an error state should look like a warning, not a still life.
+	 */
+	/** @type {Record<string, string>} */
+	const ART_FOR = {
+		cauldron: ART.iconCauldron,
+		moon: ART.iconOrb,
+		coin: ART.iconCoins,
+		scroll: ART.iconClipboard,
+		calendar: ART.navCalendar,
+		hourglass: ART.iconClock,
+		key: ART.iconLock
+	};
+
+	$: art = ART_FOR[icon];
 </script>
 
 <div class="empty-vignette">
 	<div class="frame">
-		<Icon name={icon} size={64} />
+		{#if art}
+			<img src={art} alt="" width="64" height="64" class="frame-art" draggable="false" />
+		{:else}
+			<Icon name={icon} size={64} />
+		{/if}
 		<span class="spark spark-a"><Icon name="star" size={12} /></span>
 		<span class="spark spark-b"><Icon name="star" size={9} /></span>
 		<span class="spark spark-c"><Icon name="star" size={7} /></span>
@@ -43,6 +66,14 @@
 		background: radial-gradient(circle at 50% 40%, var(--accent-tint), transparent 70%);
 		color: var(--text-faint);
 		--icon-accent: var(--accent);
+	}
+
+	.frame-art {
+		width: 64px;
+		height: 64px;
+		object-fit: contain;
+		user-select: none;
+		-webkit-user-drag: none;
 	}
 
 	/* Sparks drift around the vignette at different tempos. */

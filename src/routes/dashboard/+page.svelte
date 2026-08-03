@@ -22,7 +22,8 @@
 	import Skeleton from '$lib/components/Skeleton.svelte';
 	import MiniCalendar from '$lib/components/MiniCalendar.svelte';
 	import ShelfFooter from '$lib/components/ShelfFooter.svelte';
-	import { ART } from '$lib/art.js';
+	import PixelArt from '$lib/components/PixelArt.svelte';
+	import { ART, avatarFor } from '$lib/art.js';
 
 	/** @type {Record<string, string>} */
 	const ROLE_TITLES = {
@@ -499,7 +500,7 @@
 				<!-- ── Upcoming Nanny Shift ──────────────────── -->
 				<section class="tcard shift-card">
 					<div class="tcard-header">
-						<Icon name="calendar" size={16} />
+						<PixelArt src={ART.iconShift} size={24} />
 						<h2>Upcoming Nanny Shift</h2>
 					</div>
 
@@ -521,7 +522,15 @@
 							>
 							{#if upcomingShift.nanny_id}
 								<div class="shift-info-row">
-									<Icon name="person" size={14} />
+									<img
+										class="shift-avatar"
+										src={avatarFor(upcomingShift.nanny_id)}
+										alt=""
+										width="22"
+										height="22"
+										loading="lazy"
+										draggable="false"
+									/>
 									<span>{getNannyName(upcomingShift.nanny_id)}</span>
 								</div>
 							{/if}
@@ -537,7 +546,7 @@
 						</a>
 					{:else}
 						<div class="tcard-empty">
-							<Icon name="moon" size={32} />
+							<PixelArt src={ART.iconOrb} size={40} class="empty-orb" />
 							<p>No upcoming shifts scheduled</p>
 							<a href="/schedule" class="tcard-action"
 								>Schedule a shift <Icon name="chevron-right" size={12} /></a
@@ -549,7 +558,7 @@
 				<!-- ── Hours / Payment Summary ──────────────── -->
 				<section class="tcard approval-card">
 					<div class="tcard-header">
-						<Icon name="hourglass" size={16} />
+						<PixelArt src={ART.iconClock} size={24} />
 						<h2>Hours &amp; Payments</h2>
 					</div>
 
@@ -569,6 +578,14 @@
 							<span class="approval-big">${weeklyTotal}</span>
 							<span class="approval-label">this week</span>
 						</div>
+						<img
+							class="approval-still"
+							src={ART.stillClipboard}
+							alt=""
+							aria-hidden="true"
+							loading="lazy"
+							draggable="false"
+						/>
 					</div>
 
 					{#if unpaidPayments.length > 0}
@@ -585,24 +602,33 @@
 				<!-- ── Calendar Preview ─────────────────────── -->
 				<section class="tcard calendar-card">
 					<div class="tcard-header">
-						<Icon name="calendar" size={16} />
+						<PixelArt src={ART.navCalendar} size={24} />
 						<h2>Calendar Preview</h2>
 						<a href="/schedule" class="header-link"
 							>View Calendar <Icon name="chevron-right" size={10} /></a
 						>
 					</div>
 					<MiniCalendar shiftDates={monthShiftDates} on:monthchange={handleMonthChange} />
+					<!-- The cat and its books keep watch from the corner, beside the legend. -->
+					<img
+						class="calendar-still"
+						src={ART.stillBooksCat}
+						alt=""
+						aria-hidden="true"
+						loading="lazy"
+						draggable="false"
+					/>
 				</section>
 
 				<!-- ── Quick Actions ────────────────────────── -->
 				<section class="tcard actions-card">
 					<div class="tcard-header">
-						<Icon name="star" size={16} />
+						<PixelArt src={ART.iconRituals} size={24} />
 						<h2>Quick Actions</h2>
 					</div>
 					<div class="action-list">
 						<a href="/tracker" class="action-row start">
-							<span class="action-icon"><Icon name="sprout" size={20} /></span>
+							<span class="action-icon"><PixelArt src={ART.iconShift} size={24} /></span>
 							<div class="action-text">
 								<span class="action-name">Start Shift</span>
 								<span class="action-hint">Begin today's shift</span>
@@ -610,7 +636,7 @@
 							<Icon name="chevron-right" size={12} />
 						</a>
 						<a href="/schedule" class="action-row schedule">
-							<span class="action-icon"><Icon name="calendar" size={20} /></span>
+							<span class="action-icon"><PixelArt src={ART.navCalendar} size={24} /></span>
 							<div class="action-text">
 								<span class="action-name">Schedule a Shift</span>
 								<span class="action-hint">Plan the week ahead</span>
@@ -618,7 +644,7 @@
 							<Icon name="chevron-right" size={12} />
 						</a>
 						<a href="/tracker" class="action-row pay">
-							<span class="action-icon"><Icon name="coin" size={20} /></span>
+							<span class="action-icon"><PixelArt src={ART.iconCoins} size={24} /></span>
 							<div class="action-text">
 								<span class="action-name">Pay Nanny</span>
 								<span class="action-hint">Send payment securely</span>
@@ -627,7 +653,7 @@
 						</a>
 						{#if profile?.role === 'admin'}
 							<a href="/admin" class="action-row admin">
-								<span class="action-icon"><Icon name="key" size={20} /></span>
+								<span class="action-icon"><PixelArt src={ART.iconLock} size={24} /></span>
 								<div class="action-text">
 									<span class="action-name">Admin</span>
 									<span class="action-hint">Manage the household</span>
@@ -675,6 +701,15 @@
 
 									<article class="nanny-card" class:active={isActive}>
 										<header class="nanny-header">
+											<img
+												class="nanny-avatar"
+												src={avatarFor(nanny.id)}
+												alt=""
+												width="44"
+												height="44"
+												loading="lazy"
+												draggable="false"
+											/>
 											<h3>{nanny.full_name}</h3>
 											{#if isActive}
 												<span class="badge badge-live"><span class="live-dot"></span> On clock</span
@@ -759,7 +794,7 @@
 				<!-- ── Current Shift Status ─────────────────── -->
 				<section class="tcard shift-card nanny-shift">
 					<div class="tcard-header">
-						<Icon name="hourglass" size={16} />
+						<PixelArt src={ART.iconShift} size={24} />
 						<h2>Your Shift</h2>
 					</div>
 
@@ -792,7 +827,7 @@
 				<!-- ── Upcoming Shift ───────────────────────── -->
 				<section class="tcard upcoming-card">
 					<div class="tcard-header">
-						<Icon name="calendar" size={16} />
+						<PixelArt src={ART.navCalendar} size={24} />
 						<h2>Upcoming Shift</h2>
 					</div>
 
@@ -821,7 +856,7 @@
 						</div>
 					{:else}
 						<div class="tcard-empty">
-							<Icon name="moon" size={32} />
+							<PixelArt src={ART.iconOrb} size={40} class="empty-orb" />
 							<p>No upcoming shifts scheduled</p>
 						</div>
 					{/if}
@@ -830,12 +865,12 @@
 				<!-- ── Quick Actions ────────────────────────── -->
 				<section class="tcard actions-card">
 					<div class="tcard-header">
-						<Icon name="star" size={16} />
+						<PixelArt src={ART.iconRituals} size={24} />
 						<h2>Quick Actions</h2>
 					</div>
 					<div class="action-list">
 						<a href="/tracker" class="action-row start">
-							<span class="action-icon"><Icon name="hourglass" size={20} /></span>
+							<span class="action-icon"><PixelArt src={ART.iconClock} size={24} /></span>
 							<div class="action-text">
 								<span class="action-name">The Hours</span>
 								<span class="action-hint">Clock in and out</span>
@@ -843,7 +878,7 @@
 							<Icon name="chevron-right" size={12} />
 						</a>
 						<a href="/history" class="action-row">
-							<span class="action-icon"><Icon name="scroll" size={20} /></span>
+							<span class="action-icon"><PixelArt src={ART.iconPurse} size={24} /></span>
 							<div class="action-text">
 								<span class="action-name">Your Ledger</span>
 								<span class="action-hint">Shifts and earnings</span>
@@ -851,7 +886,7 @@
 							<Icon name="chevron-right" size={12} />
 						</a>
 						<a href="/settings" class="action-row">
-							<span class="action-icon"><Icon name="candle" size={20} /></span>
+							<span class="action-icon"><PixelArt src={ART.iconOrb} size={24} /></span>
 							<div class="action-text">
 								<span class="action-name">Settings</span>
 								<span class="action-hint">Rate, name and Venmo</span>
@@ -1118,6 +1153,10 @@
 		background: var(--moss-deep, var(--growing));
 	}
 
+	.tcard-empty :global(.empty-orb) {
+		opacity: 0.8;
+	}
+
 	.tcard-empty {
 		display: flex;
 		flex-direction: column;
@@ -1252,6 +1291,17 @@
 		--icon-accent: var(--accent);
 	}
 
+	.shift-avatar {
+		width: 22px;
+		height: 22px;
+		border-radius: 50%;
+		border: 1px solid var(--border-gilt);
+		background: var(--surface-2);
+		flex-shrink: 0;
+		user-select: none;
+		-webkit-user-drag: none;
+	}
+
 	.shift-info-row span {
 		font-size: 0.88rem;
 		line-height: 1.3;
@@ -1279,8 +1329,25 @@
 
 	.approval-stats {
 		display: flex;
+		align-items: center;
 		gap: 1rem;
 		margin-bottom: 0.85rem;
+	}
+
+	/* The clipboard leans against the numbers, the way it does on the shelf. */
+	.approval-still {
+		width: 60px;
+		height: 60px;
+		flex-shrink: 0;
+		object-fit: contain;
+		user-select: none;
+		-webkit-user-drag: none;
+	}
+
+	@media (max-width: 380px) {
+		.approval-still {
+			display: none;
+		}
 	}
 
 	.approval-stat {
@@ -1343,6 +1410,26 @@
 
 	.calendar-card {
 		min-height: 280px;
+		position: relative;
+	}
+
+	/* Sits in the corner beside the legend row, which is left-aligned and
+	   leaves this spot empty. The card clips overflow, so it stays inside. */
+	.calendar-still {
+		position: absolute;
+		right: 14px;
+		bottom: 10px;
+		height: 52px;
+		width: auto;
+		pointer-events: none;
+		user-select: none;
+		-webkit-user-drag: none;
+	}
+
+	@media (max-width: 720px) {
+		.calendar-still {
+			display: none;
+		}
 	}
 
 	/* ═══════════════════════════════════════════════════════
@@ -1379,6 +1466,12 @@
 		height: 36px;
 		border-radius: var(--radius-sm);
 		flex-shrink: 0;
+	}
+
+	/* Midnight's dim tiles swallow the art's darker pigment; a whisper of
+	   moonlight behind each piece lifts it off the tile. Parchment needs none. */
+	:global(:root[data-theme='dark']) .action-icon :global(.pixel-art) {
+		filter: drop-shadow(0 0 5px rgba(244, 238, 225, 0.35));
 	}
 
 	.action-row.start .action-icon {
@@ -1590,10 +1683,24 @@
 		flex-wrap: wrap;
 	}
 
+	/* flex: 1 keeps the name pinned to its portrait; without it, the header's
+	   space-between floats the name into the middle of the row. */
 	.nanny-header h3 {
 		font-family: var(--font-display);
 		font-size: 1.02rem;
 		color: var(--text);
+		flex: 1;
+	}
+
+	.nanny-avatar {
+		width: 44px;
+		height: 44px;
+		border-radius: 50%;
+		border: 2px solid var(--border-gilt);
+		background: var(--surface-2);
+		flex-shrink: 0;
+		user-select: none;
+		-webkit-user-drag: none;
 	}
 
 	.nanny-details {

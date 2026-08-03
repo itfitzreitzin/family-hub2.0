@@ -45,8 +45,13 @@ export const ART = {
 	avatarEmma: '/art/avatar-emma.png'
 };
 
-/** Portraits that can stand in for a person who has no uploaded photo. */
-const AVATARS = [ART.avatarNick, ART.avatarSarah, ART.avatarNanny, ART.avatarJack, ART.avatarEmma];
+/**
+ * Portraits that can stand in for a person who has no uploaded photo.
+ * Adults only — profiles here are parents and caregivers, and handing a
+ * nanny the pigtailed child portrait reads as a mistake, not a charm.
+ * The kids' portraits stay in ART for features that are about the kids.
+ */
+const AVATARS = [ART.avatarNanny, ART.avatarSarah, ART.avatarNick];
 
 /**
  * Pick a stable stand-in portrait for someone without an avatar. Keyed off the

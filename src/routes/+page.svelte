@@ -68,6 +68,10 @@
 	}
 </script>
 
+<svelte:head>
+	<title>Reitzin Family Hub — The Hearth &amp; Hollow</title>
+</svelte:head>
+
 <div class="gate">
 	<div class="gate-corner">
 		<ThemeToggle compact />
@@ -79,7 +83,7 @@
 
 		<header class="crest">
 			<MoonPhase size={38} />
-			<h1>Family Hub</h1>
+			<h1><span>Reitzin</span> Family Hub</h1>
 			<p class="motto">{phase.name} &mdash; {phase.meaning}</p>
 		</header>
 
@@ -234,6 +238,14 @@
 		letter-spacing: 0.04em;
 		color: var(--accent-bright);
 		text-shadow: 0 0 30px var(--accent-dim);
+	}
+
+	h1 span {
+		display: block;
+		font-size: 0.52em;
+		letter-spacing: 0.22em;
+		text-transform: uppercase;
+		margin-bottom: 0.12rem;
 	}
 
 	.motto {

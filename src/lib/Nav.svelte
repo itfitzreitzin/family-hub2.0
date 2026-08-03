@@ -156,9 +156,9 @@
 	<!-- ── Desktop ─────────────────────────────────────────── -->
 	<nav class="desktop-nav" aria-label="Main navigation">
 		<div class="nav-content">
-			<a href="/dashboard" class="logo" aria-label="Family Hub — go to the hearth">
+			<a href="/dashboard" class="logo" aria-label="Reitzin Family Hub — go to the hearth">
 				<MoonPhase size={20} />
-				<span class="wordmark">Family Hub</span>
+				<span class="wordmark"><span>Reitzin</span> Family Hub</span>
 			</a>
 
 			<div class="nav-links">
@@ -192,10 +192,10 @@
 				href="/dashboard"
 				class="logo"
 				on:click={handleNavClick}
-				aria-label="Family Hub — go to the hearth"
+				aria-label="Reitzin Family Hub — go to the hearth"
 			>
 				<MoonPhase size={18} />
-				<span class="wordmark">Family Hub</span>
+				<span class="wordmark"><span>Reitzin</span> Family Hub</span>
 			</a>
 			<ThemeToggle compact />
 		</div>
@@ -277,12 +277,21 @@
 	}
 
 	.wordmark {
+		display: flex;
+		flex-direction: column;
 		font-family: var(--font-wordmark);
-		font-size: 1.05rem;
+		font-size: 0.95rem;
+		line-height: 1.05;
 		font-weight: 700;
 		letter-spacing: 0.05em;
 		color: var(--accent-bright);
 		text-shadow: 0 0 18px var(--accent-dim);
+	}
+
+	.wordmark span {
+		font-size: 0.58em;
+		letter-spacing: 0.2em;
+		text-transform: uppercase;
 	}
 
 	/* ── Desktop ───────────────────────────────────────────── */

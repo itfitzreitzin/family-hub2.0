@@ -21,7 +21,6 @@
 	// lives in page ledes and card names instead.
 	const LINKS = [
 		{ href: '/dashboard', key: 'dashboard', label: 'Today', icon: 'cottage', short: 'Today' },
-		{ href: '/tracker', key: 'tracker', label: 'Tracker', icon: 'hourglass', short: 'Tracker' },
 		{
 			href: '/schedule',
 			key: 'schedule',
@@ -30,7 +29,9 @@
 			short: 'Calendar',
 			roles: ['family', 'admin']
 		},
-		{ href: '/history', key: 'history', label: 'History', icon: 'scroll', short: 'History' },
+		{ href: '/tracker', key: 'tracker', label: 'Care', icon: 'heart', short: 'Care' },
+		{ href: '/settings', key: 'settings', label: 'Home', icon: 'cottage', short: 'Home' },
+		{ href: '/history', key: 'history', label: 'Payments', icon: 'coin', short: 'Payments' },
 		{
 			href: '/admin',
 			key: 'admin',
@@ -38,8 +39,7 @@
 			icon: 'key',
 			short: 'Admin',
 			adminOnly: true
-		},
-		{ href: '/settings', key: 'settings', label: 'Settings', icon: 'candle', short: 'Settings' }
+		}
 	];
 
 	const BOTTOM = ['dashboard', 'tracker', 'history'];
@@ -156,9 +156,9 @@
 	<!-- ── Desktop ─────────────────────────────────────────── -->
 	<nav class="desktop-nav" aria-label="Main navigation">
 		<div class="nav-content">
-			<a href="/dashboard" class="logo" aria-label="Family Hub — go to the hearth">
+			<a href="/dashboard" class="logo" aria-label="Reitzin Family Hub — go to the hearth">
 				<MoonPhase size={20} />
-				<span class="wordmark">Family Hub</span>
+				<span class="wordmark"><span>Reitzin</span> Family Hub</span>
 			</a>
 
 			<div class="nav-links">
@@ -192,10 +192,10 @@
 				href="/dashboard"
 				class="logo"
 				on:click={handleNavClick}
-				aria-label="Family Hub — go to the hearth"
+				aria-label="Reitzin Family Hub — go to the hearth"
 			>
 				<MoonPhase size={18} />
-				<span class="wordmark">Family Hub</span>
+				<span class="wordmark"><span>Reitzin</span> Family Hub</span>
 			</a>
 			<ThemeToggle compact />
 		</div>
@@ -277,12 +277,21 @@
 	}
 
 	.wordmark {
+		display: flex;
+		flex-direction: column;
 		font-family: var(--font-wordmark);
-		font-size: 1.05rem;
+		font-size: 0.95rem;
+		line-height: 1.05;
 		font-weight: 700;
 		letter-spacing: 0.05em;
 		color: var(--accent-bright);
 		text-shadow: 0 0 18px var(--accent-dim);
+	}
+
+	.wordmark span {
+		font-size: 0.58em;
+		letter-spacing: 0.2em;
+		text-transform: uppercase;
 	}
 
 	/* ── Desktop ───────────────────────────────────────────── */

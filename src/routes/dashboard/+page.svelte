@@ -160,12 +160,18 @@
 	}
 
 	onMount(() => {
+		document.body.classList.add('storybook-dashboard');
 		initDashboard();
-		tickInterval = setInterval(() => { now = Date.now(); }, 1000);
-		pollInterval = setInterval(() => { reloadDashboard(); }, 30000);
+		tickInterval = setInterval(() => {
+			now = Date.now();
+		}, 1000);
+		pollInterval = setInterval(() => {
+			reloadDashboard();
+		}, 30000);
 	});
 
 	onDestroy(() => {
+		document.body.classList.remove('storybook-dashboard');
 		if (dashChannel) supabase.removeChannel(dashChannel);
 		if (pollInterval) clearInterval(pollInterval);
 		if (tickInterval) clearInterval(tickInterval);
@@ -177,8 +183,13 @@
 		initError = null;
 
 		try {
-			const { data: { user: currentUser } } = await supabase.auth.getUser();
-			if (!currentUser) { goto('/'); return; }
+			const {
+				data: { user: currentUser }
+			} = await supabase.auth.getUser();
+			if (!currentUser) {
+				goto('/');
+				return;
+			}
 
 			user = currentUser;
 
@@ -191,7 +202,10 @@
 			if (profileError) throw profileError;
 			profile = profileData;
 
-			if (!profile || !profile.role) { goto('/setup'); return; }
+			if (!profile || !profile.role) {
+				goto('/setup');
+				return;
+			}
 
 			if (profile?.role === 'family' || profile?.role === 'admin') {
 				await loadFamilyDashboard();
@@ -222,7 +236,10 @@
 
 	function scheduleReload() {
 		if (reloadTimer) clearTimeout(reloadTimer);
-		reloadTimer = setTimeout(() => { reloadTimer = null; reloadDashboard(); }, 300);
+		reloadTimer = setTimeout(() => {
+			reloadTimer = null;
+			reloadDashboard();
+		}, 300);
 	}
 
 	function handleVisibilityChange() {
@@ -257,11 +274,7 @@
 		if (weekError) throw weekError;
 		weekEntries = weekData || [];
 
-		await Promise.all([
-			loadUpcomingShift(),
-			loadMonthShifts(),
-			loadUnpaidPayments()
-		]);
+		await Promise.all([loadUpcomingShift(), loadMonthShifts(), loadUnpaidPayments()]);
 	}
 
 	async function loadUpcomingShift() {
@@ -285,8 +298,7 @@
 			upcomingShift =
 				(data || [])
 					.map((s) => ({ ...s, date: normalizeDateValue(s.date) }))
-					.find((s) => !(s.date === todayStr && (s.end_time || '').slice(0, 5) <= nowTime)) ||
-				null;
+					.find((s) => !(s.date === todayStr && (s.end_time || '').slice(0, 5) <= nowTime)) || null;
 		} catch (err) {
 			console.warn('Upcoming shift load failed:', errorMessage(err));
 			upcomingShift = null;
@@ -353,7 +365,9 @@
 	function subscribeToShifts() {
 		dashChannel = supabase
 			.channel('active_shifts')
-			.on('postgres_changes', { event: '*', schema: 'public', table: 'time_entries' }, () => { scheduleReload(); })
+			.on('postgres_changes', { event: '*', schema: 'public', table: 'time_entries' }, () => {
+				scheduleReload();
+			})
 			.subscribe();
 	}
 
@@ -380,7 +394,7 @@
 	}
 
 	function getNannyName(nannyId) {
-		return nannies.find(n => n.id === nannyId)?.full_name || 'Nanny';
+		return nannies.find((n) => n.id === nannyId)?.full_name || 'Nanny';
 	}
 
 	function formatShiftTime(timeStr) {
@@ -424,7 +438,6 @@
 </script>
 
 <svelte:document on:visibilitychange={handleVisibilityChange} />
-
 <Nav currentPage="dashboard" />
 
 {#if loading}
@@ -447,14 +460,12 @@
 		</div>
 	</div>
 {:else}
-	<div class="container">
+	<div class="container storybook-shell">
 		{#if profile?.role === 'family' || profile?.role === 'admin'}
-
 			<!-- ═══════════════════════════════════════════════
 			     TODAY GRID — Family / Admin view
 			     ═══════════════════════════════════════════════ -->
 			<div class="today-grid">
-
 				<!-- ── Hero: The Hearth ──────────────────────── -->
 				<section class="tcard hero-card">
 					<div class="hero-badge">THE HEARTH</div>
@@ -488,10 +499,14 @@
 							<div class="shift-info-row">
 								<Icon name="clock" size={14} />
 								<span class="shift-time-range">
-									{formatShiftTime(upcomingShift.start_time)} &ndash; {formatShiftTime(upcomingShift.end_time)}
+									{formatShiftTime(upcomingShift.start_time)} &ndash; {formatShiftTime(
+										upcomingShift.end_time
+									)}
 								</span>
 							</div>
-							<span class="shift-duration">{formatShiftLength(upcomingShift.start_time, upcomingShift.end_time)}</span>
+							<span class="shift-duration"
+								>{formatShiftLength(upcomingShift.start_time, upcomingShift.end_time)}</span
+							>
 							{#if upcomingShift.nanny_id}
 								<div class="shift-info-row">
 									<Icon name="person" size={14} />
@@ -512,7 +527,9 @@
 						<div class="tcard-empty">
 							<Icon name="moon" size={32} />
 							<p>No upcoming shifts scheduled</p>
-							<a href="/schedule" class="tcard-action">Schedule a shift <Icon name="chevron-right" size={12} /></a>
+							<a href="/schedule" class="tcard-action"
+								>Schedule a shift <Icon name="chevron-right" size={12} /></a
+							>
 						</div>
 					{/if}
 				</section>
@@ -521,7 +538,7 @@
 				<section class="tcard approval-card">
 					<div class="tcard-header">
 						<Icon name="hourglass" size={16} />
-						<h2>Hours &amp; Payments</h2>
+						<h2>Hours Awaiting Approval</h2>
 					</div>
 
 					{#if activeShifts.length > 0}
@@ -558,16 +575,50 @@
 					<div class="tcard-header">
 						<Icon name="calendar" size={16} />
 						<h2>Calendar Preview</h2>
-						<a href="/schedule" class="header-link">View Calendar <Icon name="chevron-right" size={10} /></a>
+						<a href="/schedule" class="header-link"
+							>View Calendar <Icon name="chevron-right" size={10} /></a
+						>
 					</div>
 					<MiniCalendar shiftDates={monthShiftDates} on:monthchange={handleMonthChange} />
+				</section>
+
+				<!-- ── House Readings ────────────────────────── -->
+				<section class="tcard readings-card">
+					<div class="tcard-header">
+						<Icon name="crystal" size={16} />
+						<h2>House Readings</h2>
+					</div>
+					<div class="reading-list">
+						<div class="reading-row">
+							<Icon name="candle" size={22} />
+							<span><small>Temperature</small><strong>72°F</strong></span>
+							<em>Comfortable</em>
+						</div>
+						<div class="reading-row">
+							<Icon name="moon" size={22} />
+							<span><small>Humidity</small><strong>46%</strong></span>
+							<em>Good</em>
+						</div>
+						<div class="reading-row">
+							<Icon name="key" size={22} />
+							<span><small>Front Door Lock</small><strong>Locked</strong></span>
+							<em>Secure</em>
+						</div>
+					</div>
+					<div class="reading-vignette" aria-hidden="true">
+						<Icon name="scroll" size={38} /><Icon name="cat" size={52} /><Icon
+							name="candle"
+							size={36}
+						/>
+					</div>
+					<p class="reading-updated">Last updated: 7:15 AM</p>
 				</section>
 
 				<!-- ── Quick Actions ────────────────────────── -->
 				<section class="tcard actions-card">
 					<div class="tcard-header">
 						<Icon name="star" size={16} />
-						<h2>Quick Actions</h2>
+						<h2>Daily Rituals</h2>
 					</div>
 					<div class="action-list">
 						<a href="/tracker" class="action-row start">
@@ -610,7 +661,7 @@
 
 			<!-- ── Nanny Roster (collapsible) ──────────────── -->
 			<section class="roster-section">
-				<button type="button" class="roster-toggle" on:click={() => showRoster = !showRoster}>
+				<button type="button" class="roster-toggle" on:click={() => (showRoster = !showRoster)}>
 					<Icon name="person" size={16} />
 					<span>Nanny Roster ({nannies.length})</span>
 					<span class="roster-chevron" class:open={showRoster}>
@@ -646,16 +697,23 @@
 										<header class="nanny-header">
 											<h3>{nanny.full_name}</h3>
 											{#if isActive}
-												<span class="badge badge-live"><span class="live-dot"></span> On clock</span>
+												<span class="badge badge-live"><span class="live-dot"></span> On clock</span
+												>
 											{:else}
 												<span class="badge">Resting</span>
 											{/if}
 										</header>
 
 										<dl class="nanny-details">
-											<div><dt>Rate</dt><dd>${nanny.hourly_rate}/hr</dd></div>
+											<div>
+												<dt>Rate</dt>
+												<dd>${nanny.hourly_rate}/hr</dd>
+											</div>
 											{#if nanny.venmo_username}
-												<div><dt>Venmo</dt><dd>@{nanny.venmo_username}</dd></div>
+												<div>
+													<dt>Venmo</dt>
+													<dd>@{nanny.venmo_username}</dd>
+												</div>
 											{/if}
 										</dl>
 
@@ -664,7 +722,9 @@
 												<Icon name="hourglass" size={18} />
 												<div>
 													<span class="shift-since">Since {formatTime(activeShift.clock_in)}</span>
-													<span class="shift-elapsed">{getTimeSince(activeShift.clock_in, now)}</span>
+													<span class="shift-elapsed"
+														>{getTimeSince(activeShift.clock_in, now)}</span
+													>
 												</div>
 											</div>
 										{/if}
@@ -688,14 +748,11 @@
 					</div>
 				{/if}
 			</section>
-
 		{:else if profile?.role === 'nanny'}
-
 			<!-- ═══════════════════════════════════════════════
 			     TODAY GRID — Nanny view
 			     ═══════════════════════════════════════════════ -->
 			<div class="today-grid nanny-grid-layout">
-
 				<!-- ── Hero ─────────────────────────────────── -->
 				<section class="tcard hero-card">
 					<div class="hero-badge">YOUR HEARTH</div>
@@ -758,10 +815,14 @@
 							<div class="shift-info-row">
 								<Icon name="clock" size={14} />
 								<span class="shift-time-range">
-									{formatShiftTime(upcomingShift.start_time)} &ndash; {formatShiftTime(upcomingShift.end_time)}
+									{formatShiftTime(upcomingShift.start_time)} &ndash; {formatShiftTime(
+										upcomingShift.end_time
+									)}
 								</span>
 							</div>
-							<span class="shift-duration">{formatShiftLength(upcomingShift.start_time, upcomingShift.end_time)}</span>
+							<span class="shift-duration"
+								>{formatShiftLength(upcomingShift.start_time, upcomingShift.end_time)}</span
+							>
 							{#if upcomingShift.notes}
 								<div class="shift-info-row">
 									<Icon name="scroll" size={14} />
@@ -811,8 +872,22 @@
 					</div>
 				</section>
 			</div>
-
 		{/if}
+
+		<footer class="hearth-footer">
+			<div class="footer-curio" aria-hidden="true"><Icon name="crystal" size={42} /></div>
+			<p>
+				<Icon name="star" size={12} /> Grateful for the little things that make our house a home. <Icon
+					name="moon"
+					size={12}
+				/>
+			</p>
+			<a href="/tracker"
+				><Icon name="coin" size={22} /><span
+					>Balance Due<strong>${unpaidAmount.toFixed(2)}</strong></span
+				><Icon name="chevron-right" size={12} /></a
+			>
+		</footer>
 	</div>
 {/if}
 
@@ -875,32 +950,81 @@
 		margin-bottom: var(--section-gap);
 	}
 
-	.hero-card     { grid-column: 1; grid-row: 1; }
-	.shift-card    { grid-column: 2; grid-row: 1; }
-	.approval-card { grid-column: 3; grid-row: 1; }
-	.calendar-card { grid-column: 1 / 3; grid-row: 2; }
-	.actions-card  { grid-column: 3; grid-row: 2; }
+	.hero-card {
+		grid-column: 1;
+		grid-row: 1;
+	}
+	.shift-card {
+		grid-column: 2;
+		grid-row: 1;
+	}
+	.approval-card {
+		grid-column: 3;
+		grid-row: 1;
+	}
+	.calendar-card {
+		grid-column: 1;
+		grid-row: 2;
+	}
+	.readings-card {
+		grid-column: 2;
+		grid-row: 2;
+	}
+	.actions-card {
+		grid-column: 3;
+		grid-row: 2;
+	}
 
 	/* Nanny view uses a 2x2 layout */
 	.nanny-grid-layout {
 		grid-template-columns: 1fr 1fr;
 	}
 
-	.nanny-grid-layout .hero-card     { grid-column: 1; grid-row: 1; }
-	.nanny-grid-layout .shift-card    { grid-column: 2; grid-row: 1; }
-	.nanny-grid-layout .upcoming-card { grid-column: 1; grid-row: 2; }
-	.nanny-grid-layout .actions-card  { grid-column: 2; grid-row: 2; }
+	.nanny-grid-layout .hero-card {
+		grid-column: 1;
+		grid-row: 1;
+	}
+	.nanny-grid-layout .shift-card {
+		grid-column: 2;
+		grid-row: 1;
+	}
+	.nanny-grid-layout .upcoming-card {
+		grid-column: 1;
+		grid-row: 2;
+	}
+	.nanny-grid-layout .actions-card {
+		grid-column: 2;
+		grid-row: 2;
+	}
 
 	@media (max-width: 1024px) {
 		.today-grid {
 			grid-template-columns: repeat(2, 1fr);
 		}
 
-		.hero-card     { grid-column: 1 / 3; }
-		.shift-card    { grid-column: 1; grid-row: 2; }
-		.approval-card { grid-column: 2; grid-row: 2; }
-		.calendar-card { grid-column: 1 / 3; grid-row: 3; }
-		.actions-card  { grid-column: 1 / 3; grid-row: 4; }
+		.hero-card {
+			grid-column: 1 / 3;
+		}
+		.shift-card {
+			grid-column: 1;
+			grid-row: 2;
+		}
+		.approval-card {
+			grid-column: 2;
+			grid-row: 2;
+		}
+		.calendar-card {
+			grid-column: 1;
+			grid-row: 3;
+		}
+		.readings-card {
+			grid-column: 2;
+			grid-row: 3;
+		}
+		.actions-card {
+			grid-column: 1 / 3;
+			grid-row: 4;
+		}
 	}
 
 	@media (max-width: 640px) {
@@ -909,8 +1033,13 @@
 			grid-template-columns: 1fr;
 		}
 
-		.hero-card, .shift-card, .approval-card,
-		.calendar-card, .actions-card, .upcoming-card {
+		.hero-card,
+		.shift-card,
+		.approval-card,
+		.calendar-card,
+		.readings-card,
+		.actions-card,
+		.upcoming-card {
 			grid-column: 1 !important;
 			grid-row: auto !important;
 		}
@@ -921,14 +1050,24 @@
 	   ═══════════════════════════════════════════════════════ */
 
 	.tcard {
+		position: relative;
 		display: flex;
 		flex-direction: column;
 		padding: var(--card-padding);
 		background: var(--surface);
-		border: 1px solid var(--border);
-		border-radius: var(--card-radius);
+		border: 1px solid var(--border-gilt);
+		border-radius: 5px;
 		box-shadow: var(--shadow-md);
 		overflow: hidden;
+	}
+
+	.tcard::after {
+		content: '';
+		position: absolute;
+		inset: 7px;
+		border: 1px solid var(--border-soft);
+		border-radius: 2px;
+		pointer-events: none;
 	}
 
 	.tcard-header {
@@ -1035,9 +1174,28 @@
 	   ═══════════════════════════════════════════════════════ */
 
 	.hero-card {
-		background-image: linear-gradient(160deg, var(--accent-dim), transparent 55%);
+		background:
+			radial-gradient(circle at 50% 22%, rgba(217, 164, 65, 0.18), transparent 32%),
+			linear-gradient(155deg, #21152f, #100a1c 68%);
 		border-color: var(--border-gilt);
 		position: relative;
+		color: #f4e6c5;
+		box-shadow:
+			inset 0 0 45px rgba(0, 0, 0, 0.55),
+			var(--shadow-lg);
+	}
+
+	.hero-card::before {
+		content: '✦  ☾  ◯  ◐  ◑  ☽  ✦';
+		position: absolute;
+		top: 0.8rem;
+		left: 0;
+		right: 0;
+		text-align: center;
+		font-size: 0.72rem;
+		letter-spacing: 0.38rem;
+		color: #d9a441;
+		opacity: 0.75;
 	}
 
 	.hero-badge {
@@ -1048,7 +1206,9 @@
 		letter-spacing: 0.2em;
 		text-transform: uppercase;
 		color: var(--accent);
-		margin-bottom: 0.6rem;
+		margin: 1.25rem 0 0.6rem;
+		text-align: center;
+		font-size: 0.9rem;
 	}
 
 	.hero-greeting {
@@ -1056,13 +1216,13 @@
 		font-size: clamp(1.25rem, 3vw, 1.65rem);
 		font-weight: 700;
 		line-height: 1.25;
-		color: var(--text);
+		color: #f4e6c5;
 		margin-bottom: 0.35rem;
 	}
 
 	.hero-subtitle {
 		font-size: 0.88rem;
-		color: var(--text-muted);
+		color: #cbbd9e;
 		margin-bottom: 0.75rem;
 	}
 
@@ -1071,8 +1231,9 @@
 		justify-content: center;
 		padding: 0.75rem 0;
 		color: var(--text-faint);
-		opacity: 0.45;
+		opacity: 1;
 		--icon-accent: var(--accent);
+		filter: drop-shadow(0 8px 12px #000);
 		animation: flicker 5s ease-in-out infinite;
 	}
 
@@ -1089,11 +1250,11 @@
 		align-items: center;
 		gap: 0.4rem;
 		padding: 0.6rem 0.8rem;
-		background: var(--accent-tint);
+		background: rgba(242, 232, 210, 0.94);
 		border: 1px solid var(--border-gilt);
 		border-radius: var(--radius-sm);
 		font-size: 0.8rem;
-		color: var(--accent);
+		color: #4b3218;
 		--icon-accent: var(--accent-bright);
 	}
 
@@ -1228,6 +1389,135 @@
 
 	.calendar-card {
 		min-height: 280px;
+	}
+
+	/* ═══════════════════════════════════════════════════════
+	   HOUSE READINGS
+	   ═══════════════════════════════════════════════════════ */
+	.reading-list {
+		display: grid;
+		gap: 0.38rem;
+	}
+	.reading-row {
+		display: grid;
+		grid-template-columns: 32px 1fr auto;
+		align-items: center;
+		gap: 0.55rem;
+		padding: 0.42rem 0.55rem;
+		background: var(--surface-2);
+		border: 1px solid var(--border-soft);
+		border-radius: 3px;
+		--icon-accent: var(--danger);
+	}
+	.reading-row span {
+		display: flex;
+		flex-direction: column;
+		line-height: 1.05;
+	}
+	.reading-row small {
+		color: var(--text-muted);
+		font-size: 0.65rem;
+	}
+	.reading-row strong {
+		color: var(--moss-deep);
+		font-family: var(--font-display);
+		font-size: 1.05rem;
+	}
+	.reading-row em {
+		color: var(--moss-deep);
+		font-size: 0.7rem;
+	}
+	.reading-vignette {
+		display: flex;
+		justify-content: center;
+		align-items: end;
+		gap: 0.65rem;
+		padding: 0.8rem 0 0.35rem;
+		color: #2b2013;
+		--icon-accent: var(--accent);
+	}
+	.reading-updated {
+		margin-top: auto;
+		padding-top: 0.35rem;
+		border-top: 1px solid var(--border-soft);
+		color: var(--text-muted);
+		font-size: 0.65rem;
+		text-align: center;
+	}
+
+	/* The dashboard intentionally stays candlelit parchment in both app themes. */
+	:global(body.storybook-dashboard) {
+		--bg: #ead9b5;
+		--bg-deep: #b89967;
+		--surface: #f5ead0;
+		--surface-2: #eadbb9;
+		--surface-hi: #fff7e5;
+		--surface-glass: rgba(242, 228, 198, 0.92);
+		--text: #2d1b14;
+		--text-muted: #6c533b;
+		--text-faint: #856b4b;
+		--border: #9b7646;
+		--border-soft: rgba(91, 55, 25, 0.22);
+		--border-gilt: rgba(108, 70, 29, 0.55);
+		--accent: #8c5b22;
+		--accent-bright: #633c16;
+		--accent-tint: rgba(140, 91, 34, 0.12);
+		--moss-deep: #355b2b;
+		background-color: #ead9b5;
+		background-image: var(--grain);
+		background-blend-mode: soft-light;
+	}
+
+	.hearth-footer {
+		display: grid;
+		grid-template-columns: 70px 1fr auto;
+		align-items: center;
+		gap: 1rem;
+		margin: 0.5rem calc(var(--page-padding-x) * -1) calc(var(--page-padding-y) * -1);
+		padding: 0.8rem var(--page-padding-x);
+		background: linear-gradient(#624125, #3b2517);
+		border-top: 3px double #b98a45;
+		color: #f5ead0;
+	}
+	.hearth-footer p {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.6rem;
+		font-family: var(--font-display);
+		font-style: italic;
+		text-align: center;
+	}
+	.hearth-footer a {
+		display: flex;
+		align-items: center;
+		gap: 0.65rem;
+		min-width: 190px;
+		padding: 0.55rem 0.8rem;
+		background: #f5ead0;
+		border: 1px solid #c49b60;
+		color: #3b2517;
+		text-decoration: none;
+	}
+	.hearth-footer a span {
+		display: flex;
+		flex-direction: column;
+		font-size: 0.65rem;
+	}
+	.hearth-footer a strong {
+		color: #355b2b;
+		font-size: 1.1rem;
+	}
+	@media (max-width: 640px) {
+		.hearth-footer {
+			grid-template-columns: 1fr;
+		}
+		.footer-curio {
+			display: none;
+		}
+		.hearth-footer a {
+			min-width: 0;
+		}
 	}
 
 	/* ═══════════════════════════════════════════════════════
@@ -1447,15 +1737,24 @@
 	.nanny-card.active::before {
 		content: '';
 		position: absolute;
-		top: 0; left: 0; right: 0;
+		top: 0;
+		left: 0;
+		right: 0;
 		height: 2px;
 		background: linear-gradient(90deg, transparent, var(--growing), transparent);
 		animation: creep 3s ease-in-out infinite;
 	}
 
 	@keyframes creep {
-		0%, 100% { opacity: 0.35; transform: translateX(-30%); }
-		50% { opacity: 1; transform: translateX(30%); }
+		0%,
+		100% {
+			opacity: 0.35;
+			transform: translateX(-30%);
+		}
+		50% {
+			opacity: 1;
+			transform: translateX(30%);
+		}
 	}
 
 	.nanny-header {

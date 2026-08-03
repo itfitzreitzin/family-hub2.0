@@ -6,6 +6,8 @@
 	import Icon from '$lib/icons/Icon.svelte';
 	import MoonPhase from '$lib/components/MoonPhase.svelte';
 	import ThemeToggle from '$lib/components/ThemeToggle.svelte';
+	import PixelArt from '$lib/components/PixelArt.svelte';
+	import { ART } from '$lib/art.js';
 
 	export let currentPage = '';
 
@@ -17,29 +19,31 @@
 	let lastScrollY = 0;
 	let hideNav = false;
 
-	// Each destination gets a sprite. Labels stay practical; the arcana voice
-	// lives in page ledes and card names instead.
+	// Each destination gets a painted icon, rendered at 22px+ where the art
+	// stays legible. Labels stay practical; the arcana voice lives in page
+	// ledes and card names instead. Active state is carried by the tab's text
+	// and background, not icon colour — the paintings keep their own palette.
 	const LINKS = [
-		{ href: '/dashboard', key: 'dashboard', label: 'Today', icon: 'cottage', short: 'Today' },
-		{ href: '/tracker', key: 'tracker', label: 'Tracker', icon: 'hourglass', short: 'Tracker' },
+		{ href: '/dashboard', key: 'dashboard', label: 'Today', art: ART.navToday, short: 'Today' },
+		{ href: '/tracker', key: 'tracker', label: 'Tracker', art: ART.iconClock, short: 'Tracker' },
 		{
 			href: '/schedule',
 			key: 'schedule',
 			label: 'Calendar',
-			icon: 'calendar',
+			art: ART.navCalendar,
 			short: 'Calendar',
 			roles: ['family', 'admin']
 		},
-		{ href: '/history', key: 'history', label: 'History', icon: 'scroll', short: 'History' },
+		{ href: '/history', key: 'history', label: 'History', art: ART.navPayments, short: 'History' },
 		{
 			href: '/admin',
 			key: 'admin',
 			label: 'Admin',
-			icon: 'key',
+			art: ART.iconLock,
 			short: 'Admin',
 			adminOnly: true
 		},
-		{ href: '/settings', key: 'settings', label: 'Settings', icon: 'candle', short: 'Settings' }
+		{ href: '/settings', key: 'settings', label: 'Settings', art: ART.iconOrb, short: 'Settings' }
 	];
 
 	const BOTTOM = ['dashboard', 'tracker', 'history'];
@@ -169,7 +173,7 @@
 						class:admin-link={link.adminOnly}
 						aria-current={currentPage === link.key ? 'page' : undefined}
 					>
-						<Icon name={link.icon} size={16} />
+						<PixelArt src={link.art} size={22} loading="eager" />
 						<span>{link.label}</span>
 					</a>
 				{/each}
@@ -226,7 +230,7 @@
 						on:click={handleNavClick}
 						aria-current={currentPage === link.key ? 'page' : undefined}
 					>
-						<Icon name={link.icon} size={20} />
+						<PixelArt src={link.art} size={22} loading="eager" />
 						<span>{link.label}</span>
 						{#if currentPage === link.key}
 							<span class="active-indicator" aria-hidden="true"><Icon name="star" size={12} /></span
@@ -255,7 +259,7 @@
 				on:click={handleNavClick}
 				aria-current={currentPage === link.key ? 'page' : undefined}
 			>
-				<Icon name={link.icon} size={20} />
+				<PixelArt src={link.art} size={24} loading="eager" />
 				<span class="bottom-label">{link.short}</span>
 			</a>
 		{/each}

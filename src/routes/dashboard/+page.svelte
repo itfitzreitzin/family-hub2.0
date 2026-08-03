@@ -21,6 +21,8 @@
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
 	import MiniCalendar from '$lib/components/MiniCalendar.svelte';
+	import ShelfFooter from '$lib/components/ShelfFooter.svelte';
+	import { ART } from '$lib/art.js';
 
 	/** @type {Record<string, string>} */
 	const ROLE_TITLES = {
@@ -30,6 +32,7 @@
 	};
 
 	let user = null;
+	/** @type {any} */
 	let profile = null;
 	let loading = true;
 	/** @type {string | null} */
@@ -161,8 +164,12 @@
 
 	onMount(() => {
 		initDashboard();
-		tickInterval = setInterval(() => { now = Date.now(); }, 1000);
-		pollInterval = setInterval(() => { reloadDashboard(); }, 30000);
+		tickInterval = setInterval(() => {
+			now = Date.now();
+		}, 1000);
+		pollInterval = setInterval(() => {
+			reloadDashboard();
+		}, 30000);
 	});
 
 	onDestroy(() => {
@@ -177,8 +184,13 @@
 		initError = null;
 
 		try {
-			const { data: { user: currentUser } } = await supabase.auth.getUser();
-			if (!currentUser) { goto('/'); return; }
+			const {
+				data: { user: currentUser }
+			} = await supabase.auth.getUser();
+			if (!currentUser) {
+				goto('/');
+				return;
+			}
 
 			user = currentUser;
 
@@ -191,7 +203,10 @@
 			if (profileError) throw profileError;
 			profile = profileData;
 
-			if (!profile || !profile.role) { goto('/setup'); return; }
+			if (!profile || !profile.role) {
+				goto('/setup');
+				return;
+			}
 
 			if (profile?.role === 'family' || profile?.role === 'admin') {
 				await loadFamilyDashboard();
@@ -222,7 +237,10 @@
 
 	function scheduleReload() {
 		if (reloadTimer) clearTimeout(reloadTimer);
-		reloadTimer = setTimeout(() => { reloadTimer = null; reloadDashboard(); }, 300);
+		reloadTimer = setTimeout(() => {
+			reloadTimer = null;
+			reloadDashboard();
+		}, 300);
 	}
 
 	function handleVisibilityChange() {
@@ -257,11 +275,7 @@
 		if (weekError) throw weekError;
 		weekEntries = weekData || [];
 
-		await Promise.all([
-			loadUpcomingShift(),
-			loadMonthShifts(),
-			loadUnpaidPayments()
-		]);
+		await Promise.all([loadUpcomingShift(), loadMonthShifts(), loadUnpaidPayments()]);
 	}
 
 	async function loadUpcomingShift() {
@@ -285,8 +299,7 @@
 			upcomingShift =
 				(data || [])
 					.map((s) => ({ ...s, date: normalizeDateValue(s.date) }))
-					.find((s) => !(s.date === todayStr && (s.end_time || '').slice(0, 5) <= nowTime)) ||
-				null;
+					.find((s) => !(s.date === todayStr && (s.end_time || '').slice(0, 5) <= nowTime)) || null;
 		} catch (err) {
 			console.warn('Upcoming shift load failed:', errorMessage(err));
 			upcomingShift = null;
@@ -353,7 +366,9 @@
 	function subscribeToShifts() {
 		dashChannel = supabase
 			.channel('active_shifts')
-			.on('postgres_changes', { event: '*', schema: 'public', table: 'time_entries' }, () => { scheduleReload(); })
+			.on('postgres_changes', { event: '*', schema: 'public', table: 'time_entries' }, () => {
+				scheduleReload();
+			})
 			.subscribe();
 	}
 
@@ -380,7 +395,7 @@
 	}
 
 	function getNannyName(nannyId) {
-		return nannies.find(n => n.id === nannyId)?.full_name || 'Nanny';
+		return nannies.find((n) => n.id === nannyId)?.full_name || 'Nanny';
 	}
 
 	function formatShiftTime(timeStr) {
@@ -405,6 +420,7 @@
 
 	$: unpaidHours = unpaidPayments.reduce((sum, p) => sum + (parseFloat(p.hours) || 0), 0);
 	$: unpaidAmount = unpaidPayments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+	$: isHousehold = profile?.role === 'family' || profile?.role === 'admin';
 
 	$: greeting = (() => {
 		const hour = new Date(now).getHours();
@@ -449,19 +465,26 @@
 {:else}
 	<div class="container">
 		{#if profile?.role === 'family' || profile?.role === 'admin'}
-
 			<!-- ═══════════════════════════════════════════════
 			     TODAY GRID — Family / Admin view
 			     ═══════════════════════════════════════════════ -->
 			<div class="today-grid">
-
 				<!-- ── Hero: The Hearth ──────────────────────── -->
 				<section class="tcard hero-card">
 					<div class="hero-badge">THE HEARTH</div>
 					<h1 class="hero-greeting">{greeting},<br />{profile?.full_name || 'friend'}!</h1>
 					<p class="hero-subtitle">Here's what's happening with your family today.</p>
 					<div class="hero-scene" aria-hidden="true">
-						<Icon name="cottage" size={64} />
+						<img
+							src={ART.heroFamily}
+							alt=""
+							class="hero-art"
+							width="768"
+							height="768"
+							fetchpriority="high"
+							decoding="async"
+							draggable="false"
+						/>
 					</div>
 					<div class="hero-meta">
 						<MoonPhase size={14} showLabel />
@@ -488,10 +511,14 @@
 							<div class="shift-info-row">
 								<Icon name="clock" size={14} />
 								<span class="shift-time-range">
-									{formatShiftTime(upcomingShift.start_time)} &ndash; {formatShiftTime(upcomingShift.end_time)}
+									{formatShiftTime(upcomingShift.start_time)} &ndash; {formatShiftTime(
+										upcomingShift.end_time
+									)}
 								</span>
 							</div>
-							<span class="shift-duration">{formatShiftLength(upcomingShift.start_time, upcomingShift.end_time)}</span>
+							<span class="shift-duration"
+								>{formatShiftLength(upcomingShift.start_time, upcomingShift.end_time)}</span
+							>
 							{#if upcomingShift.nanny_id}
 								<div class="shift-info-row">
 									<Icon name="person" size={14} />
@@ -512,7 +539,9 @@
 						<div class="tcard-empty">
 							<Icon name="moon" size={32} />
 							<p>No upcoming shifts scheduled</p>
-							<a href="/schedule" class="tcard-action">Schedule a shift <Icon name="chevron-right" size={12} /></a>
+							<a href="/schedule" class="tcard-action"
+								>Schedule a shift <Icon name="chevron-right" size={12} /></a
+							>
 						</div>
 					{/if}
 				</section>
@@ -558,7 +587,9 @@
 					<div class="tcard-header">
 						<Icon name="calendar" size={16} />
 						<h2>Calendar Preview</h2>
-						<a href="/schedule" class="header-link">View Calendar <Icon name="chevron-right" size={10} /></a>
+						<a href="/schedule" class="header-link"
+							>View Calendar <Icon name="chevron-right" size={10} /></a
+						>
 					</div>
 					<MiniCalendar shiftDates={monthShiftDates} on:monthchange={handleMonthChange} />
 				</section>
@@ -610,7 +641,7 @@
 
 			<!-- ── Nanny Roster (collapsible) ──────────────── -->
 			<section class="roster-section">
-				<button type="button" class="roster-toggle" on:click={() => showRoster = !showRoster}>
+				<button type="button" class="roster-toggle" on:click={() => (showRoster = !showRoster)}>
 					<Icon name="person" size={16} />
 					<span>Nanny Roster ({nannies.length})</span>
 					<span class="roster-chevron" class:open={showRoster}>
@@ -646,16 +677,23 @@
 										<header class="nanny-header">
 											<h3>{nanny.full_name}</h3>
 											{#if isActive}
-												<span class="badge badge-live"><span class="live-dot"></span> On clock</span>
+												<span class="badge badge-live"><span class="live-dot"></span> On clock</span
+												>
 											{:else}
 												<span class="badge">Resting</span>
 											{/if}
 										</header>
 
 										<dl class="nanny-details">
-											<div><dt>Rate</dt><dd>${nanny.hourly_rate}/hr</dd></div>
+											<div>
+												<dt>Rate</dt>
+												<dd>${nanny.hourly_rate}/hr</dd>
+											</div>
 											{#if nanny.venmo_username}
-												<div><dt>Venmo</dt><dd>@{nanny.venmo_username}</dd></div>
+												<div>
+													<dt>Venmo</dt>
+													<dd>@{nanny.venmo_username}</dd>
+												</div>
 											{/if}
 										</dl>
 
@@ -664,7 +702,9 @@
 												<Icon name="hourglass" size={18} />
 												<div>
 													<span class="shift-since">Since {formatTime(activeShift.clock_in)}</span>
-													<span class="shift-elapsed">{getTimeSince(activeShift.clock_in, now)}</span>
+													<span class="shift-elapsed"
+														>{getTimeSince(activeShift.clock_in, now)}</span
+													>
 												</div>
 											</div>
 										{/if}
@@ -688,21 +728,27 @@
 					</div>
 				{/if}
 			</section>
-
 		{:else if profile?.role === 'nanny'}
-
 			<!-- ═══════════════════════════════════════════════
 			     TODAY GRID — Nanny view
 			     ═══════════════════════════════════════════════ -->
 			<div class="today-grid nanny-grid-layout">
-
 				<!-- ── Hero ─────────────────────────────────── -->
 				<section class="tcard hero-card">
 					<div class="hero-badge">YOUR HEARTH</div>
 					<h1 class="hero-greeting">{greeting},<br />{profile?.full_name || 'friend'}!</h1>
 					<p class="hero-subtitle">Here's your day at a glance.</p>
 					<div class="hero-scene" aria-hidden="true">
-						<Icon name="sprout" size={64} />
+						<img
+							src={ART.heroFamily}
+							alt=""
+							class="hero-art"
+							width="768"
+							height="768"
+							fetchpriority="high"
+							decoding="async"
+							draggable="false"
+						/>
 					</div>
 					<div class="hero-meta">
 						<MoonPhase size={14} showLabel />
@@ -758,10 +804,14 @@
 							<div class="shift-info-row">
 								<Icon name="clock" size={14} />
 								<span class="shift-time-range">
-									{formatShiftTime(upcomingShift.start_time)} &ndash; {formatShiftTime(upcomingShift.end_time)}
+									{formatShiftTime(upcomingShift.start_time)} &ndash; {formatShiftTime(
+										upcomingShift.end_time
+									)}
 								</span>
 							</div>
-							<span class="shift-duration">{formatShiftLength(upcomingShift.start_time, upcomingShift.end_time)}</span>
+							<span class="shift-duration"
+								>{formatShiftLength(upcomingShift.start_time, upcomingShift.end_time)}</span
+							>
 							{#if upcomingShift.notes}
 								<div class="shift-info-row">
 									<Icon name="scroll" size={14} />
@@ -811,8 +861,18 @@
 					</div>
 				</section>
 			</div>
-
 		{/if}
+
+		<!-- The shelf grounds the page. It carries the outstanding balance for
+		     the household view, and stands decorative for everyone else. -->
+		<ShelfFooter
+			balanceDue={isHousehold && unpaidPayments.length > 0 ? unpaidAmount : null}
+			balanceLabel="Unpaid to date"
+			note={isHousehold && unpaidPayments.length > 0
+				? `${unpaidHours.toFixed(1)} hours across ${unpaidPayments.length} ${unpaidPayments.length === 1 ? 'entry' : 'entries'} still to settle.`
+				: ''}
+			onBalanceClick={() => goto('/history')}
+		/>
 	</div>
 {/if}
 
@@ -875,32 +935,73 @@
 		margin-bottom: var(--section-gap);
 	}
 
-	.hero-card     { grid-column: 1; grid-row: 1; }
-	.shift-card    { grid-column: 2; grid-row: 1; }
-	.approval-card { grid-column: 3; grid-row: 1; }
-	.calendar-card { grid-column: 1 / 3; grid-row: 2; }
-	.actions-card  { grid-column: 3; grid-row: 2; }
+	.hero-card {
+		grid-column: 1;
+		grid-row: 1;
+	}
+	.shift-card {
+		grid-column: 2;
+		grid-row: 1;
+	}
+	.approval-card {
+		grid-column: 3;
+		grid-row: 1;
+	}
+	.calendar-card {
+		grid-column: 1 / 3;
+		grid-row: 2;
+	}
+	.actions-card {
+		grid-column: 3;
+		grid-row: 2;
+	}
 
 	/* Nanny view uses a 2x2 layout */
 	.nanny-grid-layout {
 		grid-template-columns: 1fr 1fr;
 	}
 
-	.nanny-grid-layout .hero-card     { grid-column: 1; grid-row: 1; }
-	.nanny-grid-layout .shift-card    { grid-column: 2; grid-row: 1; }
-	.nanny-grid-layout .upcoming-card { grid-column: 1; grid-row: 2; }
-	.nanny-grid-layout .actions-card  { grid-column: 2; grid-row: 2; }
+	.nanny-grid-layout .hero-card {
+		grid-column: 1;
+		grid-row: 1;
+	}
+	.nanny-grid-layout .shift-card {
+		grid-column: 2;
+		grid-row: 1;
+	}
+	.nanny-grid-layout .upcoming-card {
+		grid-column: 1;
+		grid-row: 2;
+	}
+	.nanny-grid-layout .actions-card {
+		grid-column: 2;
+		grid-row: 2;
+	}
 
 	@media (max-width: 1024px) {
 		.today-grid {
 			grid-template-columns: repeat(2, 1fr);
 		}
 
-		.hero-card     { grid-column: 1 / 3; }
-		.shift-card    { grid-column: 1; grid-row: 2; }
-		.approval-card { grid-column: 2; grid-row: 2; }
-		.calendar-card { grid-column: 1 / 3; grid-row: 3; }
-		.actions-card  { grid-column: 1 / 3; grid-row: 4; }
+		.hero-card {
+			grid-column: 1 / 3;
+		}
+		.shift-card {
+			grid-column: 1;
+			grid-row: 2;
+		}
+		.approval-card {
+			grid-column: 2;
+			grid-row: 2;
+		}
+		.calendar-card {
+			grid-column: 1 / 3;
+			grid-row: 3;
+		}
+		.actions-card {
+			grid-column: 1 / 3;
+			grid-row: 4;
+		}
 	}
 
 	@media (max-width: 640px) {
@@ -909,8 +1010,12 @@
 			grid-template-columns: 1fr;
 		}
 
-		.hero-card, .shift-card, .approval-card,
-		.calendar-card, .actions-card, .upcoming-card {
+		.hero-card,
+		.shift-card,
+		.approval-card,
+		.calendar-card,
+		.actions-card,
+		.upcoming-card {
 			grid-column: 1 !important;
 			grid-row: auto !important;
 		}
@@ -1066,14 +1171,24 @@
 		margin-bottom: 0.75rem;
 	}
 
+	/* The hearth scene. Cropped to a letterbox rather than shown square: the
+	   cottage and the family sit in the lower two thirds of the painting, so a
+	   square crop wastes the card's height on empty night sky. */
 	.hero-scene {
-		display: flex;
-		justify-content: center;
-		padding: 0.75rem 0;
-		color: var(--text-faint);
-		opacity: 0.45;
-		--icon-accent: var(--accent);
-		animation: flicker 5s ease-in-out infinite;
+		margin: 0.85rem calc(-1 * var(--card-padding, 1.25rem)) 0.9rem;
+		height: 152px;
+		overflow: hidden;
+		border-block: 1px solid var(--border-gilt);
+		background: var(--bg-deep);
+	}
+
+	.hero-art {
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+		object-position: center 62%;
+		user-select: none;
+		-webkit-user-drag: none;
 	}
 
 	.hero-meta {
@@ -1447,15 +1562,24 @@
 	.nanny-card.active::before {
 		content: '';
 		position: absolute;
-		top: 0; left: 0; right: 0;
+		top: 0;
+		left: 0;
+		right: 0;
 		height: 2px;
 		background: linear-gradient(90deg, transparent, var(--growing), transparent);
 		animation: creep 3s ease-in-out infinite;
 	}
 
 	@keyframes creep {
-		0%, 100% { opacity: 0.35; transform: translateX(-30%); }
-		50% { opacity: 1; transform: translateX(30%); }
+		0%,
+		100% {
+			opacity: 0.35;
+			transform: translateX(-30%);
+		}
+		50% {
+			opacity: 1;
+			transform: translateX(30%);
+		}
 	}
 
 	.nanny-header {

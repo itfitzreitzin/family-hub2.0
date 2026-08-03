@@ -8,6 +8,7 @@
 	import favicon from '$lib/assets/favicon.svg';
 	import Toast from '$lib/components/Toast.svelte';
 	import ConfirmModal from '$lib/components/ConfirmModal.svelte';
+	import OrnateFrame from '$lib/components/OrnateFrame.svelte';
 
 	let { children } = $props();
 
@@ -68,6 +69,9 @@
 
 <!-- A whisper of grain over the whole app, so flat colour never looks flat. -->
 <div class="grain-overlay" aria-hidden="true"></div>
+
+<!-- Gilt rule and filigree corners, framing every page. -->
+<OrnateFrame />
 
 <Toast />
 <ConfirmModal />

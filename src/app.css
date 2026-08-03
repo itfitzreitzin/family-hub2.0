@@ -75,6 +75,15 @@
 	--arcane: var(--plum);
 	--arcane-dim: rgba(168, 119, 232, 0.14);
 
+	/* ── The shelf ──
+     Stained walnut, dark enough that the gilt rule along its top edge reads
+     as a highlight rather than another line of trim. Both themes put light
+     text on the wood, so --wood-ink stays pale in each. */
+	--wood: #3a2a1d;
+	--wood-dark: #241a12;
+	--wood-ink: #f4eee1;
+	--wood-ink-muted: #d6c9b2;
+
 	/* ── Atmosphere ── */
 	--star-opacity: 1;
 	--grain-opacity: 0.045;
@@ -147,6 +156,14 @@
 	--danger-dim: rgba(176, 67, 45, 0.12);
 	--arcane: var(--plum);
 	--arcane-dim: rgba(106, 74, 158, 0.12);
+
+	/* Warmer and lighter than the midnight shelf, so it sits on parchment as
+     honey oak instead of a dark bar cutting the page in half. Deliberately
+     kept dark enough that the pale --wood-ink still clears AA on it. */
+	--wood: #6b4a28;
+	--wood-dark: #4a3119;
+	--wood-ink: #fdf8ec;
+	--wood-ink-muted: #e6d8bf;
 
 	--star-opacity: 0;
 	--grain-opacity: 0.07;

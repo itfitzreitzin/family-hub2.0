@@ -146,6 +146,11 @@ function toJSDate(icalTime) {
 	return icalTime.toJSDate();
 }
 
+// A hung feed host must not hang the sync endpoint, and a runaway response
+// must not exhaust server memory. Real household feeds are well under 5 MB.
+const FETCH_TIMEOUT_MS = 20_000;
+const MAX_FEED_BYTES = 10 * 1024 * 1024;
+
 /**
  * Fetch and parse an iCal feed from a URL.
  * @param {string} url The iCal feed URL
@@ -153,17 +158,34 @@ function toJSDate(icalTime) {
  * @returns {Promise<Array<{uid: string, summary: string, start: Date, end: Date, isBusy: boolean}>>}
  */
 export async function fetchAndParseICal(url, options = {}) {
-	const response = await fetch(url, {
-		headers: {
-			Accept: 'text/calendar, application/calendar+json, text/plain',
-			'User-Agent': 'FamilyHub/2.0 Calendar Sync'
+	let response;
+	try {
+		response = await fetch(url, {
+			headers: {
+				Accept: 'text/calendar, application/calendar+json, text/plain',
+				'User-Agent': 'FamilyHub/2.0 Calendar Sync'
+			},
+			signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
+		});
+	} catch (err) {
+		if (err instanceof Error && err.name === 'TimeoutError') {
+			throw new Error(`Calendar feed timed out after ${FETCH_TIMEOUT_MS / 1000}s`);
 		}
-	});
+		throw err;
+	}
 
 	if (!response.ok) {
 		throw new Error(`Failed to fetch calendar: ${response.status} ${response.statusText}`);
 	}
 
+	const declaredLength = Number(response.headers.get('content-length'));
+	if (declaredLength > MAX_FEED_BYTES) {
+		throw new Error('Calendar feed is too large to sync');
+	}
+
 	const text = await response.text();
+	if (text.length > MAX_FEED_BYTES) {
+		throw new Error('Calendar feed is too large to sync');
+	}
 	return parseICal(text, options);
 }

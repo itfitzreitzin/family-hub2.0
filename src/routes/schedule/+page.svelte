@@ -27,15 +27,21 @@
 		upcomingItems
 	} from '$lib/calendar.js';
 
+	/** @type {any} */
 	let user = null;
+	/** @type {any} */
 	let profile = null;
+	/** @type {Date | null} */
 	let currentWeekStart = null;
 	let weekOffset = 0;
+	/** @type {any[]} */
 	let shifts = [];
 	let loading = true;
 	let showAddShift = false;
 	let showCalendarManager = false;
+	/** @type {any[]} */
 	let nannies = [];
+	/** @type {number | null} */
 	let editingShiftId = null;
 	let isMobile = false;
 
@@ -56,8 +62,18 @@
 	let selectedDateStr = localDateString();
 
 	const MONTH_NAMES = [
-		'January', 'February', 'March', 'April', 'May', 'June',
-		'July', 'August', 'September', 'October', 'November', 'December'
+		'January',
+		'February',
+		'March',
+		'April',
+		'May',
+		'June',
+		'July',
+		'August',
+		'September',
+		'October',
+		'November',
+		'December'
 	];
 
 	let shiftForm = {
@@ -74,8 +90,21 @@
 		you: [],
 		partner: []
 	};
+	/** @type {Record<string, any[]>} */
 	let nannyCalendarEvents = {}; // keyed by nanny_id -> array of events
+	/** @type {any[]} */
 	let familyMembers = [];
+
+	// Sync status: every syncable calendar the viewer can see, surfaced on the
+	// page itself so a stale or broken feed can't masquerade as fresh truth.
+	/** @type {any[]} */
+	let calendarMeta = [];
+	/** @type {number | null} */
+	let syncingCalId = null;
+	let autoSyncRan = false;
+
+	const AUTO_SYNC_AFTER_MS = 6 * 60 * 60 * 1000; // quietly re-sync when older
+	const SYNC_WARN_AFTER_MS = 24 * 60 * 60 * 1000; // chip turns warning when older
 
 	// Time grid config
 	const DAY_START_HOUR = 0;
@@ -130,6 +159,10 @@
 			await setCurrentWeek(0);
 		}
 		loading = false;
+
+		// After first paint: show sync freshness, then quietly refresh stale
+		// feeds in the background (not awaited — the page stays interactive).
+		loadCalendarMeta().then(() => maybeAutoSync());
 
 		// Prevent body from scrolling — only the grid body should scroll
 		document.body.classList.add('schedule-active');
@@ -188,6 +221,108 @@
 
 		if (error) return;
 		familyMembers = data || [];
+	}
+
+	async function loadCalendarMeta() {
+		try {
+			// select('*') rather than naming columns: sync_error only exists after
+			// the calendar_sync_state.sql migration, and the chips should work
+			// (minus failure badges) before it runs.
+			let query = supabase.from('parent_calendars').select('*').order('created_at');
+			if (profile?.role === 'nanny') query = query.eq('user_id', user.id);
+
+			const { data, error } = await query;
+			if (error) throw error;
+			calendarMeta = (data || []).filter((c) => c.calendar_url && c.sync_enabled);
+		} catch (err) {
+			console.warn('[schedule] loadCalendarMeta failed:', err);
+		}
+	}
+
+	/** @param {any} cal */
+	function calAge(cal) {
+		return cal.last_synced ? Date.now() - new Date(cal.last_synced).getTime() : Infinity;
+	}
+
+	/** @param {any} cal */
+	function calOwnerLabel(cal) {
+		if (cal.user_id === user?.id) return cal.calendar_name;
+		const owner =
+			familyMembers.find((m) => m.id === cal.user_id) || nannies.find((n) => n.id === cal.user_id);
+		const first = owner?.full_name?.split(' ')[0];
+		return first ? `${first} · ${cal.calendar_name}` : cal.calendar_name;
+	}
+
+	/** @param {any} cal */
+	function syncAgeLabel(cal) {
+		if (cal.sync_error) return 'sync failed';
+		if (!cal.last_synced) return 'never synced';
+		const mins = Math.floor((Date.now() - new Date(cal.last_synced).getTime()) / 60000);
+		if (mins < 1) return 'just now';
+		if (mins < 60) return `${mins}m ago`;
+		const hrs = Math.floor(mins / 60);
+		if (hrs < 24) return `${hrs}h ago`;
+		return `${Math.floor(hrs / 24)}d ago`;
+	}
+
+	/**
+	 * @param {number} calendarId
+	 * @param {{ quiet?: boolean }} [opts] quiet = background auto-sync, no toasts
+	 * @returns {Promise<boolean>} whether the sync succeeded
+	 */
+	async function syncCalendarById(calendarId, { quiet = false } = {}) {
+		syncingCalId = calendarId;
+		try {
+			const {
+				data: { session }
+			} = await supabase.auth.getSession();
+			if (!session) return false;
+
+			const response = await fetch('/api/calendar/sync', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					Authorization: `Bearer ${session.access_token}`
+				},
+				body: JSON.stringify({ calendarId })
+			});
+			const result = await response.json();
+			if (!response.ok) throw new Error(result.error || 'Sync failed');
+
+			if (!quiet) toast.success(`Synced ${result.synced} events`);
+			return true;
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			if (!quiet) toast.error('Sync failed: ' + message);
+			else console.warn('[schedule] auto-sync failed for calendar', calendarId, message);
+			return false;
+		} finally {
+			syncingCalId = null;
+		}
+	}
+
+	/** @param {any} cal */
+	async function manualChipSync(cal) {
+		const ok = await syncCalendarById(cal.id);
+		await loadCalendarMeta();
+		if (ok) handleCalendarUpdate();
+	}
+
+	// On arrival, quietly refresh any feed that hasn't synced in a while —
+	// sync used to be button-only, so overlays silently went stale.
+	async function maybeAutoSync() {
+		if (autoSyncRan) return;
+		autoSyncRan = true;
+
+		const stale = calendarMeta.filter((c) => calAge(c) > AUTO_SYNC_AFTER_MS);
+		if (stale.length === 0) return;
+
+		let anySucceeded = false;
+		for (const cal of stale) {
+			anySucceeded = (await syncCalendarById(cal.id, { quiet: true })) || anySucceeded;
+		}
+		await loadCalendarMeta();
+		if (anySucceeded) handleCalendarUpdate();
 	}
 
 	async function loadParentCalendarEvents() {
@@ -901,6 +1036,7 @@
 	}
 
 	function handleCalendarUpdate() {
+		loadCalendarMeta();
 		if (view === 'month') {
 			loadMonthData();
 		} else {
@@ -1084,6 +1220,28 @@
 			</div>
 		</div>
 
+		{#if calendarMeta.length > 0}
+			<div class="sync-status" aria-label="Calendar sync status">
+				<span class="sync-status-label">Feeds</span>
+				{#each calendarMeta as cal (cal.id)}
+					<button
+						type="button"
+						class="sync-chip"
+						class:warn={!cal.sync_error && calAge(cal) > SYNC_WARN_AFTER_MS}
+						class:failed={!!cal.sync_error}
+						disabled={syncingCalId === cal.id}
+						title={cal.sync_error ? `${cal.sync_error} — click to retry` : 'Click to sync now'}
+						on:click={() => manualChipSync(cal)}
+					>
+						<span class="sync-chip-name">{calOwnerLabel(cal)}</span>
+						<span class="sync-chip-age">
+							{syncingCalId === cal.id ? 'syncing…' : syncAgeLabel(cal)}
+						</span>
+					</button>
+				{/each}
+			</div>
+		{/if}
+
 		{#if view === 'month'}
 			<!-- ── Month view ─────────────────────────────────── -->
 			{#if monthError}
@@ -1119,233 +1277,240 @@
 		{/if}
 
 		{#if view === 'week'}
-		<!-- Coverage Gap Alert -->
-		{#if (profile?.role === 'family' || profile?.role === 'admin') && getCoverageGaps().length > 0}
-			<div class="gap-banner">
-				<Icon name="warning" size={16} />
-				<span
-					><strong
-						>{getCoverageGaps().length} coverage gap{getCoverageGaps().length > 1
-							? 's'
-							: ''}</strong
-					> this week &mdash; both parents busy with no nanny scheduled</span
-				>
-			</div>
-		{/if}
-
-		<!-- Week Summary -->
-		{#if getWeekSummary()}
-			{@const summary = getWeekSummary()}
-			<div class="week-summary">
-				{#if profile?.role === 'nanny'}
-					<div class="summary-stat">
-						<span class="summary-label">This week</span>
-						<span class="summary-value">{summary.totalHours.toFixed(1)}h</span>
-					</div>
-					<div class="summary-divider"></div>
-					<div class="summary-stat">
-						<span class="summary-label">Est. income</span>
-						<span class="summary-value summary-income">${summary.totalCost.toFixed(2)}</span>
-					</div>
-				{:else}
-					<div class="summary-stat">
-						<span class="summary-label">Scheduled</span>
-						<span class="summary-value">{summary.totalHours.toFixed(1)}h</span>
-					</div>
-					<div class="summary-divider"></div>
-					{#each summary.nannyBreakdown as nanny}
-						<div class="summary-stat">
-							<span class="summary-label">{nanny.name}</span>
-							<span class="summary-detail">{nanny.hours.toFixed(1)}h &times; ${nanny.rate}/hr</span>
-						</div>
-					{/each}
-					<div class="summary-divider"></div>
-					<div class="summary-stat">
-						<span class="summary-label">Est. cost</span>
-						<span class="summary-value summary-cost">${summary.totalCost.toFixed(2)}</span>
-					</div>
-				{/if}
-			</div>
-		{/if}
-
-		<!-- Time Grid Calendar -->
-		<div class="calendar-wrapper">
-			<div class="time-grid">
-				<!-- Day Headers -->
-				<div class="grid-header">
-					<div class="time-gutter-header"></div>
-					{#each getWeekDays() as day}
-						<div class="day-col-header" class:today={isToday(day)}>
-							<span class="day-label">{day.toLocaleDateString('en-US', { weekday: 'short' })}</span>
-							<span class="day-num" class:today-num={isToday(day)}>{day.getDate()}</span>
-						</div>
-					{/each}
+			<!-- Coverage Gap Alert -->
+			{#if (profile?.role === 'family' || profile?.role === 'admin') && getCoverageGaps().length > 0}
+				<div class="gap-banner">
+					<Icon name="warning" size={16} />
+					<span
+						><strong
+							>{getCoverageGaps().length} coverage gap{getCoverageGaps().length > 1
+								? 's'
+								: ''}</strong
+						> this week &mdash; both parents busy with no nanny scheduled</span
+					>
 				</div>
+			{/if}
 
-				<!-- Scrollable Grid Body -->
-				<div class="grid-body">
-					<!-- Time Gutter -->
-					<div class="time-gutter">
-						{#each Array(TOTAL_HOURS) as _, i}
-							<div class="time-slot" style="height: {HOUR_HEIGHT}px">
-								<span class="time-text">{formatHour(DAY_START_HOUR + i)}</span>
+			<!-- Week Summary -->
+			{#if getWeekSummary()}
+				{@const summary = getWeekSummary()}
+				<div class="week-summary">
+					{#if profile?.role === 'nanny'}
+						<div class="summary-stat">
+							<span class="summary-label">This week</span>
+							<span class="summary-value">{summary.totalHours.toFixed(1)}h</span>
+						</div>
+						<div class="summary-divider"></div>
+						<div class="summary-stat">
+							<span class="summary-label">Est. income</span>
+							<span class="summary-value summary-income">${summary.totalCost.toFixed(2)}</span>
+						</div>
+					{:else}
+						<div class="summary-stat">
+							<span class="summary-label">Scheduled</span>
+							<span class="summary-value">{summary.totalHours.toFixed(1)}h</span>
+						</div>
+						<div class="summary-divider"></div>
+						{#each summary.nannyBreakdown as nanny}
+							<div class="summary-stat">
+								<span class="summary-label">{nanny.name}</span>
+								<span class="summary-detail"
+									>{nanny.hours.toFixed(1)}h &times; ${nanny.rate}/hr</span
+								>
+							</div>
+						{/each}
+						<div class="summary-divider"></div>
+						<div class="summary-stat">
+							<span class="summary-label">Est. cost</span>
+							<span class="summary-value summary-cost">${summary.totalCost.toFixed(2)}</span>
+						</div>
+					{/if}
+				</div>
+			{/if}
+
+			<!-- Time Grid Calendar -->
+			<div class="calendar-wrapper">
+				<div class="time-grid">
+					<!-- Day Headers -->
+					<div class="grid-header">
+						<div class="time-gutter-header"></div>
+						{#each getWeekDays() as day}
+							<div class="day-col-header" class:today={isToday(day)}>
+								<span class="day-label"
+									>{day.toLocaleDateString('en-US', { weekday: 'short' })}</span
+								>
+								<span class="day-num" class:today-num={isToday(day)}>{day.getDate()}</span>
 							</div>
 						{/each}
 					</div>
 
-					<!-- Day Columns -->
-					{#each getWeekDays() as day, dayIdx}
-						<div
-							class="day-col"
-							class:today-col={isToday(day)}
-							on:click={(e) => handleDayClick(e, day)}
-							on:mousemove={(e) => handleDayMouseMove(e, dayIdx)}
-							on:mouseleave={() => (hoveredSlot = null)}
-						>
-							<!-- Zebra hour backgrounds -->
+					<!-- Scrollable Grid Body -->
+					<div class="grid-body">
+						<!-- Time Gutter -->
+						<div class="time-gutter">
 							{#each Array(TOTAL_HOURS) as _, i}
-								<div
-									class="hour-bg"
-									class:hour-even={i % 2 === 0}
-									style="top: {i * HOUR_HEIGHT}px; height: {HOUR_HEIGHT}px"
-								></div>
-							{/each}
-
-							<!-- Grid lines: hour (solid), half-hour (dashed), quarter-hour (dotted) -->
-							{#each Array(TOTAL_HOURS) as _, i}
-								<div class="hour-line" style="top: {i * HOUR_HEIGHT}px"></div>
-								<div class="quarter-line" style="top: {i * HOUR_HEIGHT + SLOT_HEIGHT}px"></div>
-								<div class="half-line" style="top: {i * HOUR_HEIGHT + SLOT_HEIGHT * 2}px"></div>
-								<div class="quarter-line" style="top: {i * HOUR_HEIGHT + SLOT_HEIGHT * 3}px"></div>
-							{/each}
-
-							<!-- Hover indicator for clickable slot -->
-							{#if hoveredSlot && hoveredSlot.dayIdx === dayIdx}
-								<div
-									class="slot-hover"
-									style="top: {((hoveredSlot.hour * 60 + hoveredSlot.minute) / 60) *
-										HOUR_HEIGHT}px; height: {SLOT_HEIGHT}px"
-								>
-									<span class="slot-hover-label">
-										<Icon name="plus" size={16} />
-										{formatTime15(hoveredSlot.hour, hoveredSlot.minute)}
-									</span>
+								<div class="time-slot" style="height: {HOUR_HEIGHT}px">
+									<span class="time-text">{formatHour(DAY_START_HOUR + i)}</span>
 								</div>
-							{/if}
+							{/each}
+						</div>
 
-							<!-- Current time indicator -->
-							{#if isToday(day)}
-								<div class="now-line" style="top: {getCurrentTimePosition()}px">
-									<div class="now-dot"></div>
-								</div>
-							{/if}
+						<!-- Day Columns -->
+						{#each getWeekDays() as day, dayIdx}
+							<div
+								class="day-col"
+								class:today-col={isToday(day)}
+								on:click={(e) => handleDayClick(e, day)}
+								on:mousemove={(e) => handleDayMouseMove(e, dayIdx)}
+								on:mouseleave={() => (hoveredSlot = null)}
+							>
+								<!-- Zebra hour backgrounds -->
+								{#each Array(TOTAL_HOURS) as _, i}
+									<div
+										class="hour-bg"
+										class:hour-even={i % 2 === 0}
+										style="top: {i * HOUR_HEIGHT}px; height: {HOUR_HEIGHT}px"
+									></div>
+								{/each}
 
-							<!-- Parent calendar events (semi-transparent background) -->
-							{#each getEventsForDay(day) as event}
-								<div
-									class="cal-event"
-									class:cal-event-you={event.owner === 'you'}
-									class:cal-event-partner={event.owner === 'partner'}
-									style="
+								<!-- Grid lines: hour (solid), half-hour (dashed), quarter-hour (dotted) -->
+								{#each Array(TOTAL_HOURS) as _, i}
+									<div class="hour-line" style="top: {i * HOUR_HEIGHT}px"></div>
+									<div class="quarter-line" style="top: {i * HOUR_HEIGHT + SLOT_HEIGHT}px"></div>
+									<div class="half-line" style="top: {i * HOUR_HEIGHT + SLOT_HEIGHT * 2}px"></div>
+									<div
+										class="quarter-line"
+										style="top: {i * HOUR_HEIGHT + SLOT_HEIGHT * 3}px"
+									></div>
+								{/each}
+
+								<!-- Hover indicator for clickable slot -->
+								{#if hoveredSlot && hoveredSlot.dayIdx === dayIdx}
+									<div
+										class="slot-hover"
+										style="top: {((hoveredSlot.hour * 60 + hoveredSlot.minute) / 60) *
+											HOUR_HEIGHT}px; height: {SLOT_HEIGHT}px"
+									>
+										<span class="slot-hover-label">
+											<Icon name="plus" size={16} />
+											{formatTime15(hoveredSlot.hour, hoveredSlot.minute)}
+										</span>
+									</div>
+								{/if}
+
+								<!-- Current time indicator -->
+								{#if isToday(day)}
+									<div class="now-line" style="top: {getCurrentTimePosition()}px">
+										<div class="now-dot"></div>
+									</div>
+								{/if}
+
+								<!-- Parent calendar events (semi-transparent background) -->
+								{#each getEventsForDay(day) as event}
+									<div
+										class="cal-event"
+										class:cal-event-you={event.owner === 'you'}
+										class:cal-event-partner={event.owner === 'partner'}
+										style="
                     top: {Math.max(eventTop(event.startTime), 0)}px;
                     height: {eventHeight(event.startTime, event.endTime)}px;
                     border-left-color: {event.color};
                   "
-									title="{event.owner === 'you' ? 'You' : getPartnerName()}: {event.title}"
-									on:click|stopPropagation
-								>
-									<span class="cal-event-owner"
-										>{event.owner === 'you' ? 'You' : getPartnerName()}</span
+										title="{event.owner === 'you' ? 'You' : getPartnerName()}: {event.title}"
+										on:click|stopPropagation
 									>
-									<span class="cal-event-title">{event.title}</span>
-								</div>
-							{/each}
+										<span class="cal-event-owner"
+											>{event.owner === 'you' ? 'You' : getPartnerName()}</span
+										>
+										<span class="cal-event-title">{event.title}</span>
+									</div>
+								{/each}
 
-							<!-- Nanny busy times (orange tinted blocks) -->
-							{#each getNannyEventsForDay(day) as nEvent}
-								<div
-									class="cal-event cal-event-nanny"
-									style="
+								<!-- Nanny busy times (orange tinted blocks) -->
+								{#each getNannyEventsForDay(day) as nEvent}
+									<div
+										class="cal-event cal-event-nanny"
+										style="
                     top: {Math.max(eventTop(nEvent.startTime), 0)}px;
                     height: {eventHeight(nEvent.startTime, nEvent.endTime)}px;
                     border-left-color: {nEvent.color || '#e0664e'};
                   "
-									title="{nEvent.nannyName}: {nEvent.title} (unavailable)"
-									on:click|stopPropagation
-								>
-									<span class="cal-event-owner">{nEvent.nannyName}</span>
-									<span class="cal-event-title">{nEvent.title}</span>
-								</div>
-							{/each}
+										title="{nEvent.nannyName}: {nEvent.title} (unavailable)"
+										on:click|stopPropagation
+									>
+										<span class="cal-event-owner">{nEvent.nannyName}</span>
+										<span class="cal-event-title">{nEvent.title}</span>
+									</div>
+								{/each}
 
-							<!-- Nanny shifts (solid green blocks) -->
-							{#each getShiftsForDay(day) as shift}
-								<div
-									class="shift-block"
-									class:shift-editable={profile?.role === 'family' || profile?.role === 'admin'}
-									style="
+								<!-- Nanny shifts (solid green blocks) -->
+								{#each getShiftsForDay(day) as shift}
+									<div
+										class="shift-block"
+										class:shift-editable={profile?.role === 'family' || profile?.role === 'admin'}
+										style="
                     top: {eventTop(shift.start_time)}px;
                     height: {eventHeight(shift.start_time, shift.end_time)}px;
                   "
-									on:click|stopPropagation={() => {
-										if (profile?.role === 'family' || profile?.role === 'admin') editShift(shift);
-									}}
-									title={profile?.role === 'family' || profile?.role === 'admin'
-										? 'Click to edit'
-										: ''}
-								>
-									<div class="shift-content">
-										<span class="shift-name">{getNannyName(shift.nanny_id)}</span>
-										<span class="shift-time"
-											>{formatTime(shift.start_time)} - {formatTime(shift.end_time)}</span
-										>
-										{#if shift.notes}
-											<span class="shift-note">{shift.notes}</span>
+										on:click|stopPropagation={() => {
+											if (profile?.role === 'family' || profile?.role === 'admin') editShift(shift);
+										}}
+										title={profile?.role === 'family' || profile?.role === 'admin'
+											? 'Click to edit'
+											: ''}
+									>
+										<div class="shift-content">
+											<span class="shift-name">{getNannyName(shift.nanny_id)}</span>
+											<span class="shift-time"
+												>{formatTime(shift.start_time)} - {formatTime(shift.end_time)}</span
+											>
+											{#if shift.notes}
+												<span class="shift-note">{shift.notes}</span>
+											{/if}
+										</div>
+										{#if profile?.role === 'family' || profile?.role === 'admin'}
+											<button
+												class="shift-delete"
+												on:click|stopPropagation={() => deleteShift(shift.id)}
+												title="Remove shift"
+											>
+												<Icon name="close" size={16} />
+											</button>
 										{/if}
 									</div>
-									{#if profile?.role === 'family' || profile?.role === 'admin'}
-										<button
-											class="shift-delete"
-											on:click|stopPropagation={() => deleteShift(shift.id)}
-											title="Remove shift"
-										>
-											<Icon name="close" size={16} />
-										</button>
-									{/if}
-								</div>
-							{/each}
-						</div>
-					{/each}
+								{/each}
+							</div>
+						{/each}
+					</div>
 				</div>
 			</div>
-		</div>
 
-		<!-- Legend -->
-		<div class="legend">
-			<div class="legend-item">
-				<span class="legend-swatch shift-swatch"></span>
-				<span>Nanny shift</span>
-			</div>
-			<div class="legend-item">
-				<span class="legend-swatch you-swatch"></span>
-				<span>Your busy time</span>
-			</div>
-			{#if familyMembers.length > 1}
+			<!-- Legend -->
+			<div class="legend">
 				<div class="legend-item">
-					<span class="legend-swatch partner-swatch"></span>
-					<span>{getPartnerName()}'s busy time</span>
+					<span class="legend-swatch shift-swatch"></span>
+					<span>Nanny shift</span>
 				</div>
-			{/if}
-			{#if Object.keys(nannyCalendarEvents).length > 0}
 				<div class="legend-item">
-					<span class="legend-swatch nanny-busy-swatch"></span>
-					<span>Nanny unavailable</span>
+					<span class="legend-swatch you-swatch"></span>
+					<span>Your busy time</span>
 				</div>
-			{/if}
-			{#if profile?.role === 'family' || profile?.role === 'admin'}
-				<span class="legend-hint">Click a time slot to add a shift</span>
-			{/if}
-		</div>
+				{#if familyMembers.length > 1}
+					<div class="legend-item">
+						<span class="legend-swatch partner-swatch"></span>
+						<span>{getPartnerName()}'s busy time</span>
+					</div>
+				{/if}
+				{#if Object.keys(nannyCalendarEvents).length > 0}
+					<div class="legend-item">
+						<span class="legend-swatch nanny-busy-swatch"></span>
+						<span>Nanny unavailable</span>
+					</div>
+				{/if}
+				{#if profile?.role === 'family' || profile?.role === 'admin'}
+					<span class="legend-hint">Click a time slot to add a shift</span>
+				{/if}
+			</div>
 		{/if}
 	{/if}
 </div>
@@ -1618,6 +1783,73 @@
 	.nav-btn:hover {
 		color: var(--accent-bright);
 		background: var(--accent-tint);
+	}
+
+	/* ── Sync freshness chips ─────────────────────────────── */
+	.sync-status {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		flex-wrap: wrap;
+		margin: -0.35rem 0 0.9rem;
+	}
+
+	.sync-status-label {
+		font-family: var(--font-body);
+		font-size: 0.62rem;
+		font-weight: 700;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
+		color: var(--text-faint);
+	}
+
+	.sync-chip {
+		display: inline-flex;
+		align-items: baseline;
+		gap: 0.4rem;
+		min-height: 28px;
+		padding: 0.2rem 0.65rem;
+		background: var(--surface-2);
+		border: 1px solid var(--border-soft);
+		border-radius: 999px;
+		color: var(--text-muted);
+		font-family: var(--font-body);
+		font-size: 0.72rem;
+		cursor: pointer;
+		transition: all var(--transition-fast);
+	}
+
+	.sync-chip:hover {
+		border-color: var(--border-gilt);
+		color: var(--text);
+	}
+
+	.sync-chip:disabled {
+		opacity: 0.6;
+		cursor: default;
+	}
+
+	.sync-chip-name {
+		font-weight: 700;
+	}
+
+	.sync-chip-age {
+		color: var(--growing);
+	}
+
+	.sync-chip.warn .sync-chip-age {
+		color: var(--accent-bright);
+		font-weight: 700;
+	}
+
+	.sync-chip.failed {
+		border-color: var(--danger);
+		background: var(--danger-dim);
+	}
+
+	.sync-chip.failed .sync-chip-age {
+		color: var(--danger);
+		font-weight: 700;
 	}
 
 	/* ── View toggle ──────────────────────────────────────── */

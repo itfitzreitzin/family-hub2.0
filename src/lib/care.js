@@ -11,6 +11,7 @@
 //   headsup     { text }
 
 import { ART } from '$lib/art.js';
+import { formatTime } from '$lib/time.js';
 
 /**
  * The moment buttons, in cockpit order. `art` is a painted icon where one
@@ -144,6 +145,62 @@ export function momentSummary(moment) {
 		default:
 			return p.text || 'Note';
 	}
+}
+
+/**
+ * The morning a fresh note should default to: today until five in the
+ * evening, tomorrow after — writing at night usually means the next shift.
+ * @param {number} nowMs
+ * @returns {string} 'YYYY-MM-DD'
+ */
+export function defaultMorningNoteDate(nowMs) {
+	const d = new Date(nowMs);
+	if (d.getHours() >= 17) d.setDate(d.getDate() + 1);
+	const m = String(d.getMonth() + 1).padStart(2, '0');
+	const day = String(d.getDate()).padStart(2, '0');
+	return `${d.getFullYear()}-${m}-${day}`;
+}
+
+/**
+ * The composed status line for the parents' live card: the day's state in
+ * one breath — "Indigo napping since 1:10 · mac & cheese, ate well ·
+ * 2 potty stars". Empty string when nothing has happened yet.
+ * @param {any[]} moments newest-first
+ * @param {any[]} openNaps
+ * @param {Map<string, any>} kidsById
+ * @returns {string}
+ */
+export function composeDayStatus(moments, openNaps, kidsById) {
+	const parts = [];
+
+	for (const nap of openNaps) {
+		const kid = kidsById.get((nap.kid_ids || [])[0]);
+		parts.push(`${kid?.name || 'Someone'} napping since ${formatTime(nap.started_at)}`);
+	}
+
+	const latestFood = moments.find((m) => m.kind === 'meal' || m.kind === 'snack');
+	if (latestFood) {
+		const p = latestFood.payload || {};
+		const what = p.detail || (latestFood.kind === 'meal' ? 'a meal' : 'a snack');
+		const appetite = p.appetite === 'well' ? ', ate well' : p.appetite === 'picky' ? ', picky' : '';
+		parts.push(`${what}${appetite}`);
+	}
+
+	const stars = moments.filter(
+		(m) => m.kind === 'potty' && m.payload?.outcome === 'success'
+	).length;
+	if (stars > 0) parts.push(`${stars} potty star${stars === 1 ? '' : 's'}`);
+
+	const meds = moments.find((m) => m.kind === 'meds');
+	if (meds) parts.push(`${meds.payload?.name || 'meds'} at ${formatTime(meds.started_at)}`);
+
+	const headsup = moments.find((m) => m.kind === 'headsup');
+	if (headsup) {
+		const text = String(headsup.payload?.text || 'see the note');
+		parts.push(`heads-up: ${text.length > 48 ? text.slice(0, 47).trimEnd() + '…' : text}`);
+	}
+
+	return parts.join(' · ');
 }
 
 /**

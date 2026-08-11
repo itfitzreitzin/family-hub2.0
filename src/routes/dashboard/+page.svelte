@@ -23,6 +23,7 @@
 	import MiniCalendar from '$lib/components/MiniCalendar.svelte';
 	import ShelfFooter from '$lib/components/ShelfFooter.svelte';
 	import PixelArt from '$lib/components/PixelArt.svelte';
+	import DayLiveCard from '$lib/components/DayLiveCard.svelte';
 	import { ART, avatarFor } from '$lib/art.js';
 
 	/** @type {Record<string, string>} */
@@ -32,6 +33,7 @@
 		nanny: 'The Guardian'
 	};
 
+	/** @type {any} */
 	let user = null;
 	/** @type {any} */
 	let profile = null;
@@ -599,6 +601,11 @@
 					</a>
 				</section>
 
+				<!-- ── The Day — live (morning note + care feed) ── -->
+				<div class="live-slot">
+					<DayLiveCard {user} {profile} activeShift={activeShifts[0] || null} />
+				</div>
+
 				<!-- ── Calendar Preview ─────────────────────── -->
 				<section class="tcard calendar-card">
 					<div class="tcard-header">
@@ -982,9 +989,15 @@
 		grid-column: 3;
 		grid-row: 1;
 	}
-	.calendar-card {
+	.live-slot {
 		grid-column: 1 / 3;
 		grid-row: 2;
+		display: flex;
+		flex-direction: column;
+	}
+	.calendar-card {
+		grid-column: 1 / 4;
+		grid-row: 3;
 	}
 	.actions-card {
 		grid-column: 3;
@@ -1029,13 +1042,17 @@
 			grid-column: 2;
 			grid-row: 2;
 		}
-		.calendar-card {
+		.live-slot {
 			grid-column: 1 / 3;
 			grid-row: 3;
 		}
-		.actions-card {
+		.calendar-card {
 			grid-column: 1 / 3;
 			grid-row: 4;
+		}
+		.actions-card {
+			grid-column: 1 / 3;
+			grid-row: 5;
 		}
 	}
 
@@ -1048,6 +1065,7 @@
 		.hero-card,
 		.shift-card,
 		.approval-card,
+		.live-slot,
 		.calendar-card,
 		.actions-card,
 		.upcoming-card {

@@ -40,6 +40,13 @@
 	let recentMeds = [];
 	/** @type {string | null} */
 	let scopeKidId = null;
+	/** @type {any} */
+	let morningNote = null;
+	/** @type {any} */
+	let seenReact = null;
+	let markingSeen = false;
+	/** @type {Record<string, string>} */
+	let namesById = {};
 
 	let loading = true;
 	let now = Date.now();
@@ -91,6 +98,9 @@
 
 	async function init() {
 		try {
+			const { data: people } = await supabase.from('profiles').select('id, full_name');
+			namesById = Object.fromEntries((people || []).map((p) => [p.id, p.full_name || '']));
+
 			await loadKids();
 			await reloadForShift();
 
@@ -100,6 +110,14 @@
 				channel = supabase
 					.channel('care-cockpit')
 					.on('postgres_changes', { event: '*', schema: 'public', table: 'care_moments' }, () =>
+						scheduleResync()
+					)
+					.on(
+						'postgres_changes',
+						{ event: '*', schema: 'public', table: 'chronicle_entries' },
+						() => scheduleResync()
+					)
+					.on('postgres_changes', { event: '*', schema: 'public', table: 'chronicle_reacts' }, () =>
 						scheduleResync()
 					)
 					.subscribe();
@@ -122,17 +140,66 @@
 
 	async function reloadForShift() {
 		loadedShiftId = shift?.id || null;
-		await Promise.all([loadMoments(), loadOpenNaps(), loadRecentMeds()]);
+		await Promise.all([loadMoments(), loadOpenNaps(), loadRecentMeds(), loadMorningNote()]);
 	}
 
 	function scheduleResync() {
 		if (resyncTimer) clearTimeout(resyncTimer);
 		resyncTimer = setTimeout(() => {
 			resyncTimer = null;
-			Promise.all([loadMoments(), loadOpenNaps(), loadRecentMeds()]).catch((err) => {
-				console.warn('Cockpit resync failed:', errorMessage(err));
-			});
+			Promise.all([loadMoments(), loadOpenNaps(), loadRecentMeds(), loadMorningNote()]).catch(
+				(err) => {
+					console.warn('Cockpit resync failed:', errorMessage(err));
+				}
+			);
 		}, 250);
+	}
+
+	// The parents' note for this morning, pinned up top until it's been seen.
+	async function loadMorningNote() {
+		const { data, error } = await supabase
+			.from('chronicle_entries')
+			.select('*')
+			.eq('entry_date', localDateString())
+			.contains('tags', ['morning'])
+			.maybeSingle();
+
+		if (error) throw error;
+		morningNote = data;
+
+		if (morningNote) {
+			const { data: reacts } = await supabase
+				.from('chronicle_reacts')
+				.select('*')
+				.eq('entry_id', morningNote.id)
+				.eq('kind', 'seen');
+			seenReact = (reacts || [])[0] || null;
+		} else {
+			seenReact = null;
+		}
+	}
+
+	// The receipt the parents can see: a react row owned by the reader, so
+	// the nanny can stamp it without edit rights to the note itself.
+	async function markNoteSeen() {
+		if (!morningNote || markingSeen) return;
+		markingSeen = true;
+
+		try {
+			const { error } = await supabase
+				.from('chronicle_reacts')
+				.upsert(
+					{ entry_id: morningNote.id, user_id: user.id, kind: 'seen' },
+					{ onConflict: 'entry_id,user_id,kind', ignoreDuplicates: true }
+				);
+
+			if (error) throw error;
+			await loadMorningNote();
+		} catch (err) {
+			toast.error('Error marking seen: ' + errorMessage(err));
+		} finally {
+			markingSeen = false;
+		}
 	}
 
 	async function loadKids() {
@@ -600,6 +667,33 @@
 			<span>Care notes</span>
 		</a>
 	</div>
+
+	<!-- ── The morning note, pinned until seen ──────────── -->
+	{#if morningNote}
+		<div class="morning-note" class:seen={seenReact}>
+			<div class="mn-head">
+				<Icon name="scroll" size={14} />
+				<span class="mn-label">Morning note</span>
+				{#if seenReact}
+					<span class="badge badge-live">
+						<Icon name="check" size={11} />
+						Seen {formatTime(seenReact.created_at)}
+					</span>
+				{:else if profile?.role === 'nanny'}
+					<button class="btn-small growing mn-seen" on:click={markNoteSeen} disabled={markingSeen}>
+						<Icon name="check" size={13} />
+						{markingSeen ? 'Marking…' : 'Seen ✓'}
+					</button>
+				{:else}
+					<span class="badge">Awaiting eyes</span>
+				{/if}
+			</div>
+			<p class="mn-body">{morningNote.body}</p>
+			{#if morningNote.author_id && namesById[morningNote.author_id]}
+				<span class="mn-author">— {namesById[morningNote.author_id].split(' ')[0]}</span>
+			{/if}
+		</div>
+	{/if}
 
 	{#if loading}
 		<div class="cockpit-loading">
@@ -1074,6 +1168,58 @@
 
 	.cockpit-loading {
 		padding: 0.5rem 0;
+	}
+
+	/* ── The pinned morning note ──────────────────────────── */
+	.morning-note {
+		padding: 0.85rem 1rem;
+		margin-bottom: 1rem;
+		background: var(--accent-tint);
+		border: 1px solid var(--border-gilt);
+		border-radius: var(--radius-sm);
+	}
+
+	.morning-note.seen {
+		background: var(--surface-2);
+		border-color: var(--border-soft);
+	}
+
+	.mn-head {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+		color: var(--accent);
+		--icon-accent: var(--accent);
+	}
+
+	.mn-label {
+		font-family: var(--font-body);
+		font-size: 0.7rem;
+		font-weight: 700;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: var(--text-faint);
+	}
+
+	.mn-seen {
+		margin-left: auto;
+	}
+
+	.mn-body {
+		margin: 0.5rem 0 0;
+		font-size: 0.95rem;
+		line-height: 1.5;
+		color: var(--text);
+		overflow-wrap: anywhere;
+	}
+
+	.mn-author {
+		display: block;
+		margin-top: 0.25rem;
+		font-size: 0.78rem;
+		font-style: italic;
+		color: var(--text-faint);
 	}
 
 	/* ── Kid chips ────────────────────────────────────────── */

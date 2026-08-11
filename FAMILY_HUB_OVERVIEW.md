@@ -93,6 +93,14 @@ nanny on the clock at any moment** (enforced in app logic and by a DB index).
 - Live via a Supabase realtime channel on `time_entries`, a 30s poll, a 1s tick
   for elapsed displays, and refresh-on-tab-focus. In-progress shifts count toward
   today's hours and the weekly dollar total in real time.
+- **"The Day — live" card** (family view; Chronicle build step 3): the ambient
+  window onto a running shift — a composed status line ("Indigo napping since
+  1:10 · mac & cheese, ate well · 2 potty stars"), the moment feed beneath, and
+  the **morning note** block. Parents write/amend one note per morning (DB-
+  enforced; defaults to tomorrow when written in the evening); it pins at the
+  top of the nanny's cockpit until she taps **Seen ✓**, and the receipt (time,
+  by whom) shows back on this card. Realtime on care_moments +
+  chronicle_entries/reacts.
 - A decorative "shelf" footer doubles as a balance-due indicator when money is
   outstanding.
 
@@ -215,6 +223,8 @@ nanny on the clock at any moment** (enforced in app logic and by a DB index).
 | `shift_templates` | Repeating shift series: days[], pattern, times, starts_on, until, generated_until | Added by `shift_templates.sql`; materializes into `schedules` (rows carry nullable `template_id`) |
 | `family_members` | The household roster: name, kind (parent/child/pet), birthdate, avatar_url, profile_id (nullable FK), current_focus, species, routines, notes | Added by `family_members.sql`; uuid ids (care tables reference `kid_ids uuid[]`); partial unique: **one member per profile** |
 | `care_moments` | The Care Day's taps: kind (nap/meal/snack/potty/meds/note/headsup), kid_ids uuid[], shift_id (nullable FK), started_at/ended_at, payload jsonb | Added by `care_moments.sql`; generated `nap_kid_id` column + partial unique: **one open nap per kid** |
+| `chronicle_entries` | The journal's written layer: author, entry_date, body, tags text[], kid_ids uuid[], shift_id, household_only, photo_url | Added by `chronicle_entries.sql`; partial unique: **one 'morning'-tagged note per day**; RLS hides household_only rows from the nanny |
+| `chronicle_reacts` | One-tap acknowledgements: (entry_id, user_id, kind 'seen'/'heart') | Same file; each person writes only their own rows — how the nanny stamps Seen without edit rights |
 | `availability`, `schedule_blocks` | Defined in `supabase/schedule.sql` | **Legacy — no longer referenced by code** |
 
 Security: RLS on all tables — any authenticated household member can read;
@@ -309,15 +319,18 @@ system, documented in the README and enforced by semantic tokens.
 - Migrations to run once in Supabase: `calendar_sync_state.sql`,
   `shift_templates.sql`.
 
-*Recent (2026-08-11, Chronicle build steps 1–2)*
+*Recent (2026-08-11, Chronicle build steps 1–3)*
 - Shipped: `family_members` (parents, kids, pets — members, not accounts) and
   the Family page (`/family`) to manage them, wearing the `nav-home.png` art.
 - Shipped: the Care Day cockpit on the Tracker — moment buttons + live shift
   timeline (`care_moments`), with the shift timer compressed to a strip while
   on the clock.
+- Shipped: the morning note with Seen receipt, and the parents' "The Day —
+  live" card on Today (`chronicle_entries` + `chronicle_reacts`).
 - Migrations to run once in Supabase, in order: `family_members.sql` (seeds
-  parent rows from family/admin profiles), then `care_moments.sql` (add
-  `care_moments` to the realtime publication alongside it).
+  parent rows from family/admin profiles), then `care_moments.sql`, then
+  `chronicle_entries.sql` (add `care_moments`, `chronicle_entries` and
+  `chronicle_reacts` to the realtime publication alongside them).
 
 ## Where it may go (speculative — edit me)
 
@@ -336,9 +349,10 @@ core looks like the first module of something bigger.
 
 **Next up — designed and specced:** the Chronicle (family journal) and the Care
 Day (live shift cockpit) — see **`CHRONICLE_CARE_DAY.md`** for the full agreed
-design, data model, and build order. Steps 1–2 (family_members + the Family
-page; the Care Day cockpit on the Tracker) have shipped; the morning note and
-the parents' live Today card (step 3) are next.
+design, data model, and build order. Steps 1–3 (family_members + the Family
+page; the Care Day cockpit on the Tracker; the morning note + Seen receipt +
+the parents' live Today card) have shipped; the wrap-up auto-draft at
+clock-out (step 4) is next.
 
 **Mid term — from nanny ops to family ops** (the drawn-but-unused art's roadmap)
 - **Care log:** feeds, naps, temperatures, medicine (thermometer/droplet icons) —

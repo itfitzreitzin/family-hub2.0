@@ -5,8 +5,8 @@ project: family-hub2.0
 repo: itfitzreitzin/family-hub2.0
 status: active, in production use by one household
 started: 2025-10-03
-last-major-update: 2026-08-03
-doc-date: 2026-08-05
+last-major-update: 2026-08-11
+doc-date: 2026-08-11
 stack: [SvelteKit 2, Svelte 5, Vite 7, Supabase, ical.js]
 tags: [family-hub, nanny, time-tracking, scheduling, household, side-project]
 ---
@@ -117,25 +117,45 @@ nanny on the clock at any moment** (enforced in app logic and by a DB index).
   duplicate open shifts.
 
 ### Calendar (`/schedule`) — family/admin's scheduling cockpit
-- **Month view** (default): six-week grid with up to 3 event pills per day + side
-  panel showing the selected day, the next 5 upcoming items, and a legend. Month
-  items unify four kinds via a shared data layer (`src/lib/calendar.js`): nanny
-  shifts, family busy time, nanny unavailable time, and **payment-due** markers.
-- **Week view:** 24-hour time grid, 15-minute slots, zebra hour bands, a glowing
-  "now" line, hover ghost-slot, and **click-to-add** shifts. Mobile shows a
-  centered 3-day slice.
+- **Month view** (desktop default): six-week grid with up to 3 event pills per day
+  + side panel showing the selected day, the next 5 upcoming items, and a legend.
+  Month items unify four kinds via a shared data layer (`src/lib/calendar.js`):
+  nanny shifts, family busy time, nanny unavailable time, and **payment-due**
+  markers.
+- **Week view:** 24-hour time grid, 15-minute slots, zebra hour bands, a live
+  "now" line, hover ghost-slot, and **click-to-add** shifts. Events are fetched
+  by true overlap and clipped per local day (midnight-crossing events render on
+  both days); concurrent blocks lane-pack side by side. Mobile shows a 3-day
+  slice.
+- **Day view** (mobile default): single column of the same grid, compressed to
+  6am–10pm with a "show full day" expander that counts hidden items; swipe
+  between days on touch.
 - **Shifts** live in the `schedules` table: create (defaults 9–5), edit, delete,
   with notes; saving jumps the view to the shift's week/month.
+- **Repeating shifts:** a "Repeats" option (weekly/biweekly on chosen weekdays,
+  optional end date) creates a `shift_templates` row that **materializes real
+  `schedules` rows** 8 weeks ahead and tops up on page load — so every consumer
+  (dashboard, tracker, coverage) reads plain shifts. Deleting one occurrence
+  sticks (generated spans are never re-walked); a Repeats manager ends a series
+  forward while history keeps its rows.
 - **External calendars:** each person connects any iCal feed URL (Google/Outlook
   publish URLs — no OAuth). A server endpoint (`POST /api/calendar/sync`) fetches
   and parses feeds with ical.js — full RRULE expansion with timezone handling,
   exception/override support, stable per-instance IDs for clean re-sync upserts,
-  and pruning of vanished events in a −180d/+365d window. Parents' busy time
-  overlays the grid ("You" / partner's name); nanny busy time renders as
+  and pruning of vanished events in a −180d/+365d window; hardened with a 20s
+  fetch timeout, 10MB size cap, and an ownership check mirroring the RLS
+  household model. Calendars are editable after connecting (name, color, feed
+  URL — URL changes re-sync) and each card shows its feed host. Parents' busy
+  time overlays the grid ("You" / partner's name); nanny busy time renders as
   "unavailable."
+- **Sync you can see:** the schedule page shows per-feed freshness chips
+  (warning past 24h, "sync failed" with the stored reason on a broken feed —
+  `parent_calendars.sync_error`), click-to-resync, and quiet auto-resync of
+  anything older than 6 hours on page load.
 - **Manual busy times:** one-off entries, or recurring weekly/biweekly on chosen
   weekdays with an optional end date (biweekly alternation had a subtle
-  midnight-anchor bug — now fixed and regression-commented).
+  midnight-anchor bug — now fixed and regression-commented). Existing entries
+  are listed with edit and delete in the calendar manager.
 - **Conflict warning** when booking a shift over the nanny's busy calendar
   (advisory, not blocking), and a **coverage-gap banner**: weekday working hours
   where *both* parents are busy and no nanny is scheduled.
@@ -164,9 +184,10 @@ nanny on the clock at any moment** (enforced in app logic and by a DB index).
 | `time_entries` | Worked shifts: nanny_id, clock_in, clock_out, hours, notes | Partial unique index: **one open shift per nanny** |
 | `payments` | Weekly pay records: week_start/end, hours, amount, is_paid, paid_date, method | Unique **(nanny_id, week_start)**; week_end = start + 6 |
 | `schedules` | Planned shifts: nanny_id, date, start/end time, notes, created_by | The live planning table |
-| `parent_calendars` | Connected calendar sources: type (google/outlook/ical/manual), feed URL, color, sync_enabled, last_synced | |
+| `parent_calendars` | Connected calendar sources: type (google/outlook/ical/manual), feed URL, color, sync_enabled, last_synced, sync_error | sync_error added by `calendar_sync_state.sql` |
 | `calendar_events` | Synced busy events | Unique (calendar_id, event_id) for re-sync dedup; also holds one-off manual busy entries |
 | `manual_busy_times` | Recurring manual busy time: pattern weekly/biweekly(/monthly unused), weekday list, until | Expanded client-side |
+| `shift_templates` | Repeating shift series: days[], pattern, times, starts_on, until, generated_until | Added by `shift_templates.sql`; materializes into `schedules` (rows carry nullable `template_id`) |
 | `availability`, `schedule_blocks` | Defined in `supabase/schedule.sql` | **Legacy — no longer referenced by code** |
 
 Security: RLS on all tables — any authenticated household member can read;
@@ -227,24 +248,39 @@ system, documented in the README and enforced by semantic tokens.
 *Product*
 - Payment status is binary (unpaid/paid) — a nanny's "Request payment" leaves no
   DB trace; there's no "requested" state or notification.
-- No recurring/templated shifts — every planned shift is entered manually.
-- Calendar sync is manual-trigger only (no cron); no OAuth (secret ICS URLs only).
-- Manual busy times can't be edited or deleted from the UI; monthly recurrence is
-  deliberately unsupported.
+- No server-side sync cron — auto-sync runs when someone opens the schedule
+  page, so feeds still stale out if nobody visits. No OAuth (secret ICS URLs
+  only).
+- Monthly recurrence is deliberately unsupported (busy times and shift
+  templates are weekly/biweekly).
+- Repeating-shift series can be ended but not edited-forward (change a series =
+  end it and create a new one); generation horizon is 8 weeks, topped up on
+  schedule-page load by family/admin visits.
 - Overnight shifts work in tracker manual entry but can't be *scheduled* (form
   requires start < end).
-- Two-parent household and single-active-nanny assumptions are hardcoded.
+- Two-parent household and single-active-nanny assumptions are hardcoded;
+  coverage-gap working hours are constants (8am–6pm weekdays), not a setting.
 - No push/email notifications of any kind.
 
 *Technical debt & security notes (private-household threat model)*
 - RLS reads are household-wide by design, so the "only busy/free is shared"
   copy overpromises: synced event titles are stored and visible.
-- The sync endpoint checks authentication but not calendar ownership.
+- Delete/toggle in the calendar manager surface zero-row RLS refusals loudly
+  now — if those toasts appear in production, the live RLS policies need
+  reconciling with the repo's SQL files.
 - `$20/hr` fallback rate is scattered across five files.
 - Legacy artifacts: `availability`/`schedule_blocks` SQL vs. the live `schedules`
-  table; a `weekly_coverage_summary` query whose result is never used; a dead
-  `WeekNavigator` component.
+  table.
 - `adapter-auto` with no pinned deploy target in-repo.
+
+*Recent (2026-08-11, PR #30 + follow-up branch)*
+- Shipped: sync freshness chips + auto-resync + endpoint hardening; busy-time
+  and calendar editing; week-view overlap/clipping/lane-packing rewrite;
+  double-booking conflict checks; Day view (mobile default); repeating shifts.
+- Removed: the unused `weekly_coverage_summary` query and the dead
+  `WeekNavigator` component.
+- Migrations to run once in Supabase: `calendar_sync_state.sql`,
+  `shift_templates.sql`.
 
 ## Where it may go (speculative — edit me)
 

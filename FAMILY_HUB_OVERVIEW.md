@@ -297,6 +297,10 @@ something bigger.
 - PWA install + push notifications (shift reminders, "clocked in 10h?" nudges).
 - Year-end exports (nanny tax / household employer paperwork from the ledger).
 
+**Next up — designed and specced:** the Chronicle (family journal) and the Care
+Day (live shift cockpit) — see **`CHRONICLE_CARE_DAY.md`** for the full agreed
+design, data model, and build order.
+
 **Mid term — from nanny ops to family ops** (the drawn-but-unused art's roadmap)
 - **Care log:** feeds, naps, temperatures, medicine (thermometer/droplet icons) —
   the nanny's shift becomes a rich handoff note, not just hours.

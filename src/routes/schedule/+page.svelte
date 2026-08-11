@@ -26,6 +26,13 @@
 		groupItemsByDay,
 		upcomingItems
 	} from '$lib/calendar.js';
+	import {
+		GENERATION_HORIZON_DAYS,
+		generateThrough,
+		topUpTemplates,
+		endSeries,
+		describeTemplate
+	} from '$lib/shiftTemplates.js';
 
 	/** @type {any} */
 	let user = null;
@@ -45,12 +52,25 @@
 	let editingShiftId = null;
 	let isMobile = false;
 
-	// Month view state — the default view. Week state above only initializes
-	// on the first toggle to Week.
+	// View state. Month is the desktop default; phones land on Day (set at
+	// mount) — the single-column grid is the one that fits a thumb.
+	/** @type {'month' | 'week' | 'day'} */
 	let view = 'month';
 	const _initialNow = new Date();
 	let monthYear = _initialNow.getFullYear();
 	let monthMonth = _initialNow.getMonth();
+
+	// Day view state. The day borrows the week's loaded data (it always sits
+	// inside currentWeekStart's week) and renders one column of the same grid.
+	const _todayStart = new Date(_initialNow);
+	_todayStart.setHours(0, 0, 0, 0);
+	/** @type {Date} */
+	let currentDay = _todayStart;
+	// Compressed by default: the small hours are dead canvas. Expanding shows
+	// the full 24 and remembers nothing — mornings deserve the fresh default.
+	let showFullDay = false;
+	const DAY_WINDOW_START = 6;
+	const DAY_WINDOW_END = 22;
 	/** @type {import('$lib/calendar.js').CalendarItem[]} */
 	let monthItems = [];
 	/** @type {Record<string, import('$lib/calendar.js').CalendarItem[]>} */
@@ -84,6 +104,29 @@
 		endTime: '17:00',
 		notes: ''
 	};
+
+	// Repeating shifts. Repeat fields live beside the form (they only apply
+	// when creating); templatesReady stays false until the shift_templates
+	// table answers, so the UI hides gracefully before the migration runs.
+	let repeatEnabled = false;
+	/** @type {'weekly' | 'biweekly'} */
+	let repeatPattern = 'weekly';
+	/** @type {string[]} */
+	let repeatDays = [];
+	let repeatUntil = '';
+	/** @type {any[]} */
+	let shiftTemplates = [];
+	let templatesReady = false;
+	let showRepeatsManager = false;
+	const REPEAT_WEEKDAYS = [
+		'sunday',
+		'monday',
+		'tuesday',
+		'wednesday',
+		'thursday',
+		'friday',
+		'saturday'
+	];
 
 	// Calendar data
 	/** @type {{ you: any[], partner: any[] }} */
@@ -122,6 +165,16 @@
 
 	let hoveredSlot = null;
 
+	// The hour window the grid renders. Week always shows the full 24; Day
+	// compresses to the waking hours unless expanded.
+	$: windowStartHour = view === 'day' && !showFullDay ? DAY_WINDOW_START : 0;
+	$: windowEndHour = view === 'day' && !showFullDay ? DAY_WINDOW_END : 24;
+	$: windowHours = windowEndHour - windowStartHour;
+
+	// The columns the grid draws: one day, or the week (3-day slice on mobile).
+	/** @type {Date[]} */
+	$: gridDays = view === 'day' ? [currentDay] : weekDays;
+
 	onMount(async () => {
 		const {
 			data: { user: currentUser }
@@ -159,8 +212,23 @@
 			shiftForm.nannyId = profile?.id || null;
 		}
 
+		// Mobile detection — before the initial load, because phones default to
+		// the Day view instead of Month.
+		const mql = window.matchMedia('(max-width: 768px)');
+		isMobile = mql.matches;
+		/** @param {MediaQueryListEvent} e */
+		const handleResize = (e) => {
+			isMobile = e.matches;
+		};
+		mql.addEventListener('change', handleResize);
+		mqlCleanup = () => mql.removeEventListener('change', handleResize);
+
+		if (isMobile) view = 'day';
+
 		if (view === 'month') {
 			await loadMonthData();
+		} else if (view === 'day') {
+			await setCurrentDay(currentDay);
 		} else {
 			await setCurrentWeek(0);
 		}
@@ -170,33 +238,100 @@
 		// feeds in the background (not awaited — the page stays interactive).
 		loadCalendarMeta().then(() => maybeAutoSync());
 
+		// Keep repeating shifts materialized through the horizon, quietly.
+		// Fails silently (with templatesReady false) until the
+		// shift_templates.sql migration has run.
+		if (profile?.role === 'family' || profile?.role === 'admin') {
+			loadShiftTemplates().then(async () => {
+				if (!templatesReady) return;
+				try {
+					const created = await topUpTemplates(supabase, user.id);
+					if (created > 0) {
+						await reloadViewData();
+						await loadShiftTemplates();
+					}
+				} catch (err) {
+					console.warn('[schedule] template top-up failed:', err);
+				}
+			});
+		}
+
 		// Prevent body from scrolling — only the grid body should scroll
 		document.body.classList.add('schedule-active');
 
-		// Mobile detection
-		const mql = window.matchMedia('(max-width: 768px)');
-		isMobile = mql.matches;
-		const handleResize = (e) => {
-			isMobile = e.matches;
-		};
-		mql.addEventListener('change', handleResize);
-		mqlCleanup = () => mql.removeEventListener('change', handleResize);
-
 		nowInterval = setInterval(() => (nowTick = new Date()), 60_000);
 
-		if (view === 'week') scrollGridToNow();
+		if (view === 'week' || view === 'day') scrollGridToNow();
 	});
 
-	// Auto-scroll the week grid to the current hour. The .grid-body node only
-	// exists while the week view is mounted.
+	// Auto-scroll the time grid to the current hour, relative to the rendered
+	// window. The .grid-body node only exists while the grid is mounted.
 	function scrollGridToNow() {
 		setTimeout(() => {
 			const gridBody = document.querySelector('.grid-body');
 			if (gridBody) {
-				const scrollToHour = Math.max(new Date().getHours() - 1, 0);
+				const scrollToHour = Math.max(new Date().getHours() - 1 - windowStartHour, 0);
 				gridBody.scrollTop = scrollToHour * HOUR_HEIGHT;
 			}
 		}, 50);
+	}
+
+	// ── Day navigation ────────────────────────────────────────────────
+	// The day always lives inside the loaded week; crossing a Sunday/Saturday
+	// boundary loads the containing week through the same setCurrentWeek path
+	// the week view uses (reactive safety net included).
+
+	/** @param {Date} date */
+	async function setCurrentDay(date) {
+		const day = new Date(date);
+		day.setHours(0, 0, 0, 0);
+		currentDay = day;
+
+		const sunday = new Date(day);
+		sunday.setDate(day.getDate() - day.getDay());
+		sunday.setHours(0, 0, 0, 0);
+
+		if (!currentWeekStart || sunday.getTime() !== currentWeekStart.getTime()) {
+			const now = new Date();
+			const currentSunday = new Date(now);
+			currentSunday.setDate(now.getDate() - now.getDay());
+			currentSunday.setHours(0, 0, 0, 0);
+			const offset = Math.round(
+				(sunday.getTime() - currentSunday.getTime()) / (7 * 24 * 60 * 60 * 1000)
+			);
+			await setCurrentWeek(offset);
+		}
+	}
+
+	/** @param {'prev' | 'next'} direction */
+	function changeDay(direction) {
+		const day = new Date(currentDay);
+		day.setDate(day.getDate() + (direction === 'prev' ? -1 : 1));
+		setCurrentDay(day);
+	}
+
+	function dayGoToToday() {
+		setCurrentDay(new Date());
+	}
+
+	// Swipe between days on touch — the day grid is the phone's home.
+	let touchStartX = 0;
+	let touchStartY = 0;
+
+	/** @param {TouchEvent} e */
+	function handleTouchStart(e) {
+		touchStartX = e.touches[0].clientX;
+		touchStartY = e.touches[0].clientY;
+	}
+
+	/** @param {TouchEvent} e */
+	function handleTouchEnd(e) {
+		if (view !== 'day') return;
+		const dx = e.changedTouches[0].clientX - touchStartX;
+		const dy = e.changedTouches[0].clientY - touchStartY;
+		if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 2) {
+			changeDay(dx < 0 ? 'next' : 'prev');
+		}
 	}
 
 	/** @type {(() => void) | null} */
@@ -506,7 +641,73 @@
 			endTime: '17:00',
 			notes: ''
 		};
+		repeatEnabled = false;
+		repeatPattern = 'weekly';
+		repeatDays = [];
+		repeatUntil = '';
 		showAddShift = false;
+	}
+
+	// Seed the repeat days with the picked date's weekday the moment the
+	// toggle flips on — "every Wednesday" starts from the Wednesday you chose.
+	function handleRepeatToggle() {
+		if (repeatEnabled && repeatDays.length === 0 && shiftForm.date) {
+			const weekday = new Date(shiftForm.date + 'T00:00:00')
+				.toLocaleDateString('en-US', { weekday: 'long' })
+				.toLowerCase();
+			repeatDays = [weekday];
+		}
+	}
+
+	/** @param {string} day */
+	function toggleRepeatDay(day) {
+		repeatDays = repeatDays.includes(day)
+			? repeatDays.filter((d) => d !== day)
+			: [...repeatDays, day];
+	}
+
+	async function reloadViewData() {
+		if (view === 'month') {
+			await loadMonthData();
+		} else {
+			await Promise.all([loadShifts(), loadCalendarEvents()]);
+		}
+	}
+
+	async function loadShiftTemplates() {
+		try {
+			const { data, error } = await supabase
+				.from('shift_templates')
+				.select('*')
+				.order('created_at');
+			if (error) throw error;
+			shiftTemplates = data || [];
+			templatesReady = true;
+		} catch {
+			// Table missing (migration not run) — hide the repeats UI entirely.
+			shiftTemplates = [];
+			templatesReady = false;
+		}
+	}
+
+	/** @param {any} template */
+	async function endSeriesFor(template) {
+		const confirmed = await confirmModal.show({
+			title: 'End Repeating Shift',
+			message: `End ${getNannyName(template.nanny_id)}'s repeating shift? Future scheduled days are removed; past days stay in the ledger.`,
+			confirmText: 'End Series',
+			danger: true
+		});
+		if (!confirmed) return;
+
+		try {
+			await endSeries(supabase, template.id);
+			toast.success('Series ended');
+			await loadShiftTemplates();
+			await reloadViewData();
+		} catch (err) {
+			toast.error('Could not end the series');
+		}
 	}
 
 	async function saveShift() {
@@ -521,6 +722,19 @@
 		}
 
 		const isEditing = !!editingShiftId;
+		const savingRepeat = !isEditing && repeatEnabled && templatesReady;
+
+		if (savingRepeat) {
+			if (repeatDays.length === 0) {
+				toast.error('Pick at least one weekday for the repeating shift');
+				return;
+			}
+			if (repeatUntil && repeatUntil < shiftForm.date) {
+				toast.error('The end date is before the first shift');
+				return;
+			}
+		}
+
 		const savedDate = shiftForm.date;
 
 		try {
@@ -537,6 +751,37 @@
 					.eq('id', editingShiftId);
 
 				if (error) throw error;
+			} else if (savingRepeat) {
+				// The series starts the day before its first date has been
+				// generated, so generateThrough picks up starts_on itself.
+				const genFrom = new Date(savedDate + 'T00:00:00');
+				genFrom.setDate(genFrom.getDate() - 1);
+
+				const { data: template, error } = await supabase
+					.from('shift_templates')
+					.insert({
+						nanny_id: shiftForm.nannyId,
+						days: repeatDays,
+						pattern: repeatPattern,
+						start_time: shiftForm.startTime,
+						end_time: shiftForm.endTime,
+						notes: shiftForm.notes || '',
+						starts_on: savedDate,
+						until: repeatUntil || null,
+						generated_until: localDateString(genFrom),
+						created_by: user.id
+					})
+					.select('*')
+					.single();
+
+				if (error) throw error;
+
+				const horizon = new Date();
+				horizon.setHours(0, 0, 0, 0);
+				horizon.setDate(horizon.getDate() + GENERATION_HORIZON_DAYS);
+				const made = await generateThrough(supabase, template, horizon, user.id);
+				toast.success(`Repeating shift saved — ${made} day${made === 1 ? '' : 's'} scheduled`);
+				await loadShiftTemplates();
 			} else {
 				const { error } = await supabase
 					.from('schedules')
@@ -686,26 +931,38 @@
 		showAddShift = true;
 	}
 
+	/**
+	 * Pointer y in the grid → snapped clock time, honoring the rendered
+	 * window's offset (the Day view's grid may start at 6am, not midnight).
+	 * @param {MouseEvent} e
+	 */
+	function pointerToTime(e) {
+		const target = /** @type {HTMLElement} */ (e.currentTarget);
+		const rect = target.getBoundingClientRect();
+		const y = e.clientY - rect.top + target.scrollTop;
+		const totalMinutes = (y / HOUR_HEIGHT) * 60 + windowStartHour * 60;
+		const snapped = Math.floor(totalMinutes / SLOT_MINUTES) * SLOT_MINUTES;
+		return { hour: Math.min(Math.floor(snapped / 60), 23), minute: snapped % 60 };
+	}
+
+	/**
+	 * @param {MouseEvent} e
+	 * @param {Date} day
+	 */
 	function handleDayClick(e, day) {
 		if (profile?.role !== 'family' && profile?.role !== 'admin') return;
-		const rect = e.currentTarget.getBoundingClientRect();
-		const y = e.clientY - rect.top + e.currentTarget.scrollTop;
-		const totalMinutes = (y / HOUR_HEIGHT) * 60;
-		const snapped = Math.floor(totalMinutes / SLOT_MINUTES) * SLOT_MINUTES;
-		const hour = Math.min(Math.floor(snapped / 60), 23);
-		const minute = snapped % 60;
+		const { hour, minute } = pointerToTime(e);
 		openAddShift(day, hour, minute);
 	}
 
+	/**
+	 * @param {MouseEvent} e
+	 * @param {number} dayIdx
+	 */
 	function handleDayMouseMove(e, dayIdx) {
 		if (profile?.role !== 'family' && profile?.role !== 'admin') return;
-		const rect = e.currentTarget.getBoundingClientRect();
-		const y = e.clientY - rect.top + e.currentTarget.scrollTop;
-		const totalMinutes = (y / HOUR_HEIGHT) * 60;
-		const snapped = Math.floor(totalMinutes / SLOT_MINUTES) * SLOT_MINUTES;
-		const hour = Math.min(Math.floor(snapped / 60), 23);
-		const minute = snapped % 60;
-		if (hour >= 0 && hour < 24) {
+		const { hour, minute } = pointerToTime(e);
+		if (hour >= windowStartHour && hour < windowEndHour) {
 			hoveredSlot = { dayIdx, hour, minute };
 		}
 	}
@@ -898,18 +1155,42 @@
 
 	/** @type {Record<string, any[]>} */
 	$: dayLayouts =
-		view === 'week' && weekDays.length > 0
-			? computeDayLayouts(weekDays, shifts, parentCalendarEvents, nannyCalendarEvents)
+		(view === 'week' || view === 'day') && gridDays.length > 0
+			? computeDayLayouts(gridDays, shifts, parentCalendarEvents, nannyCalendarEvents)
 			: {};
 
 	/** @param {any} block */
-	function blockStyle(block) {
-		const top = (block.startMin / 60) * HOUR_HEIGHT;
-		const height = Math.max(((block.endMin - block.startMin) / 60) * HOUR_HEIGHT, 20);
+	/**
+	 * @param {any} block
+	 * @param {number} winStartHour rendered window start (0 for the full day)
+	 * @param {number} winEndHour rendered window end
+	 */
+	function blockStyle(block, winStartHour = 0, winEndHour = 24) {
+		const winStart = winStartHour * 60;
+		const winEnd = winEndHour * 60;
+		const start = Math.max(block.startMin, winStart);
+		const end = Math.min(block.endMin, winEnd);
+		if (end <= start) return 'display: none;';
+		const top = ((start - winStart) / 60) * HOUR_HEIGHT;
+		const height = Math.max(((end - start) / 60) * HOUR_HEIGHT, 20);
 		const width = 100 / (block.laneCount || 1);
 		const left = (block.lane || 0) * width;
 		return `top: ${top}px; height: ${height}px; left: calc(${left}% + 2px); width: calc(${width}% - 4px);`;
 	}
+
+	/**
+	 * Blocks the compressed Day window hides entirely — surfaced on the
+	 * expander so nothing can be silently out of sight.
+	 * @param {any[]} blocks
+	 */
+	function countHiddenBlocks(blocks) {
+		const winStart = DAY_WINDOW_START * 60;
+		const winEnd = DAY_WINDOW_END * 60;
+		return blocks.filter((b) => b.endMin <= winStart || b.startMin >= winEnd).length;
+	}
+
+	$: dayHiddenCount =
+		view === 'day' && !showFullDay ? countHiddenBlocks(dayLayouts[ymd(currentDay)] || []) : 0;
 
 	function getPartnerName() {
 		return familyMembers.find((m) => m.id !== user?.id)?.full_name || 'Partner';
@@ -926,7 +1207,9 @@
 	/** @type {ReturnType<typeof setInterval> | null} */
 	let nowInterval = null;
 
-	$: nowLinePosition = ((nowTick.getHours() * 60 + nowTick.getMinutes()) / 60) * HOUR_HEIGHT;
+	$: nowMinutes = nowTick.getHours() * 60 + nowTick.getMinutes();
+	$: nowLinePosition = ((nowMinutes - windowStartHour * 60) / 60) * HOUR_HEIGHT;
+	$: nowLineVisible = nowMinutes >= windowStartHour * 60 && nowMinutes <= windowEndHour * 60;
 
 	/**
 	 * Weekday working hours where BOTH parents are busy and no nanny covers
@@ -1169,6 +1452,10 @@
 			if (!currentWeekStart) await setCurrentWeek(0);
 			await tick();
 			scrollGridToNow();
+		} else if (next === 'day') {
+			await setCurrentDay(currentDay);
+			await tick();
+			scrollGridToNow();
 		} else if (!monthInitialized) {
 			await loadMonthData();
 		}
@@ -1207,6 +1494,12 @@
 				<span class="week-label">
 					{#if view === 'month'}
 						{MONTH_NAMES[monthMonth]} {monthYear}
+					{:else if view === 'day'}
+						{currentDay.toLocaleDateString('en-US', {
+							weekday: 'long',
+							month: 'long',
+							day: 'numeric'
+						})}
 					{:else}
 						{currentWeekStart?.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
 					{/if}
@@ -1232,24 +1525,45 @@
 					>
 						Week
 					</button>
+					<button
+						type="button"
+						class="toggle-btn"
+						class:active={view === 'day'}
+						aria-pressed={view === 'day'}
+						on:click={() => setView('day')}
+					>
+						Day
+					</button>
 				</div>
 				<button type="button" class="top-btn" on:click={() => (showCalendarManager = true)}>
 					<Icon name="grimoire" size={16} />
 					{profile?.role === 'nanny' ? 'My Availability' : 'Calendars'}
 				</button>
+				{#if templatesReady && (profile?.role === 'family' || profile?.role === 'admin')}
+					<button type="button" class="top-btn" on:click={() => (showRepeatsManager = true)}>
+						<Icon name="star" size={16} />
+						Repeats
+					</button>
+				{/if}
 				<div class="week-nav">
 					<button
 						type="button"
 						class="nav-btn"
 						aria-label="Previous {view}"
-						on:click={() => (view === 'month' ? changeMonth('prev') : changeWeek('prev'))}
+						on:click={() =>
+							view === 'month'
+								? changeMonth('prev')
+								: view === 'day'
+									? changeDay('prev')
+									: changeWeek('prev')}
 					>
 						<Icon name="chevron-left" size={16} />
 					</button>
 					<button
 						type="button"
 						class="today-btn"
-						on:click={() => (view === 'month' ? monthGoToToday() : goToToday())}
+						on:click={() =>
+							view === 'month' ? monthGoToToday() : view === 'day' ? dayGoToToday() : goToToday()}
 					>
 						Today
 					</button>
@@ -1257,7 +1571,12 @@
 						type="button"
 						class="nav-btn"
 						aria-label="Next {view}"
-						on:click={() => (view === 'month' ? changeMonth('next') : changeWeek('next'))}
+						on:click={() =>
+							view === 'month'
+								? changeMonth('next')
+								: view === 'day'
+									? changeDay('next')
+									: changeWeek('next')}
 					>
 						<Icon name="chevron-right" size={16} />
 					</button>
@@ -1321,7 +1640,7 @@
 			{/if}
 		{/if}
 
-		{#if view === 'week'}
+		{#if view === 'week' || view === 'day'}
 			<!-- Coverage Gap Alert -->
 			{#if coverageGaps.length > 0}
 				<div class="gap-banner">
@@ -1370,16 +1689,30 @@
 				</div>
 			{/if}
 
+			{#if view === 'day'}
+				<div class="day-window-bar">
+					<button type="button" class="window-toggle" on:click={() => (showFullDay = !showFullDay)}>
+						{#if showFullDay}
+							Hide night hours
+						{:else}
+							Show full day{dayHiddenCount > 0
+								? ` · ${dayHiddenCount} hidden item${dayHiddenCount > 1 ? 's' : ''}`
+								: ''}
+						{/if}
+					</button>
+				</div>
+			{/if}
+
 			<!-- Time Grid Calendar -->
 			<div class="calendar-wrapper">
-				<div class="time-grid">
-					<!-- Day Headers — column count follows weekDays (7, or 3 on mobile) -->
+				<div class="time-grid" class:single-day={view === 'day'}>
+					<!-- Day Headers — column count follows gridDays (7, 3 on mobile, 1 in Day view) -->
 					<div
 						class="grid-header"
-						style="grid-template-columns: 62px repeat({weekDays.length}, 1fr)"
+						style="grid-template-columns: 62px repeat({gridDays.length}, 1fr)"
 					>
 						<div class="time-gutter-header"></div>
-						{#each weekDays as day (ymd(day))}
+						{#each gridDays as day (ymd(day))}
 							<div class="day-col-header" class:today={isToday(day)}>
 								<span class="day-label"
 									>{day.toLocaleDateString('en-US', { weekday: 'short' })}</span
@@ -1390,18 +1723,23 @@
 					</div>
 
 					<!-- Scrollable Grid Body -->
-					<div class="grid-body" style="grid-template-columns: 62px repeat({weekDays.length}, 1fr)">
+					<div
+						class="grid-body"
+						style="grid-template-columns: 62px repeat({gridDays.length}, 1fr)"
+						on:touchstart={handleTouchStart}
+						on:touchend={handleTouchEnd}
+					>
 						<!-- Time Gutter -->
 						<div class="time-gutter">
-							{#each Array(TOTAL_HOURS) as _, i (i)}
+							{#each Array(windowHours) as _, i (i)}
 								<div class="time-slot" style="height: {HOUR_HEIGHT}px">
-									<span class="time-text">{formatHour(DAY_START_HOUR + i)}</span>
+									<span class="time-text">{formatHour(windowStartHour + i)}</span>
 								</div>
 							{/each}
 						</div>
 
 						<!-- Day Columns -->
-						{#each weekDays as day, dayIdx (ymd(day))}
+						{#each gridDays as day, dayIdx (ymd(day))}
 							<div
 								class="day-col"
 								class:today-col={isToday(day)}
@@ -1410,7 +1748,7 @@
 								on:mouseleave={() => (hoveredSlot = null)}
 							>
 								<!-- Zebra hour backgrounds -->
-								{#each Array(TOTAL_HOURS) as _, i}
+								{#each Array(windowHours) as _, i}
 									<div
 										class="hour-bg"
 										class:hour-even={i % 2 === 0}
@@ -1419,7 +1757,7 @@
 								{/each}
 
 								<!-- Grid lines: hour (solid), half-hour (dashed), quarter-hour (dotted) -->
-								{#each Array(TOTAL_HOURS) as _, i}
+								{#each Array(windowHours) as _, i}
 									<div class="hour-line" style="top: {i * HOUR_HEIGHT}px"></div>
 									<div class="quarter-line" style="top: {i * HOUR_HEIGHT + SLOT_HEIGHT}px"></div>
 									<div class="half-line" style="top: {i * HOUR_HEIGHT + SLOT_HEIGHT * 2}px"></div>
@@ -1433,7 +1771,10 @@
 								{#if hoveredSlot && hoveredSlot.dayIdx === dayIdx}
 									<div
 										class="slot-hover"
-										style="top: {((hoveredSlot.hour * 60 + hoveredSlot.minute) / 60) *
+										style="top: {((hoveredSlot.hour * 60 +
+											hoveredSlot.minute -
+											windowStartHour * 60) /
+											60) *
 											HOUR_HEIGHT}px; height: {SLOT_HEIGHT}px"
 									>
 										<span class="slot-hover-label">
@@ -1444,7 +1785,7 @@
 								{/if}
 
 								<!-- Current time indicator -->
-								{#if isToday(day)}
+								{#if isToday(day) && nowLineVisible}
 									<div class="now-line" style="top: {nowLinePosition}px">
 										<div class="now-dot"></div>
 									</div>
@@ -1458,7 +1799,7 @@
 										<div
 											class="shift-block"
 											class:shift-editable={profile?.role === 'family' || profile?.role === 'admin'}
-											style={blockStyle(block)}
+											style={blockStyle(block, windowStartHour, windowEndHour)}
 											on:click|stopPropagation={() => {
 												if (profile?.role === 'family' || profile?.role === 'admin')
 													editShift(block.shift);
@@ -1468,7 +1809,12 @@
 												: ''}
 										>
 											<div class="shift-content">
-												<span class="shift-name">{getNannyName(block.shift.nanny_id)}</span>
+												<span class="shift-name"
+													>{getNannyName(block.shift.nanny_id)}{#if block.shift.template_id}<span
+															class="repeat-glyph"
+															title="Part of a repeating schedule">&nbsp;↻</span
+														>{/if}</span
+												>
 												<span class="shift-time"
 													>{formatTime(block.shift.start_time)} - {formatTime(
 														block.shift.end_time
@@ -1491,8 +1837,11 @@
 									{:else if block.type === 'nanny'}
 										<div
 											class="cal-event cal-event-nanny"
-											style="{blockStyle(block)} border-left-color: {block.event.color ||
-												'#e0664e'};"
+											style="{blockStyle(
+												block,
+												windowStartHour,
+												windowEndHour
+											)} border-left-color: {block.event.color || '#e0664e'};"
 											title="{getNannyName(block.nannyId)}: {block.event.title} (unavailable)"
 											on:click|stopPropagation
 										>
@@ -1504,7 +1853,11 @@
 											class="cal-event"
 											class:cal-event-you={block.type === 'you'}
 											class:cal-event-partner={block.type === 'partner'}
-											style="{blockStyle(block)} border-left-color: {block.event.color};"
+											style="{blockStyle(
+												block,
+												windowStartHour,
+												windowEndHour
+											)} border-left-color: {block.event.color};"
 											title="{block.type === 'you' ? 'You' : getPartnerName()}: {block.event.title}"
 											on:click|stopPropagation
 										>
@@ -1640,6 +1993,51 @@
 					</div>
 				</div>
 
+				{#if !editingShiftId && templatesReady && (profile?.role === 'family' || profile?.role === 'admin')}
+					<div class="form-field">
+						<label class="repeat-toggle-label">
+							<span>Repeats</span>
+							<input type="checkbox" bind:checked={repeatEnabled} on:change={handleRepeatToggle} />
+						</label>
+					</div>
+
+					{#if repeatEnabled}
+						<div class="repeat-section">
+							<div class="form-field">
+								<label>Frequency</label>
+								<select bind:value={repeatPattern}>
+									<option value="weekly">Every week</option>
+									<option value="biweekly">Every 2 weeks</option>
+								</select>
+							</div>
+
+							<div class="form-field">
+								<label>On these days</label>
+								<div class="repeat-day-pills">
+									{#each REPEAT_WEEKDAYS as day (day)}
+										<button
+											type="button"
+											class="repeat-day-pill"
+											class:active={repeatDays.includes(day)}
+											on:click={() => toggleRepeatDay(day)}
+										>
+											{day.slice(0, 1).toUpperCase()}
+										</button>
+									{/each}
+								</div>
+							</div>
+
+							<div class="form-field">
+								<label>Until <span class="optional">(optional)</span></label>
+								<input type="date" bind:value={repeatUntil} />
+								<span class="repeat-hint"
+									>Shifts are scheduled {GENERATION_HORIZON_DAYS / 7} weeks ahead and top up automatically.</span
+								>
+							</div>
+						</div>
+					{/if}
+				{/if}
+
 				{#if shiftConflicts.length > 0}
 					<div class="conflict-warning">
 						<Icon name="warning" size={16} />
@@ -1678,12 +2076,55 @@
 				</div>
 
 				<div class="form-actions">
-					<button type="submit" class="btn-save"
-						>{editingShiftId ? 'Update Shift' : 'Save Shift'}</button
-					>
+					<button type="submit" class="btn-save">
+						{editingShiftId
+							? 'Update Shift'
+							: repeatEnabled && templatesReady
+								? 'Save Repeating Shift'
+								: 'Save Shift'}
+					</button>
 					<button type="button" class="btn-cancel" on:click={resetShiftForm}>Cancel</button>
 				</div>
 			</form>
+		</div>
+	</div>
+{/if}
+
+<!-- Repeating Shifts Manager -->
+{#if showRepeatsManager}
+	<div class="modal-overlay" on:click={() => (showRepeatsManager = false)}>
+		<div class="modal-panel compact" on:click|stopPropagation>
+			<div class="modal-top">
+				<h2>Repeating Shifts</h2>
+				<button class="modal-close" on:click={() => (showRepeatsManager = false)}>
+					<Icon name="close" size={16} />
+				</button>
+			</div>
+
+			{#if shiftTemplates.length === 0}
+				<p class="modal-desc">
+					No repeating shifts yet. Turn on "Repeats" while adding a shift and it will keep itself on
+					the calendar.
+				</p>
+			{:else}
+				<p class="modal-desc">
+					Single days are edited or removed right on the calendar; ending a series removes its
+					future days and keeps the past in the ledger.
+				</p>
+				<div class="tpl-list">
+					{#each shiftTemplates as template (template.id)}
+						<div class="tpl-row">
+							<span class="tpl-mark" aria-hidden="true">↻</span>
+							<div class="tpl-info">
+								<span class="tpl-name">{getNannyName(template.nanny_id)}</span>
+								<span class="tpl-detail">{describeTemplate(template, formatTime)}</span>
+								<span class="tpl-detail faint">Scheduled through {template.generated_until}</span>
+							</div>
+							<button class="tpl-end" on:click={() => endSeriesFor(template)}>End series</button>
+						</div>
+					{/each}
+				</div>
+			{/if}
 		</div>
 	</div>
 {/if}
@@ -2042,6 +2483,179 @@
 		.time-grid {
 			min-width: 720px;
 		}
+	}
+
+	/* One day doesn't need fourteen hundred pixels — cap and center it. */
+	.time-grid.single-day {
+		min-width: 0;
+		width: 100%;
+		max-width: 760px;
+		margin: 0 auto;
+	}
+
+	/* ── Day view window toggle ───────────────────────────── */
+	.day-window-bar {
+		display: flex;
+		justify-content: center;
+		margin-bottom: 0.75rem;
+	}
+
+	.window-toggle {
+		min-height: 32px;
+		padding: 0.3rem 0.9rem;
+		background: var(--surface-2);
+		border: 1px solid var(--border-soft);
+		border-radius: 999px;
+		color: var(--text-muted);
+		font-family: var(--font-body);
+		font-size: 0.76rem;
+		font-weight: 700;
+		letter-spacing: 0.05em;
+		cursor: pointer;
+		transition: all var(--transition-fast);
+	}
+
+	.window-toggle:hover {
+		color: var(--accent-bright);
+		border-color: var(--border-gilt);
+		background: var(--accent-tint);
+	}
+
+	/* ── Repeating shifts ─────────────────────────────────── */
+	.repeat-toggle-label {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		cursor: pointer;
+	}
+
+	.repeat-toggle-label input {
+		width: 18px;
+		height: 18px;
+		accent-color: var(--accent);
+		cursor: pointer;
+	}
+
+	.repeat-section {
+		padding: 0.9rem 0.9rem 0.15rem;
+		margin-bottom: 1rem;
+		background: var(--surface-2);
+		border: 1px solid var(--border-soft);
+		border-radius: var(--radius-sm);
+	}
+
+	.repeat-day-pills {
+		display: flex;
+		gap: 0.3rem;
+		flex-wrap: wrap;
+		margin-top: 0.4rem;
+	}
+
+	.repeat-day-pill {
+		width: 38px;
+		height: 38px;
+		min-height: 38px;
+		padding: 0;
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: 50%;
+		color: var(--text-faint);
+		font-family: var(--font-body);
+		font-size: 0.72rem;
+		font-weight: 700;
+		cursor: pointer;
+		transition: all var(--transition-fast);
+	}
+
+	.repeat-day-pill:hover {
+		border-color: var(--border-gilt);
+		color: var(--accent-bright);
+	}
+
+	.repeat-day-pill.active {
+		background: var(--accent-dim);
+		border-color: var(--accent);
+		color: var(--accent-bright);
+	}
+
+	.repeat-hint {
+		display: block;
+		margin-top: 0.35rem;
+		font-size: 0.78rem;
+		font-style: italic;
+		color: var(--text-faint);
+	}
+
+	.repeat-glyph {
+		color: var(--growing);
+		font-weight: 700;
+	}
+
+	.tpl-list {
+		display: flex;
+		flex-direction: column;
+		gap: 0.55rem;
+	}
+
+	.tpl-row {
+		display: flex;
+		align-items: center;
+		gap: 0.7rem;
+		padding: 0.7rem 0.85rem;
+		background: var(--surface-2);
+		border: 1px solid var(--border-soft);
+		border-radius: var(--radius-sm);
+	}
+
+	.tpl-mark {
+		font-size: 1.1rem;
+		font-weight: 700;
+		color: var(--growing);
+	}
+
+	.tpl-info {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 0.1rem;
+	}
+
+	.tpl-name {
+		font-weight: 700;
+		color: var(--text);
+	}
+
+	.tpl-detail {
+		font-size: 0.8rem;
+		color: var(--text-muted);
+	}
+
+	.tpl-detail.faint {
+		color: var(--text-faint);
+		font-size: 0.74rem;
+	}
+
+	.tpl-end {
+		flex-shrink: 0;
+		min-height: 34px;
+		padding: 0.3rem 0.8rem;
+		background: none;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		color: var(--text-muted);
+		font-family: var(--font-body);
+		font-size: 0.76rem;
+		font-weight: 700;
+		cursor: pointer;
+		transition: all var(--transition-fast);
+	}
+
+	.tpl-end:hover {
+		color: var(--danger);
+		border-color: var(--danger);
+		background: var(--danger-dim);
 	}
 
 	.grid-header {

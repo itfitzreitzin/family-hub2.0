@@ -25,6 +25,12 @@
 	/** @type {{ type: 'single' | 'recurring', id: number } | null} */
 	let editingBusy = null;
 
+	// Calendar being edited in the sheet (null = adding a new one).
+	/** @type {number | null} */
+	let editingCalendarId = null;
+	/** @type {string | null} */
+	let editingCalendarOriginalUrl = null;
+
 	let calendarForm = {
 		calendar_name: '',
 		calendar_type: 'ical',
@@ -108,7 +114,7 @@
 		}
 	}
 
-	async function addCalendar() {
+	async function saveCalendar() {
 		if (!calendarForm.calendar_name.trim()) {
 			toast.error('Please enter a calendar name');
 			return;
@@ -123,53 +129,109 @@
 		}
 
 		try {
-			const { data, error } = await supabase
-				.from('parent_calendars')
-				.insert({
-					user_id: userId,
-					calendar_name: calendarForm.calendar_name,
-					calendar_type: calendarForm.calendar_type,
-					calendar_url: calendarForm.calendar_url || null,
-					calendar_id: calendarForm.calendar_id || null,
-					color: calendarForm.color,
-					sync_enabled: true
-				})
-				.select()
-				.single();
+			if (editingCalendarId) {
+				const { data, error } = await supabase
+					.from('parent_calendars')
+					.update({
+						calendar_name: calendarForm.calendar_name,
+						calendar_url: calendarForm.calendar_url || null,
+						color: calendarForm.color
+					})
+					.eq('id', editingCalendarId)
+					.select('id, calendar_url');
 
-			if (error) throw error;
+				if (error) throw error;
+				// RLS-denied writes "succeed" with zero rows — say so instead of
+				// letting the UI quietly snap back.
+				if (!data || data.length === 0) {
+					throw new Error('The database refused the change (permissions rule?) — nothing saved');
+				}
 
-			showAddCalendar = false;
-			resetCalendarForm();
-			await loadCalendars();
+				const urlChanged = data[0].calendar_url !== editingCalendarOriginalUrl;
+				const savedId = editingCalendarId;
+				showAddCalendar = false;
+				resetCalendarForm();
+				await loadCalendars();
+				toast.success('Calendar updated');
+				if (urlChanged && data[0].calendar_url) {
+					await syncCalendar(savedId);
+				}
+			} else {
+				const { data, error } = await supabase
+					.from('parent_calendars')
+					.insert({
+						user_id: userId,
+						calendar_name: calendarForm.calendar_name,
+						calendar_type: calendarForm.calendar_type,
+						calendar_url: calendarForm.calendar_url || null,
+						calendar_id: calendarForm.calendar_id || null,
+						color: calendarForm.color,
+						sync_enabled: true
+					})
+					.select()
+					.single();
 
-			// Auto-sync if it has a URL
-			if (data && data.calendar_url) {
-				await syncCalendar(data.id);
+				if (error) throw error;
+
+				showAddCalendar = false;
+				resetCalendarForm();
+				await loadCalendars();
+
+				// Auto-sync if it has a URL
+				if (data && data.calendar_url) {
+					await syncCalendar(data.id);
+				}
 			}
 
 			onUpdate();
 		} catch (err) {
-			toast.error('Failed to add calendar: ' + err.message);
+			const message = err instanceof Error ? err.message : String(err);
+			toast.error('Failed to save calendar: ' + message);
 		}
 	}
 
+	/** @param {any} calendar */
+	function editCalendar(calendar) {
+		editingCalendarId = calendar.id;
+		editingCalendarOriginalUrl = calendar.calendar_url || null;
+		calendarForm = {
+			calendar_name: calendar.calendar_name || '',
+			calendar_type: calendar.calendar_type || 'ical',
+			calendar_url: calendar.calendar_url || '',
+			calendar_id: calendar.calendar_id || '',
+			color: calendar.color || '#a877e8'
+		};
+		showAddCalendar = true;
+	}
+
+	/**
+	 * @param {number} calendarId
+	 * @param {boolean} enabled
+	 */
 	async function toggleCalendar(calendarId, enabled) {
 		try {
-			const { error } = await supabase
+			const { data, error } = await supabase
 				.from('parent_calendars')
 				.update({ sync_enabled: enabled })
-				.eq('id', calendarId);
+				.eq('id', calendarId)
+				.select('id');
 
 			if (error) throw error;
+			if (!data || data.length === 0) {
+				throw new Error('the database refused the change (permissions rule?)');
+			}
 
 			await loadCalendars();
 			onUpdate();
 		} catch (err) {
-			toast.error('Failed to toggle calendar');
+			const message = err instanceof Error ? err.message : String(err);
+			toast.error('Toggle failed: ' + message);
+			// Re-read so the checkbox reflects what's actually stored.
+			await loadCalendars();
 		}
 	}
 
+	/** @param {number} calendarId */
 	async function deleteCalendar(calendarId) {
 		const confirmed = await confirmModal.show({
 			title: 'Delete Calendar',
@@ -180,14 +242,36 @@
 		if (!confirmed) return;
 
 		try {
-			const { error } = await supabase.from('parent_calendars').delete().eq('id', calendarId);
+			const { data, error } = await supabase
+				.from('parent_calendars')
+				.delete()
+				.eq('id', calendarId)
+				.select('id');
 
 			if (error) throw error;
+			if (!data || data.length === 0) {
+				throw new Error('the database refused the delete (permissions rule?)');
+			}
 
 			await loadCalendars();
 			onUpdate();
+			toast.success('Calendar deleted');
 		} catch (err) {
-			toast.error('Failed to delete calendar');
+			const message = err instanceof Error ? err.message : String(err);
+			toast.error('Delete failed: ' + message);
+		}
+	}
+
+	/**
+	 * Where a feed points, shortened to its host for the card ("calendar.google.com").
+	 * @param {string | null} url
+	 */
+	function feedHost(url) {
+		if (!url) return null;
+		try {
+			return new URL(url).host;
+		} catch {
+			return url.slice(0, 32);
 		}
 	}
 
@@ -446,6 +530,8 @@
 	}
 
 	function resetCalendarForm() {
+		editingCalendarId = null;
+		editingCalendarOriginalUrl = null;
 		calendarForm = {
 			calendar_name: '',
 			calendar_type: 'ical',
@@ -453,6 +539,11 @@
 			calendar_id: '',
 			color: '#a877e8'
 		};
+	}
+
+	function closeCalendarSheet() {
+		showAddCalendar = false;
+		resetCalendarForm();
 	}
 
 	function resetManualForm() {
@@ -560,6 +651,11 @@
 						<div class="cal-name">{calendar.calendar_name}</div>
 						<div class="cal-meta">
 							<span class="cal-type-badge">{getCalendarTypeLabel(calendar.calendar_type)}</span>
+							{#if calendar.calendar_url}
+								<span class="cal-source" title={calendar.calendar_url}
+									>{feedHost(calendar.calendar_url)}</span
+								>
+							{/if}
 							{#if calendar.sync_error}
 								<span class="cal-synced failed" title={calendar.sync_error}>Last sync failed</span>
 							{:else if calendar.last_synced}
@@ -570,6 +666,9 @@
 						</div>
 					</div>
 					<div class="cal-controls">
+						<button class="icon-btn" on:click={() => editCalendar(calendar)} title="Edit calendar">
+							<Icon name="quill" size={16} />
+						</button>
 						<label class="toggle" title={calendar.sync_enabled ? 'Enabled' : 'Disabled'}>
 							<input
 								type="checkbox"
@@ -656,15 +755,16 @@
 	{/if}
 </div>
 
-<!-- Add Calendar Sheet -->
+<!-- Add / Edit Calendar Sheet -->
 {#if showAddCalendar}
-	<div class="sheet-overlay" on:click={() => (showAddCalendar = false)}>
+	<div class="sheet-overlay" on:click={closeCalendarSheet}>
 		<div class="sheet" on:click|stopPropagation>
 			<div class="sheet-handle"></div>
-			<h3>Connect a Calendar</h3>
+			<h3>{editingCalendarId ? 'Edit Calendar' : 'Connect a Calendar'}</h3>
 			<p class="sheet-desc">
-				Add an iCal feed URL to automatically sync your busy times. You can find this in your
-				calendar app's sharing settings.
+				{editingCalendarId
+					? 'Rename the calendar, change its color, or point it at a different feed URL.'
+					: "Add an iCal feed URL to automatically sync your busy times. You can find this in your calendar app's sharing settings."}
 			</p>
 
 			<div class="form-field">
@@ -676,34 +776,46 @@
 				/>
 			</div>
 
-			<div class="form-field">
-				<label>Source</label>
-				<div class="source-tabs">
-					<button
-						class="source-tab"
-						class:active={calendarForm.calendar_type === 'ical'}
-						on:click={() => (calendarForm.calendar_type = 'ical')}
-					>
-						iCal Feed
-					</button>
-					<button
-						class="source-tab"
-						class:active={calendarForm.calendar_type === 'google'}
-						on:click={() => (calendarForm.calendar_type = 'google')}
-					>
-						Google
-					</button>
-					<button
-						class="source-tab"
-						class:active={calendarForm.calendar_type === 'outlook'}
-						on:click={() => (calendarForm.calendar_type = 'outlook')}
-					>
-						Outlook
-					</button>
+			{#if !editingCalendarId}
+				<div class="form-field">
+					<label>Source</label>
+					<div class="source-tabs">
+						<button
+							class="source-tab"
+							class:active={calendarForm.calendar_type === 'ical'}
+							on:click={() => (calendarForm.calendar_type = 'ical')}
+						>
+							iCal Feed
+						</button>
+						<button
+							class="source-tab"
+							class:active={calendarForm.calendar_type === 'google'}
+							on:click={() => (calendarForm.calendar_type = 'google')}
+						>
+							Google
+						</button>
+						<button
+							class="source-tab"
+							class:active={calendarForm.calendar_type === 'outlook'}
+							on:click={() => (calendarForm.calendar_type = 'outlook')}
+						>
+							Outlook
+						</button>
+					</div>
 				</div>
-			</div>
+			{:else if calendarForm.calendar_type !== 'manual'}
+				<div class="form-field">
+					<label>iCal Feed URL</label>
+					<input
+						type="text"
+						bind:value={calendarForm.calendar_url}
+						placeholder="https://calendar.google.com/calendar/ical/..."
+					/>
+					<span class="field-hint">Changing the URL re-syncs the calendar after saving</span>
+				</div>
+			{/if}
 
-			{#if calendarForm.calendar_type === 'ical'}
+			{#if !editingCalendarId && calendarForm.calendar_type === 'ical'}
 				<div class="form-field">
 					<label>iCal Feed URL</label>
 					<input
@@ -715,7 +827,7 @@
 						>Paste the secret iCal URL from your calendar's sharing settings</span
 					>
 				</div>
-			{:else if calendarForm.calendar_type === 'google'}
+			{:else if !editingCalendarId && calendarForm.calendar_type === 'google'}
 				<div class="setup-guide">
 					<p><strong>To get your Google Calendar iCal URL:</strong></p>
 					<ol>
@@ -734,7 +846,7 @@
 						/>
 					</div>
 				</div>
-			{:else if calendarForm.calendar_type === 'outlook'}
+			{:else if !editingCalendarId && calendarForm.calendar_type === 'outlook'}
 				<div class="setup-guide">
 					<p><strong>To get your Outlook Calendar iCal URL:</strong></p>
 					<ol>
@@ -772,8 +884,10 @@
 			</div>
 
 			<div class="sheet-buttons">
-				<button class="btn-primary" on:click={addCalendar}> Connect Calendar </button>
-				<button class="btn-ghost" on:click={() => (showAddCalendar = false)}> Cancel </button>
+				<button class="btn-primary" on:click={saveCalendar}>
+					{editingCalendarId ? 'Save Changes' : 'Connect Calendar'}
+				</button>
+				<button class="btn-ghost" on:click={closeCalendarSheet}> Cancel </button>
 			</div>
 		</div>
 	</div>
@@ -1073,6 +1187,15 @@
 	.cal-synced.failed {
 		color: var(--danger);
 		font-weight: 700;
+	}
+
+	.cal-source {
+		max-width: 22ch;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		color: var(--text-faint);
+		font-size: 0.72rem;
 	}
 
 	/* ── Busy time list ───────────────────────────────────── */

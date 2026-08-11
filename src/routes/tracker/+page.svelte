@@ -29,6 +29,7 @@
 	import Icon from '$lib/icons/Icon.svelte';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
+	import CareCockpit from '$lib/components/CareCockpit.svelte';
 
 	/** @type {any} */
 	let user = null;
@@ -1025,31 +1026,36 @@
 
 		<!-- ── The hourglass ────────────────────────────────── -->
 		<div class="card arcana">
-			<div class="timer-card" class:running={currentEntry}>
-				<div class="timer-glyph" aria-hidden="true">
-					<Icon name={currentEntry ? 'hourglass' : 'candle'} size={48} />
+			{#if currentEntry}
+				<!-- On the clock the timer shrinks to a strip, and the care
+				     cockpit below owns the screen. -->
+				<div class="timer-strip">
+					<span class="strip-glyph" aria-hidden="true"><Icon name="hourglass" size={22} /></span>
+					<span class="badge badge-live"><span class="live-dot"></span> On the clock</span>
+					<span class="strip-timer">{timerDisplay}</span>
+					<span class="strip-since">since {formatTime(currentEntry.clock_in)}</span>
+					<button
+						class="btn btn-danger btn-small strip-out"
+						on:click={clockOut}
+						disabled={clockingOut}
+					>
+						<Icon name="close" size={14} />
+						{clockingOut ? 'Clocking out…' : 'Clock out'}
+					</button>
 				</div>
+			{:else}
+				<div class="timer-card">
+					<div class="timer-glyph" aria-hidden="true">
+						<Icon name="candle" size={48} />
+					</div>
 
-				<span class="badge" class:badge-live={currentEntry}>
-					{#if currentEntry}<span class="live-dot"></span>{/if}
-					{currentEntry ? 'Current shift' : 'Not clocked in'}
-				</span>
+					<span class="badge">Not clocked in</span>
 
-				<p class="timer" class:active={currentEntry}>{timerDisplay}</p>
+					<p class="timer">{timerDisplay}</p>
 
-				<p class="timer-info">
-					{currentEntry
-						? `Clocked in at ${formatTime(currentEntry.clock_in)}`
-						: 'The hours are yours to begin'}
-				</p>
+					<p class="timer-info">The hours are yours to begin</p>
 
-				<div class="button-container">
-					{#if currentEntry}
-						<button class="btn btn-danger btn-large" on:click={clockOut} disabled={clockingOut}>
-							<Icon name="close" size={16} />
-							{clockingOut ? 'Clocking out…' : 'Clock out'}
-						</button>
-					{:else}
+					<div class="button-container">
 						<button
 							class="btn btn-success btn-large"
 							on:click={clockIn}
@@ -1058,9 +1064,9 @@
 							<Icon name="sprout" size={16} />
 							{clockingIn ? 'Clocking in…' : 'Clock in'}
 						</button>
-					{/if}
+					</div>
 				</div>
-			</div>
+			{/if}
 
 			<div class="quick-actions">
 				<button class="btn btn-secondary btn-small" on:click={() => goto('/dashboard')}>
@@ -1076,6 +1082,11 @@
 				</button>
 			</div>
 		</div>
+
+		<!-- ── The care day (only while a shift is running) ── -->
+		{#if currentEntry}
+			<CareCockpit shift={currentEntry} {user} {profile} />
+		{/if}
 
 		<!-- ── The week ─────────────────────────────────────── -->
 		<div class="card arcana">
@@ -1580,20 +1591,49 @@
 		transition: all var(--transition-slow);
 	}
 
-	.timer-card.running {
-		border-color: rgba(111, 191, 115, 0.4);
-		background-image: radial-gradient(70% 90% at 50% 0%, var(--growing-dim), transparent 72%);
-	}
-
 	.timer-glyph {
 		color: var(--text-faint);
 		--icon-accent: var(--accent);
 	}
 
-	.timer-card.running .timer-glyph {
+	/* On shift the timer is a strip (the pixel face stays ≥1.4rem per the
+	   design-system rule) and the cockpit card takes the room it frees. */
+	.timer-strip {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 0.7rem;
+		padding: 0.85rem 1rem;
+		background: var(--surface-2);
+		background-image: linear-gradient(90deg, var(--growing-dim), transparent 62%);
+		border: 1px solid rgba(111, 191, 115, 0.4);
+		border-radius: var(--card-radius);
+	}
+
+	.strip-glyph {
+		display: grid;
+		place-items: center;
 		color: var(--growing);
 		--icon-accent: var(--growing);
 		animation: flicker 4s ease-in-out infinite;
+	}
+
+	.strip-timer {
+		font-family: var(--font-pixel);
+		font-size: 1.5rem;
+		font-weight: 600;
+		line-height: 1;
+		color: var(--growing);
+		text-shadow: 0 0 22px var(--growing-dim);
+	}
+
+	.strip-since {
+		font-size: 0.85rem;
+		color: var(--text-muted);
+	}
+
+	.strip-out {
+		margin-left: auto;
 	}
 
 	.timer {
@@ -1604,11 +1644,6 @@
 		letter-spacing: 0.03em;
 		color: var(--text-faint);
 		margin: 0.35rem 0 0.15rem;
-	}
-
-	.timer.active {
-		color: var(--growing);
-		text-shadow: 0 0 30px var(--growing-dim);
 	}
 
 	.timer-info {

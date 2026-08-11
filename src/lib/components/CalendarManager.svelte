@@ -4,14 +4,26 @@
 	import { supabase } from '$lib/supabase';
 	import { toast, confirm as confirmModal } from '$lib/stores/toast.js';
 
+	/** @type {string} */
 	export let userId;
 	export let onUpdate = () => {};
 
+	/** @type {any[]} */
 	let calendars = [];
 	let showAddCalendar = false;
 	let showManualEntry = false;
 	let loading = false;
 	let syncingId = null;
+
+	// Existing busy times, so entries can be fixed or removed after the fact.
+	// Singles live in calendar_events (under the "Manual Entries" calendar);
+	// recurring series live in manual_busy_times.
+	/** @type {any[]} */
+	let singleBusyTimes = [];
+	/** @type {any[]} */
+	let recurringBusyTimes = [];
+	/** @type {{ type: 'single' | 'recurring', id: number } | null} */
+	let editingBusy = null;
 
 	let calendarForm = {
 		calendar_name: '',
@@ -45,8 +57,10 @@
 
 	const weekDays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 
-	onMount(() => {
-		loadCalendars();
+	onMount(async () => {
+		// Busy-time listing needs the manual calendar's id, so calendars first.
+		await loadCalendars();
+		await loadBusyTimes();
 	});
 
 	async function loadCalendars() {
@@ -64,6 +78,34 @@
 			toast.error('Failed to load calendars');
 		}
 		loading = false;
+	}
+
+	async function loadBusyTimes() {
+		try {
+			// Singles: upcoming manual entries only — past ones are history, not
+			// something to manage. Recurring series always list (they're ongoing).
+			const manualCalendarIds = calendars
+				.filter((c) => c.calendar_type === 'manual')
+				.map((c) => c.id);
+
+			const [singles, recurring] = await Promise.all([
+				manualCalendarIds.length > 0
+					? supabase
+							.from('calendar_events')
+							.select('*')
+							.in('calendar_id', manualCalendarIds)
+							.gte('end_time', new Date().toISOString())
+							.order('start_time')
+							.limit(30)
+					: Promise.resolve({ data: [], error: null }),
+				supabase.from('manual_busy_times').select('*').eq('user_id', userId).order('start_time')
+			]);
+
+			if (!singles.error) singleBusyTimes = singles.data || [];
+			if (!recurring.error) recurringBusyTimes = recurring.data || [];
+		} catch {
+			// Non-fatal — the list section just stays empty.
+		}
 	}
 
 	async function addCalendar() {
@@ -198,9 +240,21 @@
 		}
 	}
 
-	async function addManualBusyTime() {
+	async function saveManualBusyTime() {
 		if (!manualForm.title.trim()) {
 			toast.error('Please enter a title');
+			return;
+		}
+		if (!manualForm.date || !manualForm.startTime || !manualForm.endTime) {
+			toast.error('Please set the date and times');
+			return;
+		}
+		if (manualForm.startTime >= manualForm.endTime) {
+			toast.error('End time must be after start time');
+			return;
+		}
+		if (manualForm.recurring && manualForm.recurringDays.length === 0) {
+			toast.error('Pick at least one day for a repeating busy time');
 			return;
 		}
 
@@ -208,7 +262,34 @@
 			const startDateTime = `${manualForm.date}T${manualForm.startTime}:00`;
 			const endDateTime = `${manualForm.date}T${manualForm.endTime}:00`;
 
-			if (manualForm.recurring) {
+			if (editingBusy) {
+				// Editing keeps the entry in its original table; the sheet locks the
+				// Repeats toggle while editing so the type can't change mid-flight.
+				if (editingBusy.type === 'recurring') {
+					const { error } = await supabase
+						.from('manual_busy_times')
+						.update({
+							title: manualForm.title,
+							start_time: startDateTime,
+							end_time: endDateTime,
+							recurring_pattern: manualForm.recurringPattern,
+							recurring_days: manualForm.recurringDays,
+							recurring_until: manualForm.recurringUntil || null
+						})
+						.eq('id', editingBusy.id);
+					if (error) throw error;
+				} else {
+					const { error } = await supabase
+						.from('calendar_events')
+						.update({
+							title: manualForm.title,
+							start_time: startDateTime,
+							end_time: endDateTime
+						})
+						.eq('id', editingBusy.id);
+					if (error) throw error;
+				}
+			} else if (manualForm.recurring) {
 				const { error } = await supabase.from('manual_busy_times').insert({
 					user_id: userId,
 					title: manualForm.title,
@@ -245,7 +326,9 @@
 				const { error } = await supabase.from('calendar_events').insert({
 					calendar_id: manualCalendar.id,
 					user_id: userId,
-					event_id: `manual_${Date.now()}`,
+					// A UUID, not Date.now() — two entries created in the same
+					// millisecond collided on the (calendar_id, event_id) index.
+					event_id: `manual_${crypto.randomUUID()}`,
 					title: manualForm.title,
 					start_time: startDateTime,
 					end_time: endDateTime,
@@ -256,12 +339,110 @@
 			}
 
 			showManualEntry = false;
+			const wasEditing = !!editingBusy;
 			resetManualForm();
+			await loadBusyTimes();
 			onUpdate();
-			toast.success('Busy time added');
+			toast.success(wasEditing ? 'Busy time updated' : 'Busy time added');
 		} catch (err) {
-			toast.error('Failed to add busy time');
+			toast.error(editingBusy ? 'Failed to update busy time' : 'Failed to add busy time');
 		}
+	}
+
+	/** @param {any} row calendar_events row from the manual calendar */
+	function editSingleBusyTime(row) {
+		const start = new Date(row.start_time);
+		const end = new Date(row.end_time);
+		editingBusy = { type: 'single', id: row.id };
+		manualForm = {
+			title: row.title || '',
+			date: toDateInput(start),
+			startTime: toTimeInput(start),
+			endTime: toTimeInput(end),
+			recurring: false,
+			recurringPattern: 'weekly',
+			recurringDays: [],
+			recurringUntil: ''
+		};
+		showManualEntry = true;
+	}
+
+	/** @param {any} row manual_busy_times row */
+	function editRecurringBusyTime(row) {
+		const start = new Date(row.start_time);
+		const end = new Date(row.end_time);
+		editingBusy = { type: 'recurring', id: row.id };
+		manualForm = {
+			title: row.title || '',
+			date: toDateInput(start),
+			startTime: toTimeInput(start),
+			endTime: toTimeInput(end),
+			recurring: true,
+			recurringPattern: row.recurring_pattern || 'weekly',
+			recurringDays: row.recurring_days || [],
+			recurringUntil: row.recurring_until || ''
+		};
+		showManualEntry = true;
+	}
+
+	/**
+	 * @param {'single' | 'recurring'} type
+	 * @param {any} row
+	 */
+	async function deleteBusyTime(type, row) {
+		const confirmed = await confirmModal.show({
+			title: 'Delete Busy Time',
+			message: `Delete "${row.title}"?${type === 'recurring' ? ' All future occurrences will be removed.' : ''}`,
+			confirmText: 'Delete',
+			danger: true
+		});
+		if (!confirmed) return;
+
+		try {
+			const table = type === 'recurring' ? 'manual_busy_times' : 'calendar_events';
+			const { error } = await supabase.from(table).delete().eq('id', row.id);
+			if (error) throw error;
+
+			await loadBusyTimes();
+			onUpdate();
+			toast.success('Busy time deleted');
+		} catch {
+			toast.error('Failed to delete busy time');
+		}
+	}
+
+	/** @param {Date} d */
+	function toDateInput(d) {
+		return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+	}
+
+	/** @param {Date} d */
+	function toTimeInput(d) {
+		return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+	}
+
+	/** @param {any} row */
+	function describeRecurrence(row) {
+		const days = (row.recurring_days || [])
+			.map((/** @type {string} */ d) => d.slice(0, 3))
+			.join(', ');
+		const cadence = row.recurring_pattern === 'biweekly' ? 'Every 2 weeks' : 'Weekly';
+		const until = row.recurring_until ? ` until ${row.recurring_until}` : '';
+		return `${cadence} on ${days}${until}`;
+	}
+
+	/** @param {any} row */
+	function describeSingle(row) {
+		const start = new Date(row.start_time);
+		const end = new Date(row.end_time);
+		const day = start.toLocaleDateString('en-US', {
+			weekday: 'short',
+			month: 'short',
+			day: 'numeric'
+		});
+		const fmt = (/** @type {Date} */ d) =>
+			d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }).toLowerCase();
+		return `${day} · ${fmt(start)} – ${fmt(end)}`;
 	}
 
 	function resetCalendarForm() {
@@ -275,6 +456,7 @@
 	}
 
 	function resetManualForm() {
+		editingBusy = null;
 		manualForm = {
 			title: '',
 			date: '',
@@ -285,6 +467,11 @@
 			recurringDays: [],
 			recurringUntil: ''
 		};
+	}
+
+	function closeManualSheet() {
+		showManualEntry = false;
+		resetManualForm();
 	}
 
 	function getCalendarTypeLabel(type) {
@@ -373,7 +560,9 @@
 						<div class="cal-name">{calendar.calendar_name}</div>
 						<div class="cal-meta">
 							<span class="cal-type-badge">{getCalendarTypeLabel(calendar.calendar_type)}</span>
-							{#if calendar.last_synced}
+							{#if calendar.sync_error}
+								<span class="cal-synced failed" title={calendar.sync_error}>Last sync failed</span>
+							{:else if calendar.last_synced}
 								<span class="cal-synced">Synced {timeSince(calendar.last_synced)}</span>
 							{:else if calendar.calendar_url}
 								<span class="cal-synced never">Not yet synced</span>
@@ -411,6 +600,54 @@
 							title="Remove"
 						>
 							<Icon name="urn" size={16} />
+						</button>
+					</div>
+				</div>
+			{/each}
+		</div>
+	{/if}
+
+	{#if singleBusyTimes.length > 0 || recurringBusyTimes.length > 0}
+		<div class="busy-list">
+			<h4 class="busy-heading">Busy times</h4>
+			{#each recurringBusyTimes as row (row.id)}
+				<div class="busy-row">
+					<Icon name="star" size={12} />
+					<div class="busy-info">
+						<span class="busy-title">{row.title}</span>
+						<span class="busy-detail">{describeRecurrence(row)}</span>
+					</div>
+					<div class="cal-controls">
+						<button class="icon-btn" title="Edit" on:click={() => editRecurringBusyTime(row)}>
+							<Icon name="quill" size={14} />
+						</button>
+						<button
+							class="icon-btn delete"
+							title="Delete"
+							on:click={() => deleteBusyTime('recurring', row)}
+						>
+							<Icon name="urn" size={14} />
+						</button>
+					</div>
+				</div>
+			{/each}
+			{#each singleBusyTimes as row (row.id)}
+				<div class="busy-row">
+					<Icon name="candle" size={12} />
+					<div class="busy-info">
+						<span class="busy-title">{row.title}</span>
+						<span class="busy-detail">{describeSingle(row)}</span>
+					</div>
+					<div class="cal-controls">
+						<button class="icon-btn" title="Edit" on:click={() => editSingleBusyTime(row)}>
+							<Icon name="quill" size={14} />
+						</button>
+						<button
+							class="icon-btn delete"
+							title="Delete"
+							on:click={() => deleteBusyTime('single', row)}
+						>
+							<Icon name="urn" size={14} />
 						</button>
 					</div>
 				</div>
@@ -544,11 +781,15 @@
 
 <!-- Manual Busy Time Sheet -->
 {#if showManualEntry}
-	<div class="sheet-overlay" on:click={() => (showManualEntry = false)}>
+	<div class="sheet-overlay" on:click={closeManualSheet}>
 		<div class="sheet" on:click|stopPropagation>
 			<div class="sheet-handle"></div>
-			<h3>Add Busy Time</h3>
-			<p class="sheet-desc">Block off time when you're unavailable for childcare.</p>
+			<h3>{editingBusy ? 'Edit Busy Time' : 'Add Busy Time'}</h3>
+			<p class="sheet-desc">
+				{editingBusy && editingBusy.type === 'recurring'
+					? 'Changes apply to every occurrence of this series.'
+					: "Block off time when you're unavailable for childcare."}
+			</p>
 
 			<div class="form-field">
 				<label>What's happening?</label>
@@ -579,8 +820,10 @@
 			<div class="form-field">
 				<label class="toggle-label">
 					<span>Repeats</span>
-					<label class="toggle small">
-						<input type="checkbox" bind:checked={manualForm.recurring} />
+					<label class="toggle small" class:locked={!!editingBusy}>
+						<!-- One-offs and series live in different tables, so an existing
+						     entry can't switch type — delete and recreate instead. -->
+						<input type="checkbox" bind:checked={manualForm.recurring} disabled={!!editingBusy} />
 						<span class="toggle-track">
 							<span class="toggle-thumb"></span>
 						</span>
@@ -627,8 +870,10 @@
 			{/if}
 
 			<div class="sheet-buttons">
-				<button class="btn-primary" on:click={addManualBusyTime}> Add Busy Time </button>
-				<button class="btn-ghost" on:click={() => (showManualEntry = false)}> Cancel </button>
+				<button class="btn-primary" on:click={saveManualBusyTime}>
+					{editingBusy ? 'Save Changes' : 'Add Busy Time'}
+				</button>
+				<button class="btn-ghost" on:click={closeManualSheet}> Cancel </button>
 			</div>
 		</div>
 	</div>
@@ -823,6 +1068,67 @@
 	.cal-synced.never {
 		color: var(--text-faint);
 		font-style: italic;
+	}
+
+	.cal-synced.failed {
+		color: var(--danger);
+		font-weight: 700;
+	}
+
+	/* ── Busy time list ───────────────────────────────────── */
+	.busy-list {
+		display: flex;
+		flex-direction: column;
+		gap: 0.45rem;
+		padding-top: 0.9rem;
+		border-top: 1px solid var(--border-soft);
+	}
+
+	.busy-heading {
+		font-family: var(--font-body);
+		font-size: 0.66rem;
+		font-weight: 700;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: var(--text-faint);
+	}
+
+	.busy-row {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		padding: 0.5rem 0.65rem;
+		background: var(--surface-2);
+		border: 1px solid var(--border-soft);
+		border-radius: var(--radius-sm);
+		--icon-accent: var(--accent);
+	}
+
+	.busy-info {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 0.05rem;
+	}
+
+	.busy-title {
+		font-size: 0.86rem;
+		font-weight: 700;
+		color: var(--text);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.busy-detail {
+		font-size: 0.74rem;
+		color: var(--text-faint);
+	}
+
+	.toggle.locked {
+		opacity: 0.55;
+		cursor: not-allowed;
 	}
 
 	.cal-controls {

@@ -12,12 +12,12 @@
 		normalizeDateValue,
 		localDateString,
 		parseLocalDate,
+		combineLocalDateTime,
 		buildMonthGrid,
 		getMonthGridRange,
 		addMonths
 	} from '$lib/time.js';
 	import {
-		expandRecurringInstances,
 		fetchShiftsInRange,
 		fetchBusyEventsInRange,
 		fetchManualBusyInRange,
@@ -27,15 +27,21 @@
 		upcomingItems
 	} from '$lib/calendar.js';
 
+	/** @type {any} */
 	let user = null;
+	/** @type {any} */
 	let profile = null;
+	/** @type {Date | null} */
 	let currentWeekStart = null;
 	let weekOffset = 0;
+	/** @type {any[]} */
 	let shifts = [];
 	let loading = true;
 	let showAddShift = false;
 	let showCalendarManager = false;
+	/** @type {any[]} */
 	let nannies = [];
+	/** @type {number | null} */
 	let editingShiftId = null;
 	let isMobile = false;
 
@@ -56,10 +62,21 @@
 	let selectedDateStr = localDateString();
 
 	const MONTH_NAMES = [
-		'January', 'February', 'March', 'April', 'May', 'June',
-		'July', 'August', 'September', 'October', 'November', 'December'
+		'January',
+		'February',
+		'March',
+		'April',
+		'May',
+		'June',
+		'July',
+		'August',
+		'September',
+		'October',
+		'November',
+		'December'
 	];
 
+	/** @type {{ nannyId: string | null, date: string, startTime: string, endTime: string, notes: string }} */
 	let shiftForm = {
 		nannyId: null,
 		date: '',
@@ -67,15 +84,28 @@
 		endTime: '17:00',
 		notes: ''
 	};
-	let weekSummary = null;
 
 	// Calendar data
+	/** @type {{ you: any[], partner: any[] }} */
 	let parentCalendarEvents = {
 		you: [],
 		partner: []
 	};
+	/** @type {Record<string, any[]>} */
 	let nannyCalendarEvents = {}; // keyed by nanny_id -> array of events
+	/** @type {any[]} */
 	let familyMembers = [];
+
+	// Sync status: every syncable calendar the viewer can see, surfaced on the
+	// page itself so a stale or broken feed can't masquerade as fresh truth.
+	/** @type {any[]} */
+	let calendarMeta = [];
+	/** @type {number | null} */
+	let syncingCalId = null;
+	let autoSyncRan = false;
+
+	const AUTO_SYNC_AFTER_MS = 6 * 60 * 60 * 1000; // quietly re-sync when older
+	const SYNC_WARN_AFTER_MS = 24 * 60 * 60 * 1000; // chip turns warning when older
 
 	// Time grid config
 	const DAY_START_HOUR = 0;
@@ -84,6 +114,11 @@
 	const HOUR_HEIGHT = 60; // px per hour
 	const SLOT_MINUTES = 15;
 	const SLOT_HEIGHT = HOUR_HEIGHT / (60 / SLOT_MINUTES); // 15px
+
+	// The window the coverage-gap detector scans (weekday working hours).
+	// A household setting eventually; a named constant until then.
+	const COVERAGE_START_HOUR = 8;
+	const COVERAGE_END_HOUR = 18;
 
 	let hoveredSlot = null;
 
@@ -131,6 +166,10 @@
 		}
 		loading = false;
 
+		// After first paint: show sync freshness, then quietly refresh stale
+		// feeds in the background (not awaited — the page stays interactive).
+		loadCalendarMeta().then(() => maybeAutoSync());
+
 		// Prevent body from scrolling — only the grid body should scroll
 		document.body.classList.add('schedule-active');
 
@@ -142,6 +181,8 @@
 		};
 		mql.addEventListener('change', handleResize);
 		mqlCleanup = () => mql.removeEventListener('change', handleResize);
+
+		nowInterval = setInterval(() => (nowTick = new Date()), 60_000);
 
 		if (view === 'week') scrollGridToNow();
 	});
@@ -158,12 +199,14 @@
 		}, 50);
 	}
 
+	/** @type {(() => void) | null} */
 	let mqlCleanup = null;
 	onDestroy(() => {
 		if (typeof document !== 'undefined') {
 			document.body.classList.remove('schedule-active');
 		}
 		if (mqlCleanup) mqlCleanup();
+		if (nowInterval) clearInterval(nowInterval);
 	});
 
 	// Reactive data reload — whenever the displayed week changes, reload everything.
@@ -190,203 +233,180 @@
 		familyMembers = data || [];
 	}
 
-	async function loadParentCalendarEvents() {
-		if (!currentWeekStart || familyMembers.length === 0) {
-			console.log(
-				'[schedule] loadParentCalendarEvents SKIPPED — currentWeekStart:',
-				!!currentWeekStart,
-				'familyMembers:',
-				familyMembers.length
-			);
-			return;
-		}
-
-		const weekEnd = new Date(currentWeekStart);
-		weekEnd.setDate(weekEnd.getDate() + 6);
-		weekEnd.setHours(23, 59, 59, 999);
-
+	async function loadCalendarMeta() {
 		try {
-			const { data: events, error } = await supabase
-				.from('calendar_events')
-				.select(
-					`
-          *,
-          parent_calendars!inner (
-            calendar_name,
-            color,
-            sync_enabled,
-            user_id
-          )
-        `
-				)
-				.gte('start_time', currentWeekStart.toISOString())
-				.lte('start_time', weekEnd.toISOString())
-				.eq('is_busy', true)
-				.eq('parent_calendars.sync_enabled', true)
-				.order('start_time');
+			// select('*') rather than naming columns: sync_error only exists after
+			// the calendar_sync_state.sql migration, and the chips should work
+			// (minus failure badges) before it runs.
+			let query = supabase.from('parent_calendars').select('*').order('created_at');
+			if (profile?.role === 'nanny') query = query.eq('user_id', user.id);
 
+			const { data, error } = await query;
 			if (error) throw error;
-
-			// Fetch non-recurring manual busy times within this week,
-			// plus all recurring events (their start_time is the first occurrence,
-			// which may be in the past, so we can't filter by date range).
-			const { data: manualTimes, error: manualError } = await supabase
-				.from('manual_busy_times')
-				.select('*')
-				.or(
-					`and(start_time.gte.${currentWeekStart.toISOString()},start_time.lte.${weekEnd.toISOString()}),recurring.eq.true`
-				);
-
-			if (manualError) throw manualError;
-
-			const recurringEvents = await processRecurringEvents(
-				manualTimes || [],
-				currentWeekStart,
-				weekEnd
-			);
-
-			const newParentEvents = { you: [], partner: [] };
-
-			const youId = user.id;
-			const partnerId = familyMembers.find((m) => m.id !== youId)?.id;
-
-			(events || []).forEach((event) => {
-				const eventData = {
-					title: event.title,
-					startTime: new Date(event.start_time),
-					endTime: new Date(event.end_time),
-					color: event.parent_calendars.color,
-					calendarName: event.parent_calendars.calendar_name
-				};
-
-				if (event.parent_calendars.user_id === youId) {
-					newParentEvents.you.push(eventData);
-				} else if (event.parent_calendars.user_id === partnerId) {
-					newParentEvents.partner.push(eventData);
-				}
-			});
-
-			recurringEvents.forEach((event) => {
-				const eventData = {
-					title: event.title,
-					startTime: new Date(event.start_time),
-					endTime: new Date(event.end_time),
-					color: '#718096',
-					calendarName: 'Manual Entry'
-				};
-
-				if (event.user_id === youId) {
-					newParentEvents.you.push(eventData);
-				} else if (event.user_id === partnerId) {
-					newParentEvents.partner.push(eventData);
-				}
-			});
-
-			console.log(
-				'[schedule] loadParentCalendarEvents: DB events=',
-				(events || []).length,
-				'recurring=',
-				recurringEvents.length,
-				'you=',
-				newParentEvents.you.length,
-				'partner=',
-				newParentEvents.partner.length,
-				'range=',
-				currentWeekStart.toISOString(),
-				'to',
-				weekEnd.toISOString()
-			);
-			parentCalendarEvents = newParentEvents;
+			calendarMeta = (data || []).filter((c) => c.calendar_url && c.sync_enabled);
 		} catch (err) {
-			console.error('[schedule] loadParentCalendarEvents ERROR:', err);
-			parentCalendarEvents = { you: [], partner: [] };
+			console.warn('[schedule] loadCalendarMeta failed:', err);
 		}
 	}
 
+	/** @param {any} cal */
+	function calAge(cal) {
+		return cal.last_synced ? Date.now() - new Date(cal.last_synced).getTime() : Infinity;
+	}
+
+	/** @param {any} cal */
+	function calOwnerLabel(cal) {
+		if (cal.user_id === user?.id) return cal.calendar_name;
+		const owner =
+			familyMembers.find((m) => m.id === cal.user_id) || nannies.find((n) => n.id === cal.user_id);
+		const first = owner?.full_name?.split(' ')[0];
+		return first ? `${first} · ${cal.calendar_name}` : cal.calendar_name;
+	}
+
+	/** @param {any} cal */
+	function syncAgeLabel(cal) {
+		if (cal.sync_error) return 'sync failed';
+		if (!cal.last_synced) return 'never synced';
+		const mins = Math.floor((Date.now() - new Date(cal.last_synced).getTime()) / 60000);
+		if (mins < 1) return 'just now';
+		if (mins < 60) return `${mins}m ago`;
+		const hrs = Math.floor(mins / 60);
+		if (hrs < 24) return `${hrs}h ago`;
+		return `${Math.floor(hrs / 24)}d ago`;
+	}
+
+	/**
+	 * @param {number} calendarId
+	 * @param {{ quiet?: boolean }} [opts] quiet = background auto-sync, no toasts
+	 * @returns {Promise<boolean>} whether the sync succeeded
+	 */
+	async function syncCalendarById(calendarId, { quiet = false } = {}) {
+		syncingCalId = calendarId;
+		try {
+			const {
+				data: { session }
+			} = await supabase.auth.getSession();
+			if (!session) return false;
+
+			const response = await fetch('/api/calendar/sync', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					Authorization: `Bearer ${session.access_token}`
+				},
+				body: JSON.stringify({ calendarId })
+			});
+			const result = await response.json();
+			if (!response.ok) throw new Error(result.error || 'Sync failed');
+
+			if (!quiet) toast.success(`Synced ${result.synced} events`);
+			return true;
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			if (!quiet) toast.error('Sync failed: ' + message);
+			else console.warn('[schedule] auto-sync failed for calendar', calendarId, message);
+			return false;
+		} finally {
+			syncingCalId = null;
+		}
+	}
+
+	/** @param {any} cal */
+	async function manualChipSync(cal) {
+		const ok = await syncCalendarById(cal.id);
+		await loadCalendarMeta();
+		if (ok) handleCalendarUpdate();
+	}
+
+	// On arrival, quietly refresh any feed that hasn't synced in a while —
+	// sync used to be button-only, so overlays silently went stale.
+	async function maybeAutoSync() {
+		if (autoSyncRan) return;
+		autoSyncRan = true;
+
+		const stale = calendarMeta.filter((c) => calAge(c) > AUTO_SYNC_AFTER_MS);
+		if (stale.length === 0) return;
+
+		let anySucceeded = false;
+		for (const cal of stale) {
+			anySucceeded = (await syncCalendarById(cal.id, { quiet: true })) || anySucceeded;
+		}
+		await loadCalendarMeta();
+		if (anySucceeded) handleCalendarUpdate();
+	}
+
+	// One loader for every busy-time overlay, built on the shared calendar.js
+	// fetchers. Those query by true OVERLAP with the week — the old per-role
+	// loaders filtered on start_time containment, so an event that began before
+	// Sunday (or crossed midnight) silently vanished from the grid.
 	async function loadCalendarEvents() {
-		if (profile?.role === 'family' || profile?.role === 'admin') {
-			await loadParentCalendarEvents();
-			await loadNannyCalendarEvents();
-		} else if (profile?.role === 'nanny') {
-			await loadNannyCalendarEvents();
-		}
-	}
-
-	async function loadNannyCalendarEvents() {
 		if (!currentWeekStart) return;
 
 		const weekEnd = new Date(currentWeekStart);
 		weekEnd.setDate(weekEnd.getDate() + 6);
 		weekEnd.setHours(23, 59, 59, 999);
 
+		const isFamilyViewer = profile?.role === 'family' || profile?.role === 'admin';
+
 		try {
-			// Build the query — family sees all nanny events, nannies see only their own
-			let query = supabase
-				.from('calendar_events')
-				.select(
-					`
-          *,
-          parent_calendars!inner (
-            calendar_name,
-            color,
-            sync_enabled,
-            user_id
-          )
-        `
-				)
-				.gte('start_time', currentWeekStart.toISOString())
-				.lte('start_time', weekEnd.toISOString())
-				.eq('is_busy', true)
-				.eq('parent_calendars.sync_enabled', true)
-				.order('start_time');
+			const [busyRows, manualRows] = await Promise.all([
+				fetchBusyEventsInRange(supabase, currentWeekStart, weekEnd),
+				// Parity with the month view: manual busy times are a family-member
+				// feature; the nanny view never shows them.
+				isFamilyViewer
+					? fetchManualBusyInRange(supabase, currentWeekStart, weekEnd)
+					: Promise.resolve([])
+			]);
 
-			const { data: events, error } = await query;
-			if (error) throw error;
-
-			// Get the set of nanny IDs
+			const youId = user.id;
+			const partnerId = familyMembers.find((m) => m.id !== youId)?.id;
+			const familyIds = new Set(familyMembers.map((m) => m.id));
 			const nannyIds = new Set(nannies.map((n) => n.id));
 
-			// Reset and populate nanny events
+			/** @type {{ you: any[], partner: any[] }} */
+			const newParentEvents = { you: [], partner: [] };
+			/** @type {Record<string, any[]>} */
 			const newNannyEvents = {};
-			(events || []).forEach((event) => {
-				const ownerId = event.parent_calendars.user_id;
-				if (!nannyIds.has(ownerId)) return;
 
-				if (!newNannyEvents[ownerId]) {
-					newNannyEvents[ownerId] = [];
-				}
-
-				newNannyEvents[ownerId].push({
+			for (const event of busyRows) {
+				const ownerId = event.parent_calendars?.user_id ?? event.user_id;
+				const eventData = {
 					title: event.title,
 					startTime: new Date(event.start_time),
 					endTime: new Date(event.end_time),
-					color: event.parent_calendars.color,
-					calendarName: event.parent_calendars.calendar_name,
-					nannyId: ownerId
-				});
-			});
+					color: event.parent_calendars?.color,
+					calendarName: event.parent_calendars?.calendar_name
+				};
 
-			console.log(
-				'[schedule] loadNannyCalendarEvents:',
-				(events || []).length,
-				'DB events, matched',
-				Object.values(newNannyEvents).flat().length,
-				'nanny events'
-			);
+				if (nannyIds.has(ownerId)) {
+					// For a nanny viewer, nannyIds is just themselves — scoping for free.
+					(newNannyEvents[ownerId] ||= []).push({ ...eventData, nannyId: ownerId });
+				} else if (isFamilyViewer) {
+					if (ownerId === youId) newParentEvents.you.push(eventData);
+					else if (ownerId === partnerId) newParentEvents.partner.push(eventData);
+				}
+			}
+
+			for (const manual of manualRows) {
+				if (!familyIds.has(manual.user_id)) continue;
+				const eventData = {
+					title: manual.title,
+					startTime: new Date(manual.start_time),
+					endTime: new Date(manual.end_time),
+					color: '#718096',
+					calendarName: 'Manual Entry'
+				};
+				if (manual.user_id === youId) newParentEvents.you.push(eventData);
+				else if (manual.user_id === partnerId) newParentEvents.partner.push(eventData);
+			}
+
+			parentCalendarEvents = newParentEvents;
 			nannyCalendarEvents = newNannyEvents;
 		} catch (err) {
-			console.error('[schedule] loadNannyCalendarEvents ERROR:', err);
+			console.error('[schedule] loadCalendarEvents ERROR:', err);
+			parentCalendarEvents = { you: [], partner: [] };
 			nannyCalendarEvents = {};
 		}
-	}
-
-	async function processRecurringEvents(manualTimes, weekStart, weekEnd) {
-		const recurringEvents = [];
-		for (const manual of manualTimes.filter((m) => m.recurring)) {
-			const instances = expandRecurringInstances(manual, weekStart, weekEnd);
-			recurringEvents.push(...instances);
-		}
-		return recurringEvents;
 	}
 
 	async function setCurrentWeek(offset) {
@@ -458,34 +478,13 @@
 				'-',
 				ymd(weekEnd)
 			);
-
-			if (profile?.role === 'family' || profile?.role === 'admin') {
-				await loadWeekSummary();
-			} else {
-				weekSummary = null;
-			}
 		} catch (err) {
 			console.error('[schedule] loadShifts ERROR:', err);
 			shifts = [];
 		}
 	}
 
-	async function loadWeekSummary() {
-		if (!currentWeekStart) return;
-
-		const weekStartDate = new Date(currentWeekStart);
-		weekStartDate.setHours(0, 0, 0, 0);
-
-		const { data, error } = await supabase
-			.from('weekly_coverage_summary')
-			.select('*')
-			.gte('week_start', weekStartDate.toISOString())
-			.lt('week_start', new Date(weekStartDate.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString())
-			.maybeSingle();
-
-		if (!error) weekSummary = data;
-	}
-
+	/** @param {any} shift */
 	function editShift(shift) {
 		editingShiftId = shift.id;
 		shiftForm = {
@@ -569,10 +568,11 @@
 			} else {
 				// Navigate to the week containing the saved shift so it's visible
 				const shiftDate = new Date(savedDate + 'T00:00:00');
-				const weekEnd = new Date(currentWeekStart);
+				const weekStart = currentWeekStart || new Date();
+				const weekEnd = new Date(weekStart);
 				weekEnd.setDate(weekEnd.getDate() + 6);
 
-				if (shiftDate < currentWeekStart || shiftDate > weekEnd) {
+				if (shiftDate < weekStart || shiftDate > weekEnd) {
 					// Calculate the week offset for the shift's week
 					const now = new Date();
 					const currentSunday = new Date(now);
@@ -583,7 +583,9 @@
 					shiftSunday.setDate(shiftDate.getDate() - shiftDate.getDay());
 					shiftSunday.setHours(0, 0, 0, 0);
 
-					const newOffset = Math.round((shiftSunday - currentSunday) / (7 * 24 * 60 * 60 * 1000));
+					const newOffset = Math.round(
+						(shiftSunday.getTime() - currentSunday.getTime()) / (7 * 24 * 60 * 60 * 1000)
+					);
 					await setCurrentWeek(newOffset);
 				} else {
 					// Same week — just reload data via setCurrentWeek
@@ -597,21 +599,27 @@
 		}
 	}
 
-	function getWeekDays() {
-		if (!currentWeekStart) return [];
+	/**
+	 * The days the grid shows: the full week, or a 3-day slice centered on
+	 * today on mobile. Pure — the reactive `weekDays` below is the one source
+	 * the template and layout read.
+	 * @param {Date} weekStart
+	 * @param {boolean} mobile
+	 * @returns {Date[]}
+	 */
+	function computeWeekDays(weekStart, mobile) {
 		const days = [];
-		if (isMobile) {
-			// 3-day view centered on today (or week start if today is outside this week)
+		if (mobile) {
 			const today = new Date();
 			today.setHours(0, 0, 0, 0);
-			const weekEnd = new Date(currentWeekStart);
+			const weekEnd = new Date(weekStart);
 			weekEnd.setDate(weekEnd.getDate() + 6);
 
 			let center;
-			if (today >= currentWeekStart && today <= weekEnd) {
+			if (today >= weekStart && today <= weekEnd) {
 				center = new Date(today);
 			} else {
-				center = new Date(currentWeekStart);
+				center = new Date(weekStart);
 				center.setDate(center.getDate() + 1);
 			}
 
@@ -622,7 +630,7 @@
 			}
 		} else {
 			for (let i = 0; i < 7; i++) {
-				const day = new Date(currentWeekStart);
+				const day = new Date(weekStart);
 				day.setDate(day.getDate() + i);
 				days.push(day);
 			}
@@ -630,9 +638,16 @@
 		return days;
 	}
 
-	function getShiftsForDay(date) {
+	/** @type {Date[]} */
+	$: weekDays = currentWeekStart ? computeWeekDays(currentWeekStart, isMobile) : [];
+
+	/**
+	 * @param {any[]} allShifts
+	 * @param {Date} date
+	 */
+	function shiftsOnDate(allShifts, date) {
 		const dateStr = ymd(date);
-		return shifts.filter((s) => normalizeDateValue(s.date) === dateStr);
+		return allShifts.filter((s) => normalizeDateValue(s.date) === dateStr);
 	}
 
 	function formatTime(timeStr) {
@@ -731,53 +746,169 @@
 
 	// --- Time grid positioning helpers ---
 
+	/** @param {string} timeStr 'HH:MM' */
 	function timeToMinutes(timeStr) {
 		const [h, m] = timeStr.split(':').map(Number);
 		return h * 60 + m;
 	}
 
-	function eventTop(startTime) {
-		const minutes =
-			startTime instanceof Date
-				? startTime.getHours() * 60 + startTime.getMinutes()
-				: timeToMinutes(startTime);
-		return ((minutes - DAY_START_HOUR * 60) / 60) * HOUR_HEIGHT;
+	// ── Day layout engine ─────────────────────────────────────────────
+	// Every block a day column draws — shifts and busy overlays — is computed
+	// once per data change here, not per render. Events are clipped to each
+	// LOCAL day they overlap (the old code matched on start day, so anything
+	// crossing midnight or spanning days vanished after its first day), and
+	// concurrent blocks are packed into side-by-side lanes instead of
+	// stacking full-width and hiding each other.
+
+	/**
+	 * Minutes into `day` for a timestamp, clamped to [0, 1440].
+	 * @param {Date} time
+	 * @param {Date} dayStart local midnight of the day
+	 */
+	function minutesIntoDay(time, dayStart) {
+		return Math.max(0, Math.min(1440, (time.getTime() - dayStart.getTime()) / 60000));
 	}
 
-	function eventHeight(startTime, endTime) {
-		let startMin, endMin;
-		if (startTime instanceof Date) {
-			startMin = startTime.getHours() * 60 + startTime.getMinutes();
-			endMin = endTime.getHours() * 60 + endTime.getMinutes();
-		} else {
-			startMin = timeToMinutes(startTime);
-			endMin = timeToMinutes(endTime);
+	/**
+	 * Assign side-by-side lanes to overlapping blocks. Blocks are grouped into
+	 * collision clusters; within a cluster each block gets a lane and the
+	 * cluster's lane count, so width = 100% / laneCount.
+	 * @param {any[]} blocks with startMin/endMin
+	 */
+	function packLanes(blocks) {
+		const sorted = [...blocks].sort((a, b) => a.startMin - b.startMin || b.endMin - a.endMin);
+
+		/** @type {any[][]} */
+		const clusters = [];
+		/** @type {any[]} */
+		let cluster = [];
+		let clusterEnd = -1;
+
+		for (const block of sorted) {
+			if (cluster.length > 0 && block.startMin >= clusterEnd) {
+				clusters.push(cluster);
+				cluster = [];
+				clusterEnd = -1;
+			}
+			cluster.push(block);
+			clusterEnd = Math.max(clusterEnd, block.endMin);
 		}
-		return Math.max(((endMin - startMin) / 60) * HOUR_HEIGHT, 20);
+		if (cluster.length > 0) clusters.push(cluster);
+
+		for (const group of clusters) {
+			/** @type {number[]} lane -> occupied-until minute */
+			const lanes = [];
+			for (const block of group) {
+				let lane = lanes.findIndex((occupiedUntil) => occupiedUntil <= block.startMin);
+				if (lane === -1) {
+					lane = lanes.length;
+					lanes.push(0);
+				}
+				lanes[lane] = block.endMin;
+				block.lane = lane;
+			}
+			for (const block of group) block.laneCount = lanes.length;
+		}
+		return sorted;
 	}
 
-	function getEventsForDay(day) {
-		const youEvents = parentCalendarEvents.you
-			.filter((e) => e.startTime.toDateString() === day.toDateString())
-			.map((e) => ({ ...e, owner: 'you' }));
+	/**
+	 * @param {Date[]} days
+	 * @param {any[]} allShifts
+	 * @param {{ you: any[], partner: any[] }} parentEvents
+	 * @param {Record<string, any[]>} nannyEvents
+	 * @returns {Record<string, any[]>} ymd -> positioned blocks
+	 */
+	function computeDayLayouts(days, allShifts, parentEvents, nannyEvents) {
+		/** @type {Record<string, any[]>} */
+		const layouts = {};
 
-		const partnerEvents = parentCalendarEvents.partner
-			.filter((e) => e.startTime.toDateString() === day.toDateString())
-			.map((e) => ({ ...e, owner: 'partner' }));
+		for (const day of days) {
+			const dayStart = new Date(day);
+			dayStart.setHours(0, 0, 0, 0);
+			const dayEnd = new Date(dayStart);
+			dayEnd.setDate(dayEnd.getDate() + 1);
+			const dayKey = ymd(day);
 
-		return [...youEvents, ...partnerEvents];
-	}
+			/** @type {any[]} */
+			const blocks = [];
 
-	function getNannyEventsForDay(day) {
-		const events = [];
-		for (const [nannyId, nannyEvents] of Object.entries(nannyCalendarEvents)) {
-			for (const event of nannyEvents) {
-				if (event.startTime.toDateString() === day.toDateString()) {
-					events.push({ ...event, nannyName: getNannyName(nannyId) });
+			// Shifts on this date; an overnight shift (end <= start) is clamped to
+			// midnight here and its spill segment lands on the next day below.
+			for (const shift of shiftsOnDate(allShifts, day)) {
+				const startMin = timeToMinutes(shift.start_time);
+				let endMin = timeToMinutes(shift.end_time);
+				if (endMin <= startMin) endMin = 1440;
+				blocks.push({
+					key: `shift-${shift.id}-${dayKey}`,
+					type: 'shift',
+					shift,
+					startMin,
+					endMin
+				});
+			}
+
+			// Spill segments from yesterday's overnight shifts.
+			const prevDay = new Date(day);
+			prevDay.setDate(prevDay.getDate() - 1);
+			for (const shift of shiftsOnDate(allShifts, prevDay)) {
+				const startMin = timeToMinutes(shift.start_time);
+				const endMin = timeToMinutes(shift.end_time);
+				if (endMin <= startMin && endMin > 0) {
+					blocks.push({
+						key: `shift-${shift.id}-${dayKey}-spill`,
+						type: 'shift',
+						shift,
+						startMin: 0,
+						endMin
+					});
 				}
 			}
+
+			/**
+			 * @param {any} event
+			 * @param {'you' | 'partner' | 'nanny'} type
+			 * @param {string} keyPrefix
+			 * @param {number} index
+			 * @param {string | null} nannyId
+			 */
+			const pushClipped = (event, type, keyPrefix, index, nannyId = null) => {
+				if (event.endTime <= dayStart || event.startTime >= dayEnd) return;
+				blocks.push({
+					key: `${keyPrefix}-${index}-${dayKey}`,
+					type,
+					event,
+					nannyId,
+					startMin: minutesIntoDay(event.startTime, dayStart),
+					endMin: minutesIntoDay(event.endTime, dayStart)
+				});
+			};
+
+			parentEvents.you.forEach((e, i) => pushClipped(e, 'you', 'you', i));
+			parentEvents.partner.forEach((e, i) => pushClipped(e, 'partner', 'partner', i));
+			for (const [nannyId, events] of Object.entries(nannyEvents)) {
+				events.forEach((e, i) => pushClipped(e, 'nanny', `nanny-${nannyId}`, i, nannyId));
+			}
+
+			layouts[dayKey] = packLanes(blocks.filter((b) => b.endMin > b.startMin));
 		}
-		return events;
+
+		return layouts;
+	}
+
+	/** @type {Record<string, any[]>} */
+	$: dayLayouts =
+		view === 'week' && weekDays.length > 0
+			? computeDayLayouts(weekDays, shifts, parentCalendarEvents, nannyCalendarEvents)
+			: {};
+
+	/** @param {any} block */
+	function blockStyle(block) {
+		const top = (block.startMin / 60) * HOUR_HEIGHT;
+		const height = Math.max(((block.endMin - block.startMin) / 60) * HOUR_HEIGHT, 20);
+		const width = 100 / (block.laneCount || 1);
+		const left = (block.lane || 0) * width;
+		return `top: ${top}px; height: ${height}px; left: calc(${left}% + 2px); width: calc(${width}% - 4px);`;
 	}
 
 	function getPartnerName() {
@@ -789,22 +920,31 @@
 		return date.toDateString() === today.toDateString();
 	}
 
-	function getCurrentTimePosition() {
-		const now = new Date();
-		const minutes = now.getHours() * 60 + now.getMinutes();
-		return ((minutes - DAY_START_HOUR * 60) / 60) * HOUR_HEIGHT;
-	}
+	// The now-line follows a real clock instead of waiting for unrelated
+	// re-renders. One tick a minute matches its visual resolution.
+	let nowTick = new Date();
+	/** @type {ReturnType<typeof setInterval> | null} */
+	let nowInterval = null;
 
-	function getCoverageGaps() {
+	$: nowLinePosition = ((nowTick.getHours() * 60 + nowTick.getMinutes()) / 60) * HOUR_HEIGHT;
+
+	/**
+	 * Weekday working hours where BOTH parents are busy and no nanny covers
+	 * the hour. Pure; memoized by the reactive statement below rather than
+	 * recomputed on every template read.
+	 * @param {Date[]} days
+	 * @param {any[]} allShifts
+	 * @param {{ you: any[], partner: any[] }} parentEvents
+	 */
+	function computeCoverageGaps(days, allShifts, parentEvents) {
+		/** @type {{ day: Date, startHour: number, endHour: number }[]} */
 		const gaps = [];
-		const days = getWeekDays();
 
 		days.forEach((day) => {
 			if (day.getDay() === 0 || day.getDay() === 6) return;
-			const dayShifts = getShiftsForDay(day);
-			const dayEvents = getEventsForDay(day);
+			const dayShifts = shiftsOnDate(allShifts, day);
 
-			for (let hour = 8; hour < 18; hour++) {
+			for (let hour = COVERAGE_START_HOUR; hour < COVERAGE_END_HOUR; hour++) {
 				const hasNanny = dayShifts.some((s) => {
 					const start = parseInt(s.start_time.split(':')[0]);
 					const end = parseInt(s.end_time.split(':')[0]);
@@ -818,10 +958,10 @@
 				const checkEnd = new Date(day);
 				checkEnd.setHours(hour + 1, 0, 0, 0);
 
-				const youBusy = parentCalendarEvents.you.some(
+				const youBusy = parentEvents.you.some(
 					(e) => checkTime < e.endTime && checkEnd > e.startTime
 				);
-				const partnerBusy = parentCalendarEvents.partner.some(
+				const partnerBusy = parentEvents.partner.some(
 					(e) => checkTime < e.endTime && checkEnd > e.startTime
 				);
 
@@ -839,47 +979,85 @@
 		return gaps;
 	}
 
-	function getShiftConflicts() {
+	$: coverageGaps =
+		view === 'week' && (profile?.role === 'family' || profile?.role === 'admin')
+			? computeCoverageGaps(weekDays, shifts, parentCalendarEvents)
+			: [];
+
+	/**
+	 * Everything standing in the way of the proposed shift: the nanny's own
+	 * busy calendar, and — new — any shift they're already booked for. Both
+	 * are advisory; saving is never blocked.
+	 * @returns {{ title: string, startTime: Date, endTime: Date }[]}
+	 */
+	function computeShiftConflicts() {
 		if (!shiftForm.nannyId || !shiftForm.date || !shiftForm.startTime || !shiftForm.endTime)
 			return [];
 
 		const shiftStart = new Date(`${shiftForm.date}T${shiftForm.startTime}:00`);
 		const shiftEnd = new Date(`${shiftForm.date}T${shiftForm.endTime}:00`);
+		/** @type {{ title: string, startTime: Date, endTime: Date }[]} */
+		const conflicts = [];
 
-		// Month view builds its conflicts from the unified item list; week view
-		// keeps its per-nanny event dictionary.
+		/** @param {any} s a schedules row */
+		const existingShiftOverlap = (s) => {
+			if (s.nanny_id !== shiftForm.nannyId || s.id === editingShiftId) return false;
+			const start = combineLocalDateTime(normalizeDateValue(s.date), s.start_time.slice(0, 5));
+			let end = combineLocalDateTime(normalizeDateValue(s.date), s.end_time.slice(0, 5));
+			if (end <= start) end = new Date(end.getTime() + 24 * 60 * 60 * 1000);
+			if (start < shiftEnd && end > shiftStart) {
+				conflicts.push({ title: 'Already scheduled to work', startTime: start, endTime: end });
+			}
+		};
+
 		if (view === 'month') {
-			return monthItems
-				.filter(
-					(item) =>
-						item.kind === 'nanny-busy' &&
-						item.ownerId === shiftForm.nannyId &&
-						item.start < shiftEnd &&
-						item.end > shiftStart
-				)
-				.map((item) => ({ title: item.title, startTime: item.start, endTime: item.end }));
+			monthItems.forEach((item) => {
+				if (item.kind === 'shift') existingShiftOverlap(item.raw);
+				else if (
+					item.kind === 'nanny-busy' &&
+					item.ownerId === shiftForm.nannyId &&
+					item.start < shiftEnd &&
+					item.end > shiftStart
+				) {
+					conflicts.push({ title: item.title, startTime: item.start, endTime: item.end });
+				}
+			});
+			return conflicts;
 		}
 
-		const nannyEvents = nannyCalendarEvents[shiftForm.nannyId] || [];
-		if (nannyEvents.length === 0) return [];
-
-		return nannyEvents.filter((event) => event.startTime < shiftEnd && event.endTime > shiftStart);
+		shifts.forEach(existingShiftOverlap);
+		for (const event of nannyCalendarEvents[shiftForm.nannyId] || []) {
+			if (event.startTime < shiftEnd && event.endTime > shiftStart) {
+				conflicts.push({ title: event.title, startTime: event.startTime, endTime: event.endTime });
+			}
+		}
+		return conflicts;
 	}
 
-	function getWeekSummary() {
-		if (shifts.length === 0) return null;
+	$: shiftConflicts =
+		showAddShift && shiftForm && shifts && monthItems && nannyCalendarEvents
+			? computeShiftConflicts()
+			: [];
 
+	/**
+	 * @param {any[]} allShifts
+	 * @param {any[]} allNannies
+	 */
+	function computeWeekSummary(allShifts, allNannies) {
+		if (allShifts.length === 0) return null;
+
+		/** @type {Record<string, { name: string, hours: number, rate: number }>} */
 		const byNanny = {};
 		let totalHours = 0;
 
-		shifts.forEach((shift) => {
+		allShifts.forEach((shift) => {
 			const startMin = timeToMinutes(shift.start_time);
 			const endMin = timeToMinutes(shift.end_time);
 			const hours = Math.max((endMin - startMin) / 60, 0);
 
 			const id = shift.nanny_id;
 			if (!byNanny[id]) {
-				const nanny = nannies.find((n) => n.id === id);
+				const nanny = allNannies.find((n) => n.id === id);
 				byNanny[id] = {
 					name: getNannyName(id),
 					hours: 0,
@@ -900,7 +1078,10 @@
 		return { totalHours, totalCost, nannyBreakdown };
 	}
 
+	$: weekSummaryView = view === 'week' ? computeWeekSummary(shifts, nannies) : null;
+
 	function handleCalendarUpdate() {
+		loadCalendarMeta();
 		if (view === 'month') {
 			loadMonthData();
 		} else {
@@ -1084,6 +1265,28 @@
 			</div>
 		</div>
 
+		{#if calendarMeta.length > 0}
+			<div class="sync-status" aria-label="Calendar sync status">
+				<span class="sync-status-label">Feeds</span>
+				{#each calendarMeta as cal (cal.id)}
+					<button
+						type="button"
+						class="sync-chip"
+						class:warn={!cal.sync_error && calAge(cal) > SYNC_WARN_AFTER_MS}
+						class:failed={!!cal.sync_error}
+						disabled={syncingCalId === cal.id}
+						title={cal.sync_error ? `${cal.sync_error} — click to retry` : 'Click to sync now'}
+						on:click={() => manualChipSync(cal)}
+					>
+						<span class="sync-chip-name">{calOwnerLabel(cal)}</span>
+						<span class="sync-chip-age">
+							{syncingCalId === cal.id ? 'syncing…' : syncAgeLabel(cal)}
+						</span>
+					</button>
+				{/each}
+			</div>
+		{/if}
+
 		{#if view === 'month'}
 			<!-- ── Month view ─────────────────────────────────── -->
 			{#if monthError}
@@ -1119,233 +1322,231 @@
 		{/if}
 
 		{#if view === 'week'}
-		<!-- Coverage Gap Alert -->
-		{#if (profile?.role === 'family' || profile?.role === 'admin') && getCoverageGaps().length > 0}
-			<div class="gap-banner">
-				<Icon name="warning" size={16} />
-				<span
-					><strong
-						>{getCoverageGaps().length} coverage gap{getCoverageGaps().length > 1
-							? 's'
-							: ''}</strong
-					> this week &mdash; both parents busy with no nanny scheduled</span
-				>
-			</div>
-		{/if}
-
-		<!-- Week Summary -->
-		{#if getWeekSummary()}
-			{@const summary = getWeekSummary()}
-			<div class="week-summary">
-				{#if profile?.role === 'nanny'}
-					<div class="summary-stat">
-						<span class="summary-label">This week</span>
-						<span class="summary-value">{summary.totalHours.toFixed(1)}h</span>
-					</div>
-					<div class="summary-divider"></div>
-					<div class="summary-stat">
-						<span class="summary-label">Est. income</span>
-						<span class="summary-value summary-income">${summary.totalCost.toFixed(2)}</span>
-					</div>
-				{:else}
-					<div class="summary-stat">
-						<span class="summary-label">Scheduled</span>
-						<span class="summary-value">{summary.totalHours.toFixed(1)}h</span>
-					</div>
-					<div class="summary-divider"></div>
-					{#each summary.nannyBreakdown as nanny}
-						<div class="summary-stat">
-							<span class="summary-label">{nanny.name}</span>
-							<span class="summary-detail">{nanny.hours.toFixed(1)}h &times; ${nanny.rate}/hr</span>
-						</div>
-					{/each}
-					<div class="summary-divider"></div>
-					<div class="summary-stat">
-						<span class="summary-label">Est. cost</span>
-						<span class="summary-value summary-cost">${summary.totalCost.toFixed(2)}</span>
-					</div>
-				{/if}
-			</div>
-		{/if}
-
-		<!-- Time Grid Calendar -->
-		<div class="calendar-wrapper">
-			<div class="time-grid">
-				<!-- Day Headers -->
-				<div class="grid-header">
-					<div class="time-gutter-header"></div>
-					{#each getWeekDays() as day}
-						<div class="day-col-header" class:today={isToday(day)}>
-							<span class="day-label">{day.toLocaleDateString('en-US', { weekday: 'short' })}</span>
-							<span class="day-num" class:today-num={isToday(day)}>{day.getDate()}</span>
-						</div>
-					{/each}
+			<!-- Coverage Gap Alert -->
+			{#if coverageGaps.length > 0}
+				<div class="gap-banner">
+					<Icon name="warning" size={16} />
+					<span
+						><strong>{coverageGaps.length} coverage gap{coverageGaps.length > 1 ? 's' : ''}</strong>
+						this week &mdash; both parents busy with no nanny scheduled</span
+					>
 				</div>
+			{/if}
 
-				<!-- Scrollable Grid Body -->
-				<div class="grid-body">
-					<!-- Time Gutter -->
-					<div class="time-gutter">
-						{#each Array(TOTAL_HOURS) as _, i}
-							<div class="time-slot" style="height: {HOUR_HEIGHT}px">
-								<span class="time-text">{formatHour(DAY_START_HOUR + i)}</span>
+			<!-- Week Summary -->
+			{#if weekSummaryView}
+				{@const summary = weekSummaryView}
+				<div class="week-summary">
+					{#if profile?.role === 'nanny'}
+						<div class="summary-stat">
+							<span class="summary-label">This week</span>
+							<span class="summary-value">{summary.totalHours.toFixed(1)}h</span>
+						</div>
+						<div class="summary-divider"></div>
+						<div class="summary-stat">
+							<span class="summary-label">Est. income</span>
+							<span class="summary-value summary-income">${summary.totalCost.toFixed(2)}</span>
+						</div>
+					{:else}
+						<div class="summary-stat">
+							<span class="summary-label">Scheduled</span>
+							<span class="summary-value">{summary.totalHours.toFixed(1)}h</span>
+						</div>
+						<div class="summary-divider"></div>
+						{#each summary.nannyBreakdown as nanny}
+							<div class="summary-stat">
+								<span class="summary-label">{nanny.name}</span>
+								<span class="summary-detail"
+									>{nanny.hours.toFixed(1)}h &times; ${nanny.rate}/hr</span
+								>
+							</div>
+						{/each}
+						<div class="summary-divider"></div>
+						<div class="summary-stat">
+							<span class="summary-label">Est. cost</span>
+							<span class="summary-value summary-cost">${summary.totalCost.toFixed(2)}</span>
+						</div>
+					{/if}
+				</div>
+			{/if}
+
+			<!-- Time Grid Calendar -->
+			<div class="calendar-wrapper">
+				<div class="time-grid">
+					<!-- Day Headers — column count follows weekDays (7, or 3 on mobile) -->
+					<div
+						class="grid-header"
+						style="grid-template-columns: 62px repeat({weekDays.length}, 1fr)"
+					>
+						<div class="time-gutter-header"></div>
+						{#each weekDays as day (ymd(day))}
+							<div class="day-col-header" class:today={isToday(day)}>
+								<span class="day-label"
+									>{day.toLocaleDateString('en-US', { weekday: 'short' })}</span
+								>
+								<span class="day-num" class:today-num={isToday(day)}>{day.getDate()}</span>
 							</div>
 						{/each}
 					</div>
 
-					<!-- Day Columns -->
-					{#each getWeekDays() as day, dayIdx}
-						<div
-							class="day-col"
-							class:today-col={isToday(day)}
-							on:click={(e) => handleDayClick(e, day)}
-							on:mousemove={(e) => handleDayMouseMove(e, dayIdx)}
-							on:mouseleave={() => (hoveredSlot = null)}
-						>
-							<!-- Zebra hour backgrounds -->
-							{#each Array(TOTAL_HOURS) as _, i}
-								<div
-									class="hour-bg"
-									class:hour-even={i % 2 === 0}
-									style="top: {i * HOUR_HEIGHT}px; height: {HOUR_HEIGHT}px"
-								></div>
-							{/each}
-
-							<!-- Grid lines: hour (solid), half-hour (dashed), quarter-hour (dotted) -->
-							{#each Array(TOTAL_HOURS) as _, i}
-								<div class="hour-line" style="top: {i * HOUR_HEIGHT}px"></div>
-								<div class="quarter-line" style="top: {i * HOUR_HEIGHT + SLOT_HEIGHT}px"></div>
-								<div class="half-line" style="top: {i * HOUR_HEIGHT + SLOT_HEIGHT * 2}px"></div>
-								<div class="quarter-line" style="top: {i * HOUR_HEIGHT + SLOT_HEIGHT * 3}px"></div>
-							{/each}
-
-							<!-- Hover indicator for clickable slot -->
-							{#if hoveredSlot && hoveredSlot.dayIdx === dayIdx}
-								<div
-									class="slot-hover"
-									style="top: {((hoveredSlot.hour * 60 + hoveredSlot.minute) / 60) *
-										HOUR_HEIGHT}px; height: {SLOT_HEIGHT}px"
-								>
-									<span class="slot-hover-label">
-										<Icon name="plus" size={16} />
-										{formatTime15(hoveredSlot.hour, hoveredSlot.minute)}
-									</span>
-								</div>
-							{/if}
-
-							<!-- Current time indicator -->
-							{#if isToday(day)}
-								<div class="now-line" style="top: {getCurrentTimePosition()}px">
-									<div class="now-dot"></div>
-								</div>
-							{/if}
-
-							<!-- Parent calendar events (semi-transparent background) -->
-							{#each getEventsForDay(day) as event}
-								<div
-									class="cal-event"
-									class:cal-event-you={event.owner === 'you'}
-									class:cal-event-partner={event.owner === 'partner'}
-									style="
-                    top: {Math.max(eventTop(event.startTime), 0)}px;
-                    height: {eventHeight(event.startTime, event.endTime)}px;
-                    border-left-color: {event.color};
-                  "
-									title="{event.owner === 'you' ? 'You' : getPartnerName()}: {event.title}"
-									on:click|stopPropagation
-								>
-									<span class="cal-event-owner"
-										>{event.owner === 'you' ? 'You' : getPartnerName()}</span
-									>
-									<span class="cal-event-title">{event.title}</span>
-								</div>
-							{/each}
-
-							<!-- Nanny busy times (orange tinted blocks) -->
-							{#each getNannyEventsForDay(day) as nEvent}
-								<div
-									class="cal-event cal-event-nanny"
-									style="
-                    top: {Math.max(eventTop(nEvent.startTime), 0)}px;
-                    height: {eventHeight(nEvent.startTime, nEvent.endTime)}px;
-                    border-left-color: {nEvent.color || '#e0664e'};
-                  "
-									title="{nEvent.nannyName}: {nEvent.title} (unavailable)"
-									on:click|stopPropagation
-								>
-									<span class="cal-event-owner">{nEvent.nannyName}</span>
-									<span class="cal-event-title">{nEvent.title}</span>
-								</div>
-							{/each}
-
-							<!-- Nanny shifts (solid green blocks) -->
-							{#each getShiftsForDay(day) as shift}
-								<div
-									class="shift-block"
-									class:shift-editable={profile?.role === 'family' || profile?.role === 'admin'}
-									style="
-                    top: {eventTop(shift.start_time)}px;
-                    height: {eventHeight(shift.start_time, shift.end_time)}px;
-                  "
-									on:click|stopPropagation={() => {
-										if (profile?.role === 'family' || profile?.role === 'admin') editShift(shift);
-									}}
-									title={profile?.role === 'family' || profile?.role === 'admin'
-										? 'Click to edit'
-										: ''}
-								>
-									<div class="shift-content">
-										<span class="shift-name">{getNannyName(shift.nanny_id)}</span>
-										<span class="shift-time"
-											>{formatTime(shift.start_time)} - {formatTime(shift.end_time)}</span
-										>
-										{#if shift.notes}
-											<span class="shift-note">{shift.notes}</span>
-										{/if}
-									</div>
-									{#if profile?.role === 'family' || profile?.role === 'admin'}
-										<button
-											class="shift-delete"
-											on:click|stopPropagation={() => deleteShift(shift.id)}
-											title="Remove shift"
-										>
-											<Icon name="close" size={16} />
-										</button>
-									{/if}
+					<!-- Scrollable Grid Body -->
+					<div class="grid-body" style="grid-template-columns: 62px repeat({weekDays.length}, 1fr)">
+						<!-- Time Gutter -->
+						<div class="time-gutter">
+							{#each Array(TOTAL_HOURS) as _, i (i)}
+								<div class="time-slot" style="height: {HOUR_HEIGHT}px">
+									<span class="time-text">{formatHour(DAY_START_HOUR + i)}</span>
 								</div>
 							{/each}
 						</div>
-					{/each}
-				</div>
-			</div>
-		</div>
 
-		<!-- Legend -->
-		<div class="legend">
-			<div class="legend-item">
-				<span class="legend-swatch shift-swatch"></span>
-				<span>Nanny shift</span>
-			</div>
-			<div class="legend-item">
-				<span class="legend-swatch you-swatch"></span>
-				<span>Your busy time</span>
-			</div>
-			{#if familyMembers.length > 1}
-				<div class="legend-item">
-					<span class="legend-swatch partner-swatch"></span>
-					<span>{getPartnerName()}'s busy time</span>
+						<!-- Day Columns -->
+						{#each weekDays as day, dayIdx (ymd(day))}
+							<div
+								class="day-col"
+								class:today-col={isToday(day)}
+								on:click={(e) => handleDayClick(e, day)}
+								on:mousemove={(e) => handleDayMouseMove(e, dayIdx)}
+								on:mouseleave={() => (hoveredSlot = null)}
+							>
+								<!-- Zebra hour backgrounds -->
+								{#each Array(TOTAL_HOURS) as _, i}
+									<div
+										class="hour-bg"
+										class:hour-even={i % 2 === 0}
+										style="top: {i * HOUR_HEIGHT}px; height: {HOUR_HEIGHT}px"
+									></div>
+								{/each}
+
+								<!-- Grid lines: hour (solid), half-hour (dashed), quarter-hour (dotted) -->
+								{#each Array(TOTAL_HOURS) as _, i}
+									<div class="hour-line" style="top: {i * HOUR_HEIGHT}px"></div>
+									<div class="quarter-line" style="top: {i * HOUR_HEIGHT + SLOT_HEIGHT}px"></div>
+									<div class="half-line" style="top: {i * HOUR_HEIGHT + SLOT_HEIGHT * 2}px"></div>
+									<div
+										class="quarter-line"
+										style="top: {i * HOUR_HEIGHT + SLOT_HEIGHT * 3}px"
+									></div>
+								{/each}
+
+								<!-- Hover indicator for clickable slot -->
+								{#if hoveredSlot && hoveredSlot.dayIdx === dayIdx}
+									<div
+										class="slot-hover"
+										style="top: {((hoveredSlot.hour * 60 + hoveredSlot.minute) / 60) *
+											HOUR_HEIGHT}px; height: {SLOT_HEIGHT}px"
+									>
+										<span class="slot-hover-label">
+											<Icon name="plus" size={16} />
+											{formatTime15(hoveredSlot.hour, hoveredSlot.minute)}
+										</span>
+									</div>
+								{/if}
+
+								<!-- Current time indicator -->
+								{#if isToday(day)}
+									<div class="now-line" style="top: {nowLinePosition}px">
+										<div class="now-dot"></div>
+									</div>
+								{/if}
+
+								<!-- All blocks for the day: shifts and busy overlays, clipped to
+								     this day and lane-packed so concurrent things sit side by
+								     side instead of hiding each other. -->
+								{#each dayLayouts[ymd(day)] || [] as block (block.key)}
+									{#if block.type === 'shift'}
+										<div
+											class="shift-block"
+											class:shift-editable={profile?.role === 'family' || profile?.role === 'admin'}
+											style={blockStyle(block)}
+											on:click|stopPropagation={() => {
+												if (profile?.role === 'family' || profile?.role === 'admin')
+													editShift(block.shift);
+											}}
+											title={profile?.role === 'family' || profile?.role === 'admin'
+												? 'Click to edit'
+												: ''}
+										>
+											<div class="shift-content">
+												<span class="shift-name">{getNannyName(block.shift.nanny_id)}</span>
+												<span class="shift-time"
+													>{formatTime(block.shift.start_time)} - {formatTime(
+														block.shift.end_time
+													)}</span
+												>
+												{#if block.shift.notes}
+													<span class="shift-note">{block.shift.notes}</span>
+												{/if}
+											</div>
+											{#if profile?.role === 'family' || profile?.role === 'admin'}
+												<button
+													class="shift-delete"
+													on:click|stopPropagation={() => deleteShift(block.shift.id)}
+													title="Remove shift"
+												>
+													<Icon name="close" size={16} />
+												</button>
+											{/if}
+										</div>
+									{:else if block.type === 'nanny'}
+										<div
+											class="cal-event cal-event-nanny"
+											style="{blockStyle(block)} border-left-color: {block.event.color ||
+												'#e0664e'};"
+											title="{getNannyName(block.nannyId)}: {block.event.title} (unavailable)"
+											on:click|stopPropagation
+										>
+											<span class="cal-event-owner">{getNannyName(block.nannyId)}</span>
+											<span class="cal-event-title">{block.event.title}</span>
+										</div>
+									{:else}
+										<div
+											class="cal-event"
+											class:cal-event-you={block.type === 'you'}
+											class:cal-event-partner={block.type === 'partner'}
+											style="{blockStyle(block)} border-left-color: {block.event.color};"
+											title="{block.type === 'you' ? 'You' : getPartnerName()}: {block.event.title}"
+											on:click|stopPropagation
+										>
+											<span class="cal-event-owner"
+												>{block.type === 'you' ? 'You' : getPartnerName()}</span
+											>
+											<span class="cal-event-title">{block.event.title}</span>
+										</div>
+									{/if}
+								{/each}
+							</div>
+						{/each}
+					</div>
 				</div>
-			{/if}
-			{#if Object.keys(nannyCalendarEvents).length > 0}
+			</div>
+
+			<!-- Legend -->
+			<div class="legend">
 				<div class="legend-item">
-					<span class="legend-swatch nanny-busy-swatch"></span>
-					<span>Nanny unavailable</span>
+					<span class="legend-swatch shift-swatch"></span>
+					<span>Nanny shift</span>
 				</div>
-			{/if}
-			{#if profile?.role === 'family' || profile?.role === 'admin'}
-				<span class="legend-hint">Click a time slot to add a shift</span>
-			{/if}
-		</div>
+				<div class="legend-item">
+					<span class="legend-swatch you-swatch"></span>
+					<span>Your busy time</span>
+				</div>
+				{#if familyMembers.length > 1}
+					<div class="legend-item">
+						<span class="legend-swatch partner-swatch"></span>
+						<span>{getPartnerName()}'s busy time</span>
+					</div>
+				{/if}
+				{#if Object.keys(nannyCalendarEvents).length > 0}
+					<div class="legend-item">
+						<span class="legend-swatch nanny-busy-swatch"></span>
+						<span>Nanny unavailable</span>
+					</div>
+				{/if}
+				{#if profile?.role === 'family' || profile?.role === 'admin'}
+					<span class="legend-hint">Click a time slot to add a shift</span>
+				{/if}
+			</div>
 		{/if}
 	{/if}
 </div>
@@ -1439,16 +1640,16 @@
 					</div>
 				</div>
 
-				{#if getShiftConflicts().length > 0}
+				{#if shiftConflicts.length > 0}
 					<div class="conflict-warning">
 						<Icon name="warning" size={16} />
 						<div class="conflict-text">
-							<strong>Heads up</strong> &mdash; {getNannyName(shiftForm.nannyId)} has {getShiftConflicts()
-								.length === 1
+							<strong>Heads up</strong> &mdash; {getNannyName(shiftForm.nannyId)} has {shiftConflicts.length ===
+							1
 								? 'something'
-								: `${getShiftConflicts().length} things`} on their calendar during this time:
+								: `${shiftConflicts.length} things`} in the way of this time:
 							<ul class="conflict-list">
-								{#each getShiftConflicts() as conflict}
+								{#each shiftConflicts as conflict, i (i)}
 									<li>
 										"{conflict.title}" ({conflict.startTime.toLocaleTimeString('en-US', {
 											hour: 'numeric',
@@ -1620,6 +1821,73 @@
 		background: var(--accent-tint);
 	}
 
+	/* ── Sync freshness chips ─────────────────────────────── */
+	.sync-status {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		flex-wrap: wrap;
+		margin: -0.35rem 0 0.9rem;
+	}
+
+	.sync-status-label {
+		font-family: var(--font-body);
+		font-size: 0.62rem;
+		font-weight: 700;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
+		color: var(--text-faint);
+	}
+
+	.sync-chip {
+		display: inline-flex;
+		align-items: baseline;
+		gap: 0.4rem;
+		min-height: 28px;
+		padding: 0.2rem 0.65rem;
+		background: var(--surface-2);
+		border: 1px solid var(--border-soft);
+		border-radius: 999px;
+		color: var(--text-muted);
+		font-family: var(--font-body);
+		font-size: 0.72rem;
+		cursor: pointer;
+		transition: all var(--transition-fast);
+	}
+
+	.sync-chip:hover {
+		border-color: var(--border-gilt);
+		color: var(--text);
+	}
+
+	.sync-chip:disabled {
+		opacity: 0.6;
+		cursor: default;
+	}
+
+	.sync-chip-name {
+		font-weight: 700;
+	}
+
+	.sync-chip-age {
+		color: var(--growing);
+	}
+
+	.sync-chip.warn .sync-chip-age {
+		color: var(--accent-bright);
+		font-weight: 700;
+	}
+
+	.sync-chip.failed {
+		border-color: var(--danger);
+		background: var(--danger-dim);
+	}
+
+	.sync-chip.failed .sync-chip-age {
+		color: var(--danger);
+		font-weight: 700;
+	}
+
 	/* ── View toggle ──────────────────────────────────────── */
 	.view-toggle {
 		display: flex;
@@ -1766,7 +2034,14 @@
 	.time-grid {
 		display: flex;
 		flex-direction: column;
-		min-width: 720px;
+	}
+
+	/* Desktop keeps a floor so seven columns stay readable; mobile's 3-day
+	   grid fits the viewport instead of forcing a sideways scroll. */
+	@media (min-width: 769px) {
+		.time-grid {
+			min-width: 720px;
+		}
 	}
 
 	.grid-header {
@@ -1955,10 +2230,9 @@
 	}
 
 	/* ── Events ───────────────────────────────────────────── */
+	/* left/width come from the lane-packing inline style. */
 	.cal-event {
 		position: absolute;
-		left: 2px;
-		right: 2px;
 		display: flex;
 		flex-direction: column;
 		gap: 0.05rem;
@@ -2000,10 +2274,9 @@
 	}
 
 	/* Nanny shifts are the things that grow — moss green, solid. */
+	/* left/width come from the lane-packing inline style. */
 	.shift-block {
 		position: absolute;
-		left: 3px;
-		right: 3px;
 		display: flex;
 		justify-content: space-between;
 		gap: 0.25rem;

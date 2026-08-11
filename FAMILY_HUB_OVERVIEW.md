@@ -93,6 +93,14 @@ nanny on the clock at any moment** (enforced in app logic and by a DB index).
 - Live via a Supabase realtime channel on `time_entries`, a 30s poll, a 1s tick
   for elapsed displays, and refresh-on-tab-focus. In-progress shifts count toward
   today's hours and the weekly dollar total in real time.
+- **"The Day — live" card** (family view; Chronicle build step 3): the ambient
+  window onto a running shift — a composed status line ("Indigo napping since
+  1:10 · mac & cheese, ate well · 2 potty stars"), the moment feed beneath, and
+  the **morning note** block. Parents write/amend one note per morning (DB-
+  enforced; defaults to tomorrow when written in the evening); it pins at the
+  top of the nanny's cockpit until she taps **Seen ✓**, and the receipt (time,
+  by whom) shows back on this card. Realtime on care_moments +
+  chronicle_entries/reacts.
 - A decorative "shelf" footer doubles as a balance-due indicator when money is
   outstanding.
 
@@ -115,6 +123,23 @@ nanny on the clock at any moment** (enforced in app logic and by a DB index).
 - Realtime-synced across devices (clock out on a phone and the wall tablet's timer
   stops, with a toast), with stale-response guards and race handling for
   duplicate open shifts.
+- **The Care Day cockpit** (Chronicle build step 2): while a shift is running the
+  big timer shrinks to a moss strip and a cockpit card takes the stage — kid-face
+  scope chips, seven moment buttons (nap / meal / snack / potty / meds / note /
+  heads-up), and the shift's live timeline. Naps are tap-to-start/tap-to-end with
+  the shift timer's moss styling and a DB-enforced one-open-nap-per-kid; potty
+  logs tried/success/accident (successes get a star, accidents log neutrally);
+  the Meds button face shows today's last dose (double-dose guard) with recent
+  names pre-filled; heads-up is the one ember-flagged tier meant for parents.
+  Moments are editable after the fact by their author or family/admin, and the
+  card realtime-syncs across devices.
+- **Wrap-up at clock-out** (step 4): the clock-out prompt arrives **pre-drafted**
+  from the day's moments ("Indigo napped 1:10–2:45 · a meal — mac & cheese, ate
+  well + 1 snack · 2 potty stars…") with an "in your own words" line to garnish
+  it — confirm-and-garnish, never compose-from-scratch. Draft + words become a
+  `chronicle_entries` row tagged `wrapup`, auto-linked to the shift; quiet days
+  write nothing. The Today card shows the wrap-up in the evening with a one-tap
+  ♥ (no comment threads by design).
 
 ### Calendar (`/schedule`) — family/admin's scheduling cockpit
 - **Month view** (desktop default): six-week grid with up to 3 event pills per day
@@ -170,6 +195,53 @@ nanny on the clock at any moment** (enforced in app logic and by a DB index).
   priced at *that nanny's* rate), CSV export, and a convenience Venmo button that
   deliberately does **not** write payment records (the Tracker owns bookkeeping).
 
+### Family (`/family`) — the household roster
+- The whole household as data — parents, kids, pets — in one `family_members`
+  table (Chronicle build step 1: everything the Care Day and Chronicle record
+  anchors here). **Members ≠ accounts:** kids and pets never log in; a parent
+  row carries a nullable `profile_id` link to their login ("Holds a key"
+  badge); caregivers stay in `profiles` (payroll lives there).
+- Parents are seeded from existing family/admin profiles by the migration;
+  kids and pets are added in the app (their real names aren't in the repo —
+  the painted "Jack"/"Emma" portraits are stand-ins until real ones arrive).
+- Cards show portrait (avatar_url or a stable painted stand-in; pets get the
+  cat sprite), age from birthdate, a kid's *current focus* (the habit that
+  will get its own cockpit button), a pet's species, and freeform notes.
+- Family/admin get add/edit/remove (kind-specific fields; one member per
+  linked account, DB-enforced); the nanny sees the roster read-only.
+
+### Chronicle (`/chronicle`) — the family journal
+- The memory layer (Chronicle build step 5): wrap-ups arriving on their own at
+  clock-out plus written entries (the "pancake Sunday" posts), in a dated feed —
+  author avatar and byline, per-date **moon glyph** (the real phase for that
+  date), the shift a wrap-up rode in on ("on shift 10:10 AM – 6:40 PM"), kid
+  tags with mini portraits, and a one-tap **♥** per entry.
+- **Search** (server-side ilike) plus filters by kid, author, and tag; "turn
+  back the pages" pagination. Writing offers the four working tags — needs /
+  health / milestone / heads-up — and (family/admin only) the **household-only**
+  toggle, which hides the entry from the nanny at the RLS layer so parents can
+  write candidly.
+- **The Needs List**: entries tagged `needs` escape the journal onto a standing
+  check-off card until crossed off (which just removes the tag — the entry
+  keeps its place in the journal).
+- Entries are amendable by their author (or family/admin) and erasable with
+  confirm; realtime keeps the feed and hearts live. The `nav-care.png`
+  heart-potion finally fronts a page.
+
+### Care Sheet (`/care`) — the one page a sitter needs
+- The reference layer (Chronicle build step 6): **emergency contacts** with big
+  tap-to-call `tel:` pills, **authorized pickups** ("no one else — when in
+  doubt, call first"), per-kid **allergies** (ember-boxed and plain when
+  present — no whimsy in safety paths), the **dosing chart** (which the
+  cockpit's last-dose guard complements), **routines**, current focus, and
+  freeform **house notes**. A Print button for the fridge copy.
+- Parents author it (section-by-section Amend modals); the whole household
+  reads it — it exists for the nanny, whose view is read-only. The cockpit's
+  header links here in one tap, as does a nanny quick action on Today.
+- Data: a DB-enforced singleton `care_sheet` row for household sections, and
+  per-kid columns on `family_members` (`allergies`, `dosing`, with `routines`
+  holding free text).
+
 ### Admin (`/admin`) and Settings (`/settings`)
 - Admin: nanny account management (create logins, edit rate/Venmo, delete with
   their entries).
@@ -188,6 +260,11 @@ nanny on the clock at any moment** (enforced in app logic and by a DB index).
 | `calendar_events` | Synced busy events | Unique (calendar_id, event_id) for re-sync dedup; also holds one-off manual busy entries |
 | `manual_busy_times` | Recurring manual busy time: pattern weekly/biweekly(/monthly unused), weekday list, until | Expanded client-side |
 | `shift_templates` | Repeating shift series: days[], pattern, times, starts_on, until, generated_until | Added by `shift_templates.sql`; materializes into `schedules` (rows carry nullable `template_id`) |
+| `family_members` | The household roster: name, kind (parent/child/pet), birthdate, avatar_url, profile_id (nullable FK), current_focus, species, routines, notes | Added by `family_members.sql`; uuid ids (care tables reference `kid_ids uuid[]`); partial unique: **one member per profile** |
+| `care_moments` | The Care Day's taps: kind (nap/meal/snack/potty/meds/note/headsup), kid_ids uuid[], shift_id (nullable FK), started_at/ended_at, payload jsonb | Added by `care_moments.sql`; generated `nap_kid_id` column + partial unique: **one open nap per kid** |
+| `chronicle_entries` | The journal's written layer: author, entry_date, body, tags text[], kid_ids uuid[], shift_id, household_only, photo_url | Added by `chronicle_entries.sql`; partial unique: **one 'morning'-tagged note per day**; RLS hides household_only rows from the nanny |
+| `chronicle_reacts` | One-tap acknowledgements: (entry_id, user_id, kind 'seen'/'heart') | Same file; each person writes only their own rows — how the nanny stamps Seen without edit rights |
+| `care_sheet` | The sitter's reference: contacts jsonb, pickups jsonb, house_notes, updated_at/by | Added by `care_sheet.sql`; a `one boolean` latch enforces the singleton; also adds `allergies` + `dosing` to family_members |
 | `availability`, `schedule_blocks` | Defined in `supabase/schedule.sql` | **Legacy — no longer referenced by code** |
 
 Security: RLS on all tables — any authenticated household member can read;
@@ -282,13 +359,36 @@ system, documented in the README and enforced by semantic tokens.
 - Migrations to run once in Supabase: `calendar_sync_state.sql`,
   `shift_templates.sql`.
 
+*Recent (2026-08-11, Chronicle build steps 1–3)*
+- Shipped: `family_members` (parents, kids, pets — members, not accounts) and
+  the Family page (`/family`) to manage them, wearing the `nav-home.png` art.
+- Shipped: the Care Day cockpit on the Tracker — moment buttons + live shift
+  timeline (`care_moments`), with the shift timer compressed to a strip while
+  on the clock.
+- Shipped: the morning note with Seen receipt, and the parents' "The Day —
+  live" card on Today (`chronicle_entries` + `chronicle_reacts`).
+- Shipped: the clock-out wrap-up — pre-drafted from the day's moments,
+  garnished by hand, saved as a shift-linked Chronicle entry with an evening
+  ♥ on the Today card.
+- Shipped: the Chronicle page (`/chronicle`) — the journal feed with search,
+  kid/author/tag filters, the needs check-off list, hearts, and the
+  household-only toggle.
+- Shipped: the Care Sheet (`/care`) — contacts, pickups, per-kid allergies +
+  dosing + routines, house notes; printable; nanny reads, parents write.
+- Migrations to run once in Supabase, in order: `family_members.sql` (seeds
+  parent rows from family/admin profiles), then `care_moments.sql`, then
+  `chronicle_entries.sql`, then `care_sheet.sql` (add `care_moments`,
+  `chronicle_entries` and `chronicle_reacts` to the realtime publication
+  alongside them).
+
 ## Where it may go (speculative — edit me)
 
-Signals already in the repo point somewhere: pixel art exists for **nav-care** and
-**nav-home** tabs that don't exist yet, plus drawn-but-unwired icons (thermometer,
-droplet, cauldron) and a "rituals" motif already on the Today page. The name was
-never "Nanny Hub" — the childcare-ops core looks like the first module of
-something bigger.
+Signals already in the repo point somewhere: the once-unwired nav art now
+fronts real pages (nav-home → Family, nav-care → Chronicle) and the
+thermometer/droplet/cauldron/clipboard icons serve the cockpit, with a
+"rituals" motif still waiting on the Today page. The name was never
+"Nanny Hub" — the childcare-ops core was the first module of something
+bigger, and the family-ops layer is now real.
 
 **Near term — finish the loop on childcare ops**
 - Payment lifecycle: a real requested → paid flow with notifications.
@@ -299,7 +399,13 @@ something bigger.
 
 **Next up — designed and specced:** the Chronicle (family journal) and the Care
 Day (live shift cockpit) — see **`CHRONICLE_CARE_DAY.md`** for the full agreed
-design, data model, and build order.
+design, data model, and build order. Steps 1–6 have shipped (family_members +
+the Family page; the Care Day cockpit; the morning note + Seen receipt + the
+live Today card; the clock-out wrap-up; the Chronicle page; the Care Sheet).
+Only step 7 remains — photos via Supabase Storage (which also unlocks real
+avatars), then voice capture, both gated on infra/values decisions with Nick.
+Kid profile pages (per-kid timelines beyond the chronicle's kid filter) are
+the other unbuilt bullet from the screens list.
 
 **Mid term — from nanny ops to family ops** (the drawn-but-unused art's roadmap)
 - **Care log:** feeds, naps, temperatures, medicine (thermometer/droplet icons) —
@@ -307,8 +413,9 @@ design, data model, and build order.
 - **Rituals:** recurring household routines and chores with streaks — bedtime,
   allowance, watering the plants (the Today page already frames actions this way).
 - **Meals:** planning and the shared grocery list (the cauldron).
-- **Kids as first-class entities:** Jack and Emma exist only as portraits today;
-  a `children` table would anchor care logs, rituals, and milestones.
+- **Kids as first-class entities:** shipped as `family_members` (broader than a
+  `children` table — parents and pets too); care logs, rituals, and milestones
+  anchor to it from here.
 - Coverage autopilot: the gap-detector already finds "both parents busy, no nanny"
   — next step is suggesting/requesting coverage automatically.
 
@@ -324,7 +431,8 @@ design, data model, and build order.
 ## Quick reference (for retrieval)
 
 - **Routes:** `/` (login) · `/setup` · `/dashboard` (Today) · `/tracker` ·
-  `/schedule` (family/admin) · `/history` · `/admin` (admin) · `/settings` ·
+  `/chronicle` · `/care` (Care Sheet) · `/schedule` (family/admin) ·
+  `/family` · `/history` · `/admin` (admin) · `/settings` ·
   `POST /api/calendar/sync`
 - **Key files:** `src/lib/time.js` (local-time policy, week bounds) ·
   `src/lib/calendar.js` (unified calendar items + recurrence expansion) ·
@@ -332,7 +440,8 @@ design, data model, and build order.
   `src/lib/csv.js` · `src/lib/icons/sprites.js` (icon art) · `src/lib/art.js`
   (painting manifest) · `src/app.css` (the entire design system) ·
   `supabase/*.sql` (schema + incident fixes)
-- **People:** parents Nick & Sarah; kids Jack & Emma (portraits only, no data
-  model yet); one nanny role with rate + Venmo handle.
+- **People:** parents Nick & Sarah; one nanny role with rate + Venmo handle.
+  The household roster (kids, pets) lives in `family_members`, entered in-app —
+  the painted "Jack"/"Emma" portraits are stand-ins for the real kids.
 - **Money math:** pay = hours × nanny's `hourly_rate` (fallback 20);
   weeks Sun–Sat local; one payment row per nanny-week.

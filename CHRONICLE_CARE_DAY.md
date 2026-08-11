@@ -102,8 +102,13 @@ safety-critical paths.
 
 ## Data model sketch (follow existing RLS household pattern)
 
-- `children`: id, name, birthdate, portrait/avatar_url, routines jsonb,
-  current_focus text, notes.
+- `family_members`: the whole household, not just kids — id, name, kind
+  ('parent' | 'child' | 'pet'), birthdate, avatar_url, profile_id (nullable FK
+  to profiles — only members who log in have one), current_focus text (kids),
+  species text (pets), routines jsonb, notes. Members ≠ accounts: Indigo and
+  the pets never log in; caregivers stay in profiles (payroll lives there).
+  Unlocks immediately: birthdays on the calendar, real per-person avatars,
+  and replacing the hardcoded two-parent "You/Partner" model.
 - `care_moments`: id, shift_id (nullable FK time_entries), author_id, kind
   (nap/meal/snack/potty/meds/note/headsup), kid_ids uuid[], started_at,
   ended_at (naps), payload jsonb (meal detail, potty outcome, med name+dose),
@@ -119,7 +124,9 @@ safety-critical paths.
 
 ## Suggested build order
 
-1. Schema + `children` (real kids, portraits) — everything anchors here.
+1. Schema + `family_members` (parents, kids, pets — real names, portraits) and
+   a "Family" page to manage them (`nav-home.png` art exists for the nav slot).
+   Everything anchors here.
 2. Cockpit: moment buttons + timeline on the Tracker during an active shift
    (nap timer reuses shift-timer mechanics; DB partial-unique "one open nap
    per kid" like `one_open_shift_per_nanny`).

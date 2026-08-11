@@ -27,6 +27,13 @@
 		{ href: '/dashboard', key: 'dashboard', label: 'Today', art: ART.navToday, short: 'Today' },
 		{ href: '/tracker', key: 'tracker', label: 'Tracker', art: ART.iconClock, short: 'Tracker' },
 		{
+			href: '/chronicle',
+			key: 'chronicle',
+			label: 'Chronicle',
+			art: ART.navCare,
+			short: 'Chronicle'
+		},
+		{
 			href: '/schedule',
 			key: 'schedule',
 			label: 'Calendar',
@@ -34,6 +41,8 @@
 			short: 'Calendar',
 			roles: ['family', 'admin']
 		},
+		{ href: '/family', key: 'family', label: 'Family', art: ART.navHome, short: 'Family' },
+		{ href: '/care', key: 'care', label: 'Care Sheet', art: ART.iconClipboard, short: 'Care' },
 		{ href: '/history', key: 'history', label: 'History', art: ART.navPayments, short: 'History' },
 		{
 			href: '/admin',
@@ -46,7 +55,7 @@
 		{ href: '/settings', key: 'settings', label: 'Settings', art: ART.iconOrb, short: 'Settings' }
 	];
 
-	const BOTTOM = ['dashboard', 'tracker', 'history'];
+	const BOTTOM = ['dashboard', 'tracker', 'chronicle', 'history'];
 
 	// Both sides of this are constant, so it never needs to recompute.
 	const bottomLinks = LINKS.filter((link) => BOTTOM.includes(link.key));

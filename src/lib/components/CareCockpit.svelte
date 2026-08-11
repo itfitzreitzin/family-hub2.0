@@ -762,9 +762,9 @@
 				>
 					<span class="moment-icon">
 						{#if mk.art}
-							<PixelArt src={mk.art} size={26} />
+							<PixelArt src={mk.art} size={20} />
 						{:else}
-							<Icon name={mk.sprite || 'star'} size={26} />
+							<Icon name={mk.sprite || 'star'} size={20} />
 						{/if}
 					</span>
 					<span class="moment-label">
@@ -1284,8 +1284,8 @@
 	/* ── Moment buttons ───────────────────────────────────── */
 	.moment-grid {
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(min(112px, 100%), 1fr));
-		gap: 0.55rem;
+		grid-template-columns: repeat(auto-fit, minmax(min(92px, 100%), 1fr));
+		gap: 0.45rem;
 		margin-bottom: 1rem;
 	}
 
@@ -1294,9 +1294,9 @@
 		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		gap: 0.25rem;
-		min-height: 88px;
-		padding: 0.7rem 0.4rem 0.6rem;
+		gap: 0.15rem;
+		min-height: 60px;
+		padding: 0.45rem 0.35rem 0.4rem;
 		background: var(--surface-2);
 		border: 1px solid var(--border-soft);
 		border-radius: var(--radius-sm);
@@ -1320,21 +1320,21 @@
 	.moment-icon {
 		display: grid;
 		place-items: center;
-		width: 36px;
-		height: 36px;
+		width: 24px;
+		height: 24px;
 	}
 
 	.moment-label {
 		font-family: var(--font-display);
-		font-size: 0.88rem;
+		font-size: 0.8rem;
 		font-weight: 600;
 		letter-spacing: 0.03em;
 		color: var(--text);
 	}
 
 	.moment-hint {
-		font-size: 0.66rem;
-		line-height: 1.25;
+		font-size: 0.62rem;
+		line-height: 1.2;
 		text-align: center;
 		color: var(--text-faint);
 	}
@@ -1536,14 +1536,14 @@
 		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		gap: 0.3rem;
-		min-height: 84px;
+		gap: 0.25rem;
+		min-height: 64px;
 		background: var(--surface-2);
 		border: 1px solid var(--border);
 		border-radius: var(--radius-sm);
 		color: var(--text);
 		font-family: var(--font-display);
-		font-size: 0.95rem;
+		font-size: 0.9rem;
 		font-weight: 600;
 		cursor: pointer;
 		transition: all var(--transition-fast);
@@ -1639,7 +1639,7 @@
 		}
 
 		.potty-option {
-			min-height: 64px;
+			min-height: 52px;
 			flex-direction: row;
 		}
 	}

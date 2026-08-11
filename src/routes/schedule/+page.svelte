@@ -26,6 +26,13 @@
 		groupItemsByDay,
 		upcomingItems
 	} from '$lib/calendar.js';
+	import {
+		GENERATION_HORIZON_DAYS,
+		generateThrough,
+		topUpTemplates,
+		endSeries,
+		describeTemplate
+	} from '$lib/shiftTemplates.js';
 
 	/** @type {any} */
 	let user = null;
@@ -97,6 +104,29 @@
 		endTime: '17:00',
 		notes: ''
 	};
+
+	// Repeating shifts. Repeat fields live beside the form (they only apply
+	// when creating); templatesReady stays false until the shift_templates
+	// table answers, so the UI hides gracefully before the migration runs.
+	let repeatEnabled = false;
+	/** @type {'weekly' | 'biweekly'} */
+	let repeatPattern = 'weekly';
+	/** @type {string[]} */
+	let repeatDays = [];
+	let repeatUntil = '';
+	/** @type {any[]} */
+	let shiftTemplates = [];
+	let templatesReady = false;
+	let showRepeatsManager = false;
+	const REPEAT_WEEKDAYS = [
+		'sunday',
+		'monday',
+		'tuesday',
+		'wednesday',
+		'thursday',
+		'friday',
+		'saturday'
+	];
 
 	// Calendar data
 	/** @type {{ you: any[], partner: any[] }} */
@@ -207,6 +237,24 @@
 		// After first paint: show sync freshness, then quietly refresh stale
 		// feeds in the background (not awaited — the page stays interactive).
 		loadCalendarMeta().then(() => maybeAutoSync());
+
+		// Keep repeating shifts materialized through the horizon, quietly.
+		// Fails silently (with templatesReady false) until the
+		// shift_templates.sql migration has run.
+		if (profile?.role === 'family' || profile?.role === 'admin') {
+			loadShiftTemplates().then(async () => {
+				if (!templatesReady) return;
+				try {
+					const created = await topUpTemplates(supabase, user.id);
+					if (created > 0) {
+						await reloadViewData();
+						await loadShiftTemplates();
+					}
+				} catch (err) {
+					console.warn('[schedule] template top-up failed:', err);
+				}
+			});
+		}
 
 		// Prevent body from scrolling — only the grid body should scroll
 		document.body.classList.add('schedule-active');
@@ -593,7 +641,73 @@
 			endTime: '17:00',
 			notes: ''
 		};
+		repeatEnabled = false;
+		repeatPattern = 'weekly';
+		repeatDays = [];
+		repeatUntil = '';
 		showAddShift = false;
+	}
+
+	// Seed the repeat days with the picked date's weekday the moment the
+	// toggle flips on — "every Wednesday" starts from the Wednesday you chose.
+	function handleRepeatToggle() {
+		if (repeatEnabled && repeatDays.length === 0 && shiftForm.date) {
+			const weekday = new Date(shiftForm.date + 'T00:00:00')
+				.toLocaleDateString('en-US', { weekday: 'long' })
+				.toLowerCase();
+			repeatDays = [weekday];
+		}
+	}
+
+	/** @param {string} day */
+	function toggleRepeatDay(day) {
+		repeatDays = repeatDays.includes(day)
+			? repeatDays.filter((d) => d !== day)
+			: [...repeatDays, day];
+	}
+
+	async function reloadViewData() {
+		if (view === 'month') {
+			await loadMonthData();
+		} else {
+			await Promise.all([loadShifts(), loadCalendarEvents()]);
+		}
+	}
+
+	async function loadShiftTemplates() {
+		try {
+			const { data, error } = await supabase
+				.from('shift_templates')
+				.select('*')
+				.order('created_at');
+			if (error) throw error;
+			shiftTemplates = data || [];
+			templatesReady = true;
+		} catch {
+			// Table missing (migration not run) — hide the repeats UI entirely.
+			shiftTemplates = [];
+			templatesReady = false;
+		}
+	}
+
+	/** @param {any} template */
+	async function endSeriesFor(template) {
+		const confirmed = await confirmModal.show({
+			title: 'End Repeating Shift',
+			message: `End ${getNannyName(template.nanny_id)}'s repeating shift? Future scheduled days are removed; past days stay in the ledger.`,
+			confirmText: 'End Series',
+			danger: true
+		});
+		if (!confirmed) return;
+
+		try {
+			await endSeries(supabase, template.id);
+			toast.success('Series ended');
+			await loadShiftTemplates();
+			await reloadViewData();
+		} catch (err) {
+			toast.error('Could not end the series');
+		}
 	}
 
 	async function saveShift() {
@@ -608,6 +722,19 @@
 		}
 
 		const isEditing = !!editingShiftId;
+		const savingRepeat = !isEditing && repeatEnabled && templatesReady;
+
+		if (savingRepeat) {
+			if (repeatDays.length === 0) {
+				toast.error('Pick at least one weekday for the repeating shift');
+				return;
+			}
+			if (repeatUntil && repeatUntil < shiftForm.date) {
+				toast.error('The end date is before the first shift');
+				return;
+			}
+		}
+
 		const savedDate = shiftForm.date;
 
 		try {
@@ -624,6 +751,37 @@
 					.eq('id', editingShiftId);
 
 				if (error) throw error;
+			} else if (savingRepeat) {
+				// The series starts the day before its first date has been
+				// generated, so generateThrough picks up starts_on itself.
+				const genFrom = new Date(savedDate + 'T00:00:00');
+				genFrom.setDate(genFrom.getDate() - 1);
+
+				const { data: template, error } = await supabase
+					.from('shift_templates')
+					.insert({
+						nanny_id: shiftForm.nannyId,
+						days: repeatDays,
+						pattern: repeatPattern,
+						start_time: shiftForm.startTime,
+						end_time: shiftForm.endTime,
+						notes: shiftForm.notes || '',
+						starts_on: savedDate,
+						until: repeatUntil || null,
+						generated_until: localDateString(genFrom),
+						created_by: user.id
+					})
+					.select('*')
+					.single();
+
+				if (error) throw error;
+
+				const horizon = new Date();
+				horizon.setHours(0, 0, 0, 0);
+				horizon.setDate(horizon.getDate() + GENERATION_HORIZON_DAYS);
+				const made = await generateThrough(supabase, template, horizon, user.id);
+				toast.success(`Repeating shift saved — ${made} day${made === 1 ? '' : 's'} scheduled`);
+				await loadShiftTemplates();
 			} else {
 				const { error } = await supabase
 					.from('schedules')
@@ -1381,6 +1539,12 @@
 					<Icon name="grimoire" size={16} />
 					{profile?.role === 'nanny' ? 'My Availability' : 'Calendars'}
 				</button>
+				{#if templatesReady && (profile?.role === 'family' || profile?.role === 'admin')}
+					<button type="button" class="top-btn" on:click={() => (showRepeatsManager = true)}>
+						<Icon name="star" size={16} />
+						Repeats
+					</button>
+				{/if}
 				<div class="week-nav">
 					<button
 						type="button"
@@ -1645,7 +1809,12 @@
 												: ''}
 										>
 											<div class="shift-content">
-												<span class="shift-name">{getNannyName(block.shift.nanny_id)}</span>
+												<span class="shift-name"
+													>{getNannyName(block.shift.nanny_id)}{#if block.shift.template_id}<span
+															class="repeat-glyph"
+															title="Part of a repeating schedule">&nbsp;↻</span
+														>{/if}</span
+												>
 												<span class="shift-time"
 													>{formatTime(block.shift.start_time)} - {formatTime(
 														block.shift.end_time
@@ -1824,6 +1993,51 @@
 					</div>
 				</div>
 
+				{#if !editingShiftId && templatesReady && (profile?.role === 'family' || profile?.role === 'admin')}
+					<div class="form-field">
+						<label class="repeat-toggle-label">
+							<span>Repeats</span>
+							<input type="checkbox" bind:checked={repeatEnabled} on:change={handleRepeatToggle} />
+						</label>
+					</div>
+
+					{#if repeatEnabled}
+						<div class="repeat-section">
+							<div class="form-field">
+								<label>Frequency</label>
+								<select bind:value={repeatPattern}>
+									<option value="weekly">Every week</option>
+									<option value="biweekly">Every 2 weeks</option>
+								</select>
+							</div>
+
+							<div class="form-field">
+								<label>On these days</label>
+								<div class="repeat-day-pills">
+									{#each REPEAT_WEEKDAYS as day (day)}
+										<button
+											type="button"
+											class="repeat-day-pill"
+											class:active={repeatDays.includes(day)}
+											on:click={() => toggleRepeatDay(day)}
+										>
+											{day.slice(0, 1).toUpperCase()}
+										</button>
+									{/each}
+								</div>
+							</div>
+
+							<div class="form-field">
+								<label>Until <span class="optional">(optional)</span></label>
+								<input type="date" bind:value={repeatUntil} />
+								<span class="repeat-hint"
+									>Shifts are scheduled {GENERATION_HORIZON_DAYS / 7} weeks ahead and top up automatically.</span
+								>
+							</div>
+						</div>
+					{/if}
+				{/if}
+
 				{#if shiftConflicts.length > 0}
 					<div class="conflict-warning">
 						<Icon name="warning" size={16} />
@@ -1862,12 +2076,55 @@
 				</div>
 
 				<div class="form-actions">
-					<button type="submit" class="btn-save"
-						>{editingShiftId ? 'Update Shift' : 'Save Shift'}</button
-					>
+					<button type="submit" class="btn-save">
+						{editingShiftId
+							? 'Update Shift'
+							: repeatEnabled && templatesReady
+								? 'Save Repeating Shift'
+								: 'Save Shift'}
+					</button>
 					<button type="button" class="btn-cancel" on:click={resetShiftForm}>Cancel</button>
 				</div>
 			</form>
+		</div>
+	</div>
+{/if}
+
+<!-- Repeating Shifts Manager -->
+{#if showRepeatsManager}
+	<div class="modal-overlay" on:click={() => (showRepeatsManager = false)}>
+		<div class="modal-panel compact" on:click|stopPropagation>
+			<div class="modal-top">
+				<h2>Repeating Shifts</h2>
+				<button class="modal-close" on:click={() => (showRepeatsManager = false)}>
+					<Icon name="close" size={16} />
+				</button>
+			</div>
+
+			{#if shiftTemplates.length === 0}
+				<p class="modal-desc">
+					No repeating shifts yet. Turn on "Repeats" while adding a shift and it will keep itself on
+					the calendar.
+				</p>
+			{:else}
+				<p class="modal-desc">
+					Single days are edited or removed right on the calendar; ending a series removes its
+					future days and keeps the past in the ledger.
+				</p>
+				<div class="tpl-list">
+					{#each shiftTemplates as template (template.id)}
+						<div class="tpl-row">
+							<span class="tpl-mark" aria-hidden="true">↻</span>
+							<div class="tpl-info">
+								<span class="tpl-name">{getNannyName(template.nanny_id)}</span>
+								<span class="tpl-detail">{describeTemplate(template, formatTime)}</span>
+								<span class="tpl-detail faint">Scheduled through {template.generated_until}</span>
+							</div>
+							<button class="tpl-end" on:click={() => endSeriesFor(template)}>End series</button>
+						</div>
+					{/each}
+				</div>
+			{/if}
 		</div>
 	</div>
 {/if}
@@ -2262,6 +2519,143 @@
 		color: var(--accent-bright);
 		border-color: var(--border-gilt);
 		background: var(--accent-tint);
+	}
+
+	/* ── Repeating shifts ─────────────────────────────────── */
+	.repeat-toggle-label {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		cursor: pointer;
+	}
+
+	.repeat-toggle-label input {
+		width: 18px;
+		height: 18px;
+		accent-color: var(--accent);
+		cursor: pointer;
+	}
+
+	.repeat-section {
+		padding: 0.9rem 0.9rem 0.15rem;
+		margin-bottom: 1rem;
+		background: var(--surface-2);
+		border: 1px solid var(--border-soft);
+		border-radius: var(--radius-sm);
+	}
+
+	.repeat-day-pills {
+		display: flex;
+		gap: 0.3rem;
+		flex-wrap: wrap;
+		margin-top: 0.4rem;
+	}
+
+	.repeat-day-pill {
+		width: 38px;
+		height: 38px;
+		min-height: 38px;
+		padding: 0;
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: 50%;
+		color: var(--text-faint);
+		font-family: var(--font-body);
+		font-size: 0.72rem;
+		font-weight: 700;
+		cursor: pointer;
+		transition: all var(--transition-fast);
+	}
+
+	.repeat-day-pill:hover {
+		border-color: var(--border-gilt);
+		color: var(--accent-bright);
+	}
+
+	.repeat-day-pill.active {
+		background: var(--accent-dim);
+		border-color: var(--accent);
+		color: var(--accent-bright);
+	}
+
+	.repeat-hint {
+		display: block;
+		margin-top: 0.35rem;
+		font-size: 0.78rem;
+		font-style: italic;
+		color: var(--text-faint);
+	}
+
+	.repeat-glyph {
+		color: var(--growing);
+		font-weight: 700;
+	}
+
+	.tpl-list {
+		display: flex;
+		flex-direction: column;
+		gap: 0.55rem;
+	}
+
+	.tpl-row {
+		display: flex;
+		align-items: center;
+		gap: 0.7rem;
+		padding: 0.7rem 0.85rem;
+		background: var(--surface-2);
+		border: 1px solid var(--border-soft);
+		border-radius: var(--radius-sm);
+	}
+
+	.tpl-mark {
+		font-size: 1.1rem;
+		font-weight: 700;
+		color: var(--growing);
+	}
+
+	.tpl-info {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 0.1rem;
+	}
+
+	.tpl-name {
+		font-weight: 700;
+		color: var(--text);
+	}
+
+	.tpl-detail {
+		font-size: 0.8rem;
+		color: var(--text-muted);
+	}
+
+	.tpl-detail.faint {
+		color: var(--text-faint);
+		font-size: 0.74rem;
+	}
+
+	.tpl-end {
+		flex-shrink: 0;
+		min-height: 34px;
+		padding: 0.3rem 0.8rem;
+		background: none;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		color: var(--text-muted);
+		font-family: var(--font-body);
+		font-size: 0.76rem;
+		font-weight: 700;
+		cursor: pointer;
+		transition: all var(--transition-fast);
+	}
+
+	.tpl-end:hover {
+		color: var(--danger);
+		border-color: var(--danger);
+		background: var(--danger-dim);
 	}
 
 	.grid-header {

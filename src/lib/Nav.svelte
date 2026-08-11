@@ -34,6 +34,7 @@
 			short: 'Calendar',
 			roles: ['family', 'admin']
 		},
+		{ href: '/family', key: 'family', label: 'Family', art: ART.navHome, short: 'Family' },
 		{ href: '/history', key: 'history', label: 'History', art: ART.navPayments, short: 'History' },
 		{
 			href: '/admin',

@@ -170,6 +170,21 @@ nanny on the clock at any moment** (enforced in app logic and by a DB index).
   priced at *that nanny's* rate), CSV export, and a convenience Venmo button that
   deliberately does **not** write payment records (the Tracker owns bookkeeping).
 
+### Family (`/family`) — the household roster
+- The whole household as data — parents, kids, pets — in one `family_members`
+  table (Chronicle build step 1: everything the Care Day and Chronicle record
+  anchors here). **Members ≠ accounts:** kids and pets never log in; a parent
+  row carries a nullable `profile_id` link to their login ("Holds a key"
+  badge); caregivers stay in `profiles` (payroll lives there).
+- Parents are seeded from existing family/admin profiles by the migration;
+  kids and pets are added in the app (their real names aren't in the repo —
+  the painted "Jack"/"Emma" portraits are stand-ins until real ones arrive).
+- Cards show portrait (avatar_url or a stable painted stand-in; pets get the
+  cat sprite), age from birthdate, a kid's *current focus* (the habit that
+  will get its own cockpit button), a pet's species, and freeform notes.
+- Family/admin get add/edit/remove (kind-specific fields; one member per
+  linked account, DB-enforced); the nanny sees the roster read-only.
+
 ### Admin (`/admin`) and Settings (`/settings`)
 - Admin: nanny account management (create logins, edit rate/Venmo, delete with
   their entries).
@@ -188,6 +203,7 @@ nanny on the clock at any moment** (enforced in app logic and by a DB index).
 | `calendar_events` | Synced busy events | Unique (calendar_id, event_id) for re-sync dedup; also holds one-off manual busy entries |
 | `manual_busy_times` | Recurring manual busy time: pattern weekly/biweekly(/monthly unused), weekday list, until | Expanded client-side |
 | `shift_templates` | Repeating shift series: days[], pattern, times, starts_on, until, generated_until | Added by `shift_templates.sql`; materializes into `schedules` (rows carry nullable `template_id`) |
+| `family_members` | The household roster: name, kind (parent/child/pet), birthdate, avatar_url, profile_id (nullable FK), current_focus, species, routines, notes | Added by `family_members.sql`; uuid ids (future care tables reference `kid_ids uuid[]`); partial unique: **one member per profile** |
 | `availability`, `schedule_blocks` | Defined in `supabase/schedule.sql` | **Legacy — no longer referenced by code** |
 
 Security: RLS on all tables — any authenticated household member can read;
@@ -282,13 +298,19 @@ system, documented in the README and enforced by semantic tokens.
 - Migrations to run once in Supabase: `calendar_sync_state.sql`,
   `shift_templates.sql`.
 
+*Recent (2026-08-11, Chronicle build step 1)*
+- Shipped: `family_members` (parents, kids, pets — members, not accounts) and
+  the Family page (`/family`) to manage them, wearing the `nav-home.png` art.
+- Migration to run once in Supabase: `family_members.sql` (seeds parent rows
+  from family/admin profiles).
+
 ## Where it may go (speculative — edit me)
 
-Signals already in the repo point somewhere: pixel art exists for **nav-care** and
-**nav-home** tabs that don't exist yet, plus drawn-but-unwired icons (thermometer,
-droplet, cauldron) and a "rituals" motif already on the Today page. The name was
-never "Nanny Hub" — the childcare-ops core looks like the first module of
-something bigger.
+Signals already in the repo point somewhere: pixel art exists for a **nav-care**
+tab that doesn't exist yet (nav-home now fronts the Family page), plus
+drawn-but-unwired icons (thermometer, droplet, cauldron) and a "rituals" motif
+already on the Today page. The name was never "Nanny Hub" — the childcare-ops
+core looks like the first module of something bigger.
 
 **Near term — finish the loop on childcare ops**
 - Payment lifecycle: a real requested → paid flow with notifications.
@@ -299,7 +321,8 @@ something bigger.
 
 **Next up — designed and specced:** the Chronicle (family journal) and the Care
 Day (live shift cockpit) — see **`CHRONICLE_CARE_DAY.md`** for the full agreed
-design, data model, and build order.
+design, data model, and build order. Step 1 (family_members + the Family page)
+has shipped; the cockpit (step 2) is next.
 
 **Mid term — from nanny ops to family ops** (the drawn-but-unused art's roadmap)
 - **Care log:** feeds, naps, temperatures, medicine (thermometer/droplet icons) —
@@ -307,8 +330,9 @@ design, data model, and build order.
 - **Rituals:** recurring household routines and chores with streaks — bedtime,
   allowance, watering the plants (the Today page already frames actions this way).
 - **Meals:** planning and the shared grocery list (the cauldron).
-- **Kids as first-class entities:** Jack and Emma exist only as portraits today;
-  a `children` table would anchor care logs, rituals, and milestones.
+- **Kids as first-class entities:** shipped as `family_members` (broader than a
+  `children` table — parents and pets too); care logs, rituals, and milestones
+  anchor to it from here.
 - Coverage autopilot: the gap-detector already finds "both parents busy, no nanny"
   — next step is suggesting/requesting coverage automatically.
 
@@ -324,15 +348,16 @@ design, data model, and build order.
 ## Quick reference (for retrieval)
 
 - **Routes:** `/` (login) · `/setup` · `/dashboard` (Today) · `/tracker` ·
-  `/schedule` (family/admin) · `/history` · `/admin` (admin) · `/settings` ·
-  `POST /api/calendar/sync`
+  `/schedule` (family/admin) · `/family` · `/history` · `/admin` (admin) ·
+  `/settings` · `POST /api/calendar/sync`
 - **Key files:** `src/lib/time.js` (local-time policy, week bounds) ·
   `src/lib/calendar.js` (unified calendar items + recurrence expansion) ·
   `src/lib/server/ical-parser.js` (ical.js RRULE engine) · `src/lib/venmo.js` ·
   `src/lib/csv.js` · `src/lib/icons/sprites.js` (icon art) · `src/lib/art.js`
   (painting manifest) · `src/app.css` (the entire design system) ·
   `supabase/*.sql` (schema + incident fixes)
-- **People:** parents Nick & Sarah; kids Jack & Emma (portraits only, no data
-  model yet); one nanny role with rate + Venmo handle.
+- **People:** parents Nick & Sarah; one nanny role with rate + Venmo handle.
+  The household roster (kids, pets) lives in `family_members`, entered in-app —
+  the painted "Jack"/"Emma" portraits are stand-ins for the real kids.
 - **Money math:** pay = hours × nanny's `hourly_rate` (fallback 20);
   weeks Sun–Sat local; one payment row per nanny-week.

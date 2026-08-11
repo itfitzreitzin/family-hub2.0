@@ -35,6 +35,11 @@
 	let morningNote = null;
 	/** @type {any} */
 	let seenReact = null;
+	/** @type {any} */
+	let wrapUp = null;
+	/** @type {any[]} */
+	let heartReacts = [];
+	let hearting = false;
 	/** @type {Record<string, string>} */
 	let namesById = {};
 
@@ -74,7 +79,7 @@
 				.eq('kind', 'child');
 			kids = kidRows || [];
 
-			await Promise.all([loadFeed(), loadMorningNote()]);
+			await Promise.all([loadFeed(), loadMorningNote(), loadWrapUp()]);
 
 			if (!channel) {
 				channel = supabase
@@ -109,10 +114,66 @@
 		if (resyncTimer) clearTimeout(resyncTimer);
 		resyncTimer = setTimeout(() => {
 			resyncTimer = null;
-			Promise.all([loadFeed(), loadMorningNote()]).catch((err) => {
+			Promise.all([loadFeed(), loadMorningNote(), loadWrapUp()]).catch((err) => {
 				console.warn('Live card resync failed:', errorMessage(err));
 			});
 		}, 300);
+	}
+
+	// Once the shift closes, its wrap-up takes the feed's place for the
+	// evening — and the parents ♥ it.
+	async function loadWrapUp() {
+		const { data, error } = await supabase
+			.from('chronicle_entries')
+			.select('*')
+			.eq('entry_date', localDateString())
+			.contains('tags', ['wrapup'])
+			.order('created_at', { ascending: false })
+			.limit(1);
+
+		if (error) throw error;
+		wrapUp = (data || [])[0] || null;
+
+		if (wrapUp) {
+			const { data: reacts } = await supabase
+				.from('chronicle_reacts')
+				.select('*')
+				.eq('entry_id', wrapUp.id)
+				.eq('kind', 'heart');
+			heartReacts = reacts || [];
+		} else {
+			heartReacts = [];
+		}
+	}
+
+	async function toggleHeart() {
+		if (!wrapUp || hearting || !user) return;
+		hearting = true;
+
+		try {
+			if (myHeart) {
+				const { error } = await supabase
+					.from('chronicle_reacts')
+					.delete()
+					.match({ entry_id: wrapUp.id, user_id: user.id, kind: 'heart' });
+
+				if (error) throw error;
+			} else {
+				const { error } = await supabase
+					.from('chronicle_reacts')
+					.upsert(
+						{ entry_id: wrapUp.id, user_id: user.id, kind: 'heart' },
+						{ onConflict: 'entry_id,user_id,kind', ignoreDuplicates: true }
+					);
+
+				if (error) throw error;
+			}
+			await loadWrapUp();
+		} catch (err) {
+			toast.error('Error: ' + errorMessage(err));
+		} finally {
+			hearting = false;
+		}
 	}
 
 	async function loadFeed() {
@@ -166,6 +227,7 @@
 	$: statusLine = composeDayStatus(moments, openNaps, kidsById);
 	$: feed = moments.slice(0, 6);
 	$: canManage = profile?.role === 'family' || profile?.role === 'admin';
+	$: myHeart = heartReacts.find((r) => r.user_id === user?.id) || null;
 
 	function openNoteModal() {
 		if (morningNote) {
@@ -327,6 +389,34 @@
 				{/if}
 			</div>
 		{/if}
+	{:else if wrapUp}
+		<div class="wrapup-block">
+			<div class="wu-head">
+				<Icon name="grimoire" size={14} />
+				<span class="wu-label">The day's wrap-up</span>
+				{#if namesById[wrapUp.author_id]}
+					<span class="wu-author">by {namesById[wrapUp.author_id].split(' ')[0]}</span>
+				{/if}
+			</div>
+			<p class="wu-body">{wrapUp.body}</p>
+			<div class="wu-foot">
+				<button
+					class="heart-btn"
+					class:hearted={myHeart}
+					on:click={toggleHeart}
+					disabled={hearting}
+					aria-label={myHeart ? 'Remove your heart' : 'Heart the day'}
+				>
+					<Icon name="heart" size={15} />
+					{heartReacts.length > 0 ? heartReacts.length : ''}
+				</button>
+				<span class="wu-hint">
+					{heartReacts.length > 0
+						? 'The day has been loved'
+						: 'One tap says it all — no comment threads'}
+				</span>
+			</div>
+		</div>
 	{:else}
 		<div class="no-shift">
 			<PixelArt src={ART.iconOrb} size={36} />
@@ -549,6 +639,89 @@
 		font-size: 0.75rem;
 		letter-spacing: 0.08em;
 		text-transform: uppercase;
+		color: var(--text-faint);
+	}
+
+	/* ── The evening wrap-up ──────────────────────────────── */
+	.wrapup-block {
+		padding: 0.85rem 1rem;
+		background: var(--surface-2);
+		border: 1px solid var(--border-soft);
+		border-radius: var(--radius-sm);
+	}
+
+	.wu-head {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		color: var(--accent);
+		--icon-accent: var(--accent);
+	}
+
+	.wu-label {
+		font-family: var(--font-body);
+		font-size: 0.7rem;
+		font-weight: 700;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: var(--text-faint);
+	}
+
+	.wu-author {
+		margin-left: auto;
+		font-size: 0.78rem;
+		font-style: italic;
+		color: var(--text-faint);
+	}
+
+	.wu-body {
+		margin: 0.5rem 0 0.65rem;
+		font-size: 0.95rem;
+		line-height: 1.55;
+		color: var(--text);
+		white-space: pre-line;
+		overflow-wrap: anywhere;
+	}
+
+	.wu-foot {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+	}
+
+	.heart-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+		min-height: 36px;
+		padding: 0.3rem 0.75rem;
+		background: transparent;
+		border: 1px solid var(--border);
+		border-radius: 999px;
+		color: var(--text-faint);
+		font-size: 0.85rem;
+		font-weight: 700;
+		font-variant-numeric: tabular-nums;
+		cursor: pointer;
+		transition: all var(--transition-fast);
+		--icon-accent: currentColor;
+	}
+
+	.heart-btn:hover:not(:disabled) {
+		color: var(--danger);
+		border-color: var(--danger);
+		background: var(--danger-dim);
+	}
+
+	.heart-btn.hearted {
+		color: var(--danger);
+		border-color: rgba(224, 102, 78, 0.45);
+		background: var(--danger-dim);
+	}
+
+	.wu-hint {
+		font-size: 0.78rem;
+		font-style: italic;
 		color: var(--text-faint);
 	}
 

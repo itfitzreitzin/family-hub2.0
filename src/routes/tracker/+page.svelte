@@ -26,6 +26,7 @@
 		buildVenmoLink
 	} from '$lib/venmo.js';
 	import { buildTimesheetCsv, timesheetFilename, downloadCsv } from '$lib/csv.js';
+	import { draftWrapUp } from '$lib/care.js';
 	import Icon from '$lib/icons/Icon.svelte';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
@@ -68,6 +69,12 @@
 	let clockInTime = '09:00';
 	let showClockOutConfirm = false;
 	let clockOutTime = '17:00';
+	// The wrap-up: pre-drafted from the shift's moments, garnished by hand,
+	// written into the Chronicle at clock-out.
+	let wrapDraft = '';
+	let wrapLine = '';
+	/** @type {string[]} */
+	let wrapKidIds = [];
 	let showManualEntry = false;
 	/** @type {any} */
 	let editingEntry = null;
@@ -447,9 +454,62 @@
 		);
 	}
 
+	// Compose the wrap-up draft from whatever the cockpit logged this shift.
+	// Best-effort: a failed fetch just means an empty draft.
+	async function prepareWrapUp() {
+		wrapDraft = '';
+		wrapLine = '';
+		wrapKidIds = [];
+		if (!currentEntry) return;
+
+		try {
+			const [momentsRes, kidsRes] = await Promise.all([
+				supabase.from('care_moments').select('*').eq('shift_id', currentEntry.id),
+				supabase.from('family_members').select('*').eq('kind', 'child')
+			]);
+
+			if (momentsRes.error || kidsRes.error) return;
+
+			const moments = momentsRes.data || [];
+			const kids = kidsRes.data || [];
+			const kidsById = new Map(kids.map((k) => [k.id, k]));
+
+			wrapDraft = draftWrapUp(moments, kidsById, kids.length);
+			wrapKidIds = [...new Set(moments.flatMap((/** @type {any} */ m) => m.kid_ids || []))];
+		} catch {
+			// The clock-out itself never waits on the chronicle
+		}
+	}
+
+	// The day becomes a Chronicle entry: the tapped draft plus whatever was
+	// added by hand, auto-linked to the shift. Empty days write nothing —
+	// no guilt for quiet days.
+	/** @param {any} closedRow */
+	async function writeWrapUp(closedRow) {
+		const line = wrapLine.trim();
+		const body = [wrapDraft, line].filter(Boolean).join('\n\n');
+		if (!body) return;
+
+		try {
+			const { error } = await supabase.from('chronicle_entries').insert({
+				author_id: user.id,
+				shift_id: closedRow.id,
+				entry_date: localDateString(new Date(closedRow.clock_in)),
+				body,
+				tags: ['wrapup'],
+				kid_ids: wrapKidIds
+			});
+
+			if (error) throw error;
+			toast.success('The day is written into the Chronicle');
+		} catch (err) {
+			toast.error('Clocked out, but the wrap-up failed to save: ' + errorMessage(err));
+		}
+	}
+
 	/** @param {Date} endTime */
 	async function performClockOut(endTime) {
-		if (clockingOut) return false;
+		if (clockingOut) return null;
 		clockingOut = true;
 
 		try {
@@ -466,7 +526,7 @@
 
 			if (!openEntries || openEntries.length === 0) {
 				toast.error('No active shift found for this nanny');
-				return false;
+				return null;
 			}
 
 			// The newest open entry is the shift the timer displays; any older open
@@ -506,10 +566,10 @@
 			currentEntry = null;
 			stopTimer();
 			mergeEntry(closedRow);
-			return true;
+			return closedRow;
 		} catch (err) {
 			toast.error('Error clocking out: ' + errorMessage(err));
-			return false;
+			return null;
 		} finally {
 			clockingOut = false;
 		}
@@ -519,6 +579,8 @@
 		if (!currentEntry) return;
 		clockOutTime = localTimeString();
 		showClockOutConfirm = true;
+		// Draft fills in as it arrives; the modal never waits on it.
+		prepareWrapUp();
 	}
 
 	async function confirmClockOut() {
@@ -537,8 +599,11 @@
 			return;
 		}
 
-		const ok = await performClockOut(end);
-		if (ok) showClockOutConfirm = false;
+		const closedRow = await performClockOut(end);
+		if (closedRow) {
+			showClockOutConfirm = false;
+			await writeWrapUp(closedRow);
+		}
 	}
 
 	/** @param {KeyboardEvent} event */
@@ -1491,6 +1556,28 @@
 				<small>Adjust if they actually finished earlier.</small>
 			</div>
 
+			{#if wrapDraft}
+				<div class="wrap-draft">
+					<span class="wrap-label"><Icon name="grimoire" size={13} /> The day, as tapped</span>
+					<p class="wrap-text">{wrapDraft}</p>
+				</div>
+			{/if}
+
+			<div class="form-group">
+				<label for="cow">In your own words</label>
+				<textarea
+					id="cow"
+					rows="3"
+					bind:value={wrapLine}
+					placeholder="A line or two to top off the day — optional, dictation welcome."
+				></textarea>
+				<small>
+					{wrapDraft
+						? 'The tapped day plus your words become the Chronicle entry.'
+						: 'Anything written here becomes the day’s Chronicle entry.'}
+				</small>
+			</div>
+
 			<div class="button-row">
 				<button class="btn btn-primary" on:click={confirmClockOut} disabled={clockingOut}>
 					<Icon name="check" size={16} />
@@ -1873,6 +1960,40 @@
 	}
 
 	/* ── Modal extras ─────────────────────────────────────── */
+	.wrap-draft {
+		padding: 0.75rem 0.9rem;
+		margin-bottom: 1.1rem;
+		background: var(--accent-tint);
+		border: 1px solid var(--border-gilt);
+		border-radius: var(--radius-sm);
+	}
+
+	.wrap-label {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		font-family: var(--font-body);
+		font-size: 0.68rem;
+		font-weight: 700;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: var(--text-faint);
+		--icon-accent: var(--accent);
+	}
+
+	.wrap-text {
+		margin: 0.4rem 0 0;
+		font-size: 0.92rem;
+		line-height: 1.5;
+		color: var(--text);
+		overflow-wrap: anywhere;
+	}
+
+	textarea {
+		resize: vertical;
+		min-height: 84px;
+	}
+
 	.modal-lede {
 		color: var(--text-muted);
 		margin-bottom: 0.4rem;

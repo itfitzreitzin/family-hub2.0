@@ -133,6 +133,13 @@ nanny on the clock at any moment** (enforced in app logic and by a DB index).
   names pre-filled; heads-up is the one ember-flagged tier meant for parents.
   Moments are editable after the fact by their author or family/admin, and the
   card realtime-syncs across devices.
+- **Wrap-up at clock-out** (step 4): the clock-out prompt arrives **pre-drafted**
+  from the day's moments ("Indigo napped 1:10–2:45 · a meal — mac & cheese, ate
+  well + 1 snack · 2 potty stars…") with an "in your own words" line to garnish
+  it — confirm-and-garnish, never compose-from-scratch. Draft + words become a
+  `chronicle_entries` row tagged `wrapup`, auto-linked to the shift; quiet days
+  write nothing. The Today card shows the wrap-up in the evening with a one-tap
+  ♥ (no comment threads by design).
 
 ### Calendar (`/schedule`) — family/admin's scheduling cockpit
 - **Month view** (desktop default): six-week grid with up to 3 event pills per day
@@ -327,6 +334,9 @@ system, documented in the README and enforced by semantic tokens.
   on the clock.
 - Shipped: the morning note with Seen receipt, and the parents' "The Day —
   live" card on Today (`chronicle_entries` + `chronicle_reacts`).
+- Shipped: the clock-out wrap-up — pre-drafted from the day's moments,
+  garnished by hand, saved as a shift-linked Chronicle entry with an evening
+  ♥ on the Today card.
 - Migrations to run once in Supabase, in order: `family_members.sql` (seeds
   parent rows from family/admin profiles), then `care_moments.sql`, then
   `chronicle_entries.sql` (add `care_moments`, `chronicle_entries` and
@@ -349,10 +359,11 @@ core looks like the first module of something bigger.
 
 **Next up — designed and specced:** the Chronicle (family journal) and the Care
 Day (live shift cockpit) — see **`CHRONICLE_CARE_DAY.md`** for the full agreed
-design, data model, and build order. Steps 1–3 (family_members + the Family
-page; the Care Day cockpit on the Tracker; the morning note + Seen receipt +
-the parents' live Today card) have shipped; the wrap-up auto-draft at
-clock-out (step 4) is next.
+design, data model, and build order. Steps 1–4 have shipped (family_members +
+the Family page; the Care Day cockpit; the morning note + Seen receipt + the
+live Today card; the clock-out wrap-up into the Chronicle). The Chronicle page
+itself — feed, search, filters, needs list (step 5) — is next, then the Care
+Sheet (step 6).
 
 **Mid term — from nanny ops to family ops** (the drawn-but-unused art's roadmap)
 - **Care log:** feeds, naps, temperatures, medicine (thermometer/droplet icons) —

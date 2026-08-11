@@ -204,6 +204,81 @@ export function composeDayStatus(moments, openNaps, kidsById) {
 }
 
 /**
+ * Pre-draft the shift wrap-up from the day's moments: "Indigo napped
+ * 1:10–2:45 · a meal — mac & cheese, ate well + 2 snacks · 2 potty stars ·
+ * meds: ibuprofen, 5 ml · park all morning". Confirm-and-garnish — the
+ * nanny adds her own line on top, never composes from scratch.
+ * @param {any[]} moments any order
+ * @param {Map<string, any>} kidsById
+ * @param {number} totalKids
+ * @returns {string} empty when the day logged nothing
+ */
+export function draftWrapUp(moments, kidsById, totalKids) {
+	const asc = [...moments].sort(
+		(a, b) => new Date(a.started_at).getTime() - new Date(b.started_at).getTime()
+	);
+	const parts = [];
+
+	/** @param {any} m */
+	const kidPrefix = (m) => {
+		if (totalKids <= 1) return '';
+		const label = momentKidsLabel(m, kidsById, totalKids);
+		return label && label !== 'Both kids' && label !== 'All kids' ? `${label} ` : '';
+	};
+
+	for (const nap of asc.filter((m) => m.kind === 'nap')) {
+		const start = formatTime(nap.started_at).replace(/^0/, '');
+		const end = nap.ended_at ? formatTime(nap.ended_at).replace(/^0/, '') : null;
+		parts.push(
+			`${kidPrefix(nap) || ''}${kidPrefix(nap) ? 'napped' : 'nap'} ${start}–${end || 'still asleep at clock-out'}`
+		);
+	}
+
+	const meals = asc.filter((m) => m.kind === 'meal');
+	const snacks = asc.filter((m) => m.kind === 'snack');
+	if (meals.length > 0 || snacks.length > 0) {
+		const bits = [];
+		if (meals.length > 0) {
+			const first = meals[0].payload || {};
+			const appetite =
+				first.appetite === 'well' ? ', ate well' : first.appetite === 'picky' ? ', picky' : '';
+			const detail = first.detail
+				? ` — ${first.detail}${appetite}`
+				: appetite
+					? ` —${appetite.slice(1)}`
+					: '';
+			bits.push(`${meals.length > 1 ? `${meals.length} meals` : 'a meal'}${detail}`);
+		}
+		if (snacks.length > 0) bits.push(`${snacks.length} snack${snacks.length === 1 ? '' : 's'}`);
+		parts.push(bits.join(' + '));
+	}
+
+	const potty = asc.filter((m) => m.kind === 'potty');
+	const stars = potty.filter((m) => m.payload?.outcome === 'success').length;
+	const accidents = potty.filter((m) => m.payload?.outcome === 'accident').length;
+	if (stars > 0) parts.push(`${stars} potty star${stars === 1 ? '' : 's'}`);
+	if (accidents > 0) parts.push(`${accidents} accident${accidents === 1 ? '' : 's'}`);
+
+	for (const med of asc.filter((m) => m.kind === 'meds')) {
+		const p = med.payload || {};
+		const what = [p.name, p.dose].filter(Boolean).join(', ');
+		parts.push(`meds: ${what || 'given'} at ${formatTime(med.started_at).replace(/^0/, '')}`);
+	}
+
+	for (const heads of asc.filter((m) => m.kind === 'headsup')) {
+		const text = String(heads.payload?.text || '');
+		parts.push(`heads-up: ${text.length > 60 ? text.slice(0, 59).trimEnd() + '…' : text}`);
+	}
+
+	for (const note of asc.filter((m) => m.kind === 'note').slice(0, 2)) {
+		const text = String(note.payload?.text || '');
+		if (text) parts.push(text.length > 70 ? text.slice(0, 69).trimEnd() + '…' : text);
+	}
+
+	return parts.join(' · ');
+}
+
+/**
  * Who a moment covers, as a short label.
  * @param {{ kid_ids?: string[] | null }} moment
  * @param {Map<string, any> | Record<string, any>} kidsById

@@ -210,6 +210,24 @@ nanny on the clock at any moment** (enforced in app logic and by a DB index).
 - Family/admin get add/edit/remove (kind-specific fields; one member per
   linked account, DB-enforced); the nanny sees the roster read-only.
 
+### Chronicle (`/chronicle`) — the family journal
+- The memory layer (Chronicle build step 5): wrap-ups arriving on their own at
+  clock-out plus written entries (the "pancake Sunday" posts), in a dated feed —
+  author avatar and byline, per-date **moon glyph** (the real phase for that
+  date), the shift a wrap-up rode in on ("on shift 10:10 AM – 6:40 PM"), kid
+  tags with mini portraits, and a one-tap **♥** per entry.
+- **Search** (server-side ilike) plus filters by kid, author, and tag; "turn
+  back the pages" pagination. Writing offers the four working tags — needs /
+  health / milestone / heads-up — and (family/admin only) the **household-only**
+  toggle, which hides the entry from the nanny at the RLS layer so parents can
+  write candidly.
+- **The Needs List**: entries tagged `needs` escape the journal onto a standing
+  check-off card until crossed off (which just removes the tag — the entry
+  keeps its place in the journal).
+- Entries are amendable by their author (or family/admin) and erasable with
+  confirm; realtime keeps the feed and hearts live. The `nav-care.png`
+  heart-potion finally fronts a page.
+
 ### Admin (`/admin`) and Settings (`/settings`)
 - Admin: nanny account management (create logins, edit rate/Venmo, delete with
   their entries).
@@ -337,6 +355,9 @@ system, documented in the README and enforced by semantic tokens.
 - Shipped: the clock-out wrap-up — pre-drafted from the day's moments,
   garnished by hand, saved as a shift-linked Chronicle entry with an evening
   ♥ on the Today card.
+- Shipped: the Chronicle page (`/chronicle`) — the journal feed with search,
+  kid/author/tag filters, the needs check-off list, hearts, and the
+  household-only toggle.
 - Migrations to run once in Supabase, in order: `family_members.sql` (seeds
   parent rows from family/admin profiles), then `care_moments.sql`, then
   `chronicle_entries.sql` (add `care_moments`, `chronicle_entries` and
@@ -344,11 +365,12 @@ system, documented in the README and enforced by semantic tokens.
 
 ## Where it may go (speculative — edit me)
 
-Signals already in the repo point somewhere: pixel art exists for a **nav-care**
-tab that doesn't exist yet (nav-home now fronts the Family page), plus
-drawn-but-unwired icons (thermometer, droplet, cauldron) and a "rituals" motif
-already on the Today page. The name was never "Nanny Hub" — the childcare-ops
-core looks like the first module of something bigger.
+Signals already in the repo point somewhere: the once-unwired nav art now
+fronts real pages (nav-home → Family, nav-care → Chronicle) and the
+thermometer/droplet/cauldron/clipboard icons serve the cockpit, with a
+"rituals" motif still waiting on the Today page. The name was never
+"Nanny Hub" — the childcare-ops core was the first module of something
+bigger, and the family-ops layer is now real.
 
 **Near term — finish the loop on childcare ops**
 - Payment lifecycle: a real requested → paid flow with notifications.
@@ -359,11 +381,12 @@ core looks like the first module of something bigger.
 
 **Next up — designed and specced:** the Chronicle (family journal) and the Care
 Day (live shift cockpit) — see **`CHRONICLE_CARE_DAY.md`** for the full agreed
-design, data model, and build order. Steps 1–4 have shipped (family_members +
+design, data model, and build order. Steps 1–5 have shipped (family_members +
 the Family page; the Care Day cockpit; the morning note + Seen receipt + the
-live Today card; the clock-out wrap-up into the Chronicle). The Chronicle page
-itself — feed, search, filters, needs list (step 5) — is next, then the Care
-Sheet (step 6).
+live Today card; the clock-out wrap-up; the Chronicle page). Next: the Care
+Sheet (step 6), then photos via Supabase Storage and voice (step 7). Kid
+profile pages (per-kid timelines beyond the chronicle's kid filter) pair
+naturally with the Care Sheet build.
 
 **Mid term — from nanny ops to family ops** (the drawn-but-unused art's roadmap)
 - **Care log:** feeds, naps, temperatures, medicine (thermometer/droplet icons) —
@@ -389,8 +412,8 @@ Sheet (step 6).
 ## Quick reference (for retrieval)
 
 - **Routes:** `/` (login) · `/setup` · `/dashboard` (Today) · `/tracker` ·
-  `/schedule` (family/admin) · `/family` · `/history` · `/admin` (admin) ·
-  `/settings` · `POST /api/calendar/sync`
+  `/chronicle` · `/schedule` (family/admin) · `/family` · `/history` ·
+  `/admin` (admin) · `/settings` · `POST /api/calendar/sync`
 - **Key files:** `src/lib/time.js` (local-time policy, week bounds) ·
   `src/lib/calendar.js` (unified calendar items + recurrence expansion) ·
   `src/lib/server/ical-parser.js` (ical.js RRULE engine) · `src/lib/venmo.js` ·

@@ -11,7 +11,7 @@
 //   headsup     { text }
 
 import { ART } from '$lib/art.js';
-import { formatTime } from '$lib/time.js';
+import { formatTime, formatDateWeekday } from '$lib/time.js';
 
 /**
  * The moment buttons, in cockpit order. `art` is a painted icon where one
@@ -145,6 +145,22 @@ export function momentSummary(moment) {
 		default:
 			return p.text || 'Note';
 	}
+}
+
+/**
+ * A journal-page label for a date: Today, Yesterday, or the weekday form.
+ * @param {string} dateStr 'YYYY-MM-DD'
+ * @param {number} nowMs
+ * @returns {string}
+ */
+export function journalDayLabel(dateStr, nowMs) {
+	const toStr = (/** @type {Date} */ d) =>
+		`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+	const now = new Date(nowMs);
+	if (dateStr === toStr(now)) return 'Today';
+	now.setDate(now.getDate() - 1);
+	if (dateStr === toStr(now)) return 'Yesterday';
+	return formatDateWeekday(dateStr);
 }
 
 /**

@@ -660,11 +660,11 @@
 		<h2>The Care Day</h2>
 		<a
 			class="care-notes-link"
-			href="/family"
-			title="Allergies, quirks and notes live on the Family page"
+			href="/care"
+			title="Allergies, doses, contacts and routines — the Care Sheet"
 		>
 			<PixelArt src={ART.iconClipboard} size={18} />
-			<span>Care notes</span>
+			<span>Care Sheet</span>
 		</a>
 	</div>
 

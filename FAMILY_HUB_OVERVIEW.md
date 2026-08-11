@@ -228,6 +228,20 @@ nanny on the clock at any moment** (enforced in app logic and by a DB index).
   confirm; realtime keeps the feed and hearts live. The `nav-care.png`
   heart-potion finally fronts a page.
 
+### Care Sheet (`/care`) — the one page a sitter needs
+- The reference layer (Chronicle build step 6): **emergency contacts** with big
+  tap-to-call `tel:` pills, **authorized pickups** ("no one else — when in
+  doubt, call first"), per-kid **allergies** (ember-boxed and plain when
+  present — no whimsy in safety paths), the **dosing chart** (which the
+  cockpit's last-dose guard complements), **routines**, current focus, and
+  freeform **house notes**. A Print button for the fridge copy.
+- Parents author it (section-by-section Amend modals); the whole household
+  reads it — it exists for the nanny, whose view is read-only. The cockpit's
+  header links here in one tap, as does a nanny quick action on Today.
+- Data: a DB-enforced singleton `care_sheet` row for household sections, and
+  per-kid columns on `family_members` (`allergies`, `dosing`, with `routines`
+  holding free text).
+
 ### Admin (`/admin`) and Settings (`/settings`)
 - Admin: nanny account management (create logins, edit rate/Venmo, delete with
   their entries).
@@ -250,6 +264,7 @@ nanny on the clock at any moment** (enforced in app logic and by a DB index).
 | `care_moments` | The Care Day's taps: kind (nap/meal/snack/potty/meds/note/headsup), kid_ids uuid[], shift_id (nullable FK), started_at/ended_at, payload jsonb | Added by `care_moments.sql`; generated `nap_kid_id` column + partial unique: **one open nap per kid** |
 | `chronicle_entries` | The journal's written layer: author, entry_date, body, tags text[], kid_ids uuid[], shift_id, household_only, photo_url | Added by `chronicle_entries.sql`; partial unique: **one 'morning'-tagged note per day**; RLS hides household_only rows from the nanny |
 | `chronicle_reacts` | One-tap acknowledgements: (entry_id, user_id, kind 'seen'/'heart') | Same file; each person writes only their own rows — how the nanny stamps Seen without edit rights |
+| `care_sheet` | The sitter's reference: contacts jsonb, pickups jsonb, house_notes, updated_at/by | Added by `care_sheet.sql`; a `one boolean` latch enforces the singleton; also adds `allergies` + `dosing` to family_members |
 | `availability`, `schedule_blocks` | Defined in `supabase/schedule.sql` | **Legacy — no longer referenced by code** |
 
 Security: RLS on all tables — any authenticated household member can read;
@@ -358,10 +373,13 @@ system, documented in the README and enforced by semantic tokens.
 - Shipped: the Chronicle page (`/chronicle`) — the journal feed with search,
   kid/author/tag filters, the needs check-off list, hearts, and the
   household-only toggle.
+- Shipped: the Care Sheet (`/care`) — contacts, pickups, per-kid allergies +
+  dosing + routines, house notes; printable; nanny reads, parents write.
 - Migrations to run once in Supabase, in order: `family_members.sql` (seeds
   parent rows from family/admin profiles), then `care_moments.sql`, then
-  `chronicle_entries.sql` (add `care_moments`, `chronicle_entries` and
-  `chronicle_reacts` to the realtime publication alongside them).
+  `chronicle_entries.sql`, then `care_sheet.sql` (add `care_moments`,
+  `chronicle_entries` and `chronicle_reacts` to the realtime publication
+  alongside them).
 
 ## Where it may go (speculative — edit me)
 
@@ -381,12 +399,13 @@ bigger, and the family-ops layer is now real.
 
 **Next up — designed and specced:** the Chronicle (family journal) and the Care
 Day (live shift cockpit) — see **`CHRONICLE_CARE_DAY.md`** for the full agreed
-design, data model, and build order. Steps 1–5 have shipped (family_members +
+design, data model, and build order. Steps 1–6 have shipped (family_members +
 the Family page; the Care Day cockpit; the morning note + Seen receipt + the
-live Today card; the clock-out wrap-up; the Chronicle page). Next: the Care
-Sheet (step 6), then photos via Supabase Storage and voice (step 7). Kid
-profile pages (per-kid timelines beyond the chronicle's kid filter) pair
-naturally with the Care Sheet build.
+live Today card; the clock-out wrap-up; the Chronicle page; the Care Sheet).
+Only step 7 remains — photos via Supabase Storage (which also unlocks real
+avatars), then voice capture, both gated on infra/values decisions with Nick.
+Kid profile pages (per-kid timelines beyond the chronicle's kid filter) are
+the other unbuilt bullet from the screens list.
 
 **Mid term — from nanny ops to family ops** (the drawn-but-unused art's roadmap)
 - **Care log:** feeds, naps, temperatures, medicine (thermometer/droplet icons) —
@@ -412,8 +431,9 @@ naturally with the Care Sheet build.
 ## Quick reference (for retrieval)
 
 - **Routes:** `/` (login) · `/setup` · `/dashboard` (Today) · `/tracker` ·
-  `/chronicle` · `/schedule` (family/admin) · `/family` · `/history` ·
-  `/admin` (admin) · `/settings` · `POST /api/calendar/sync`
+  `/chronicle` · `/care` (Care Sheet) · `/schedule` (family/admin) ·
+  `/family` · `/history` · `/admin` (admin) · `/settings` ·
+  `POST /api/calendar/sync`
 - **Key files:** `src/lib/time.js` (local-time policy, week bounds) ·
   `src/lib/calendar.js` (unified calendar items + recurrence expansion) ·
   `src/lib/server/ical-parser.js` (ical.js RRULE engine) · `src/lib/venmo.js` ·

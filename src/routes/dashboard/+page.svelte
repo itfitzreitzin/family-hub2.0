@@ -884,6 +884,14 @@
 							</div>
 							<Icon name="chevron-right" size={12} />
 						</a>
+						<a href="/care" class="action-row">
+							<span class="action-icon"><PixelArt src={ART.iconClipboard} size={24} /></span>
+							<div class="action-text">
+								<span class="action-name">The Care Sheet</span>
+								<span class="action-hint">Allergies, doses, contacts</span>
+							</div>
+							<Icon name="chevron-right" size={12} />
+						</a>
 						<a href="/history" class="action-row">
 							<span class="action-icon"><PixelArt src={ART.iconPurse} size={24} /></span>
 							<div class="action-text">

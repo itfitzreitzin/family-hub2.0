@@ -28,7 +28,8 @@
 		position: fixed;
 		top: calc(1rem + var(--safe-top));
 		right: 1rem;
-		z-index: 10000;
+		/* Toasts outrank every modal, sheet, and confirmation dialog. */
+		z-index: 10010;
 		display: flex;
 		flex-direction: column;
 		gap: 0.6rem;

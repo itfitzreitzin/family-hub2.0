@@ -23,7 +23,8 @@
 	/** @param {import('$lib/calendar.js').CalendarItem} item */
 	function pillText(item) {
 		if (item.kind === 'shift') {
-			return `${formatTime(item.start).replace(' ', '').toLowerCase()} ${item.title}`;
+			const repeatMark = item.raw?.template_id ? ' ↻' : '';
+			return `${formatTime(item.start).replace(' ', '').toLowerCase()} ${item.title}${repeatMark}`;
 		}
 		return item.title;
 	}

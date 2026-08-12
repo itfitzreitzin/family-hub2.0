@@ -90,7 +90,9 @@
 	.modal-backdrop {
 		position: fixed;
 		inset: 0;
-		z-index: 9999;
+		/* Above every page modal and bottom sheet (managers sit at 9999–10001),
+		   so destructive confirmations are never buried behind their opener. */
+		z-index: 10002;
 		display: flex;
 		align-items: center;
 		justify-content: center;

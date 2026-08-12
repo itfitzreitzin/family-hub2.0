@@ -343,14 +343,19 @@
 		}
 
 		try {
-			const startDateTime = `${manualForm.date}T${manualForm.startTime}:00`;
-			const endDateTime = `${manualForm.date}T${manualForm.endTime}:00`;
+			// The columns are timestamptz, so a bare "YYYY-MM-DDTHH:MM:SS" string
+			// would be stored as UTC and display hours off. Parse as local wall
+			// time and send a real instant instead.
+			const startDateTime = new Date(
+				`${manualForm.date}T${manualForm.startTime}:00`
+			).toISOString();
+			const endDateTime = new Date(`${manualForm.date}T${manualForm.endTime}:00`).toISOString();
 
 			if (editingBusy) {
 				// Editing keeps the entry in its original table; the sheet locks the
 				// Repeats toggle while editing so the type can't change mid-flight.
 				if (editingBusy.type === 'recurring') {
-					const { error } = await supabase
+					const { data, error } = await supabase
 						.from('manual_busy_times')
 						.update({
 							title: manualForm.title,
@@ -360,18 +365,26 @@
 							recurring_days: manualForm.recurringDays,
 							recurring_until: manualForm.recurringUntil || null
 						})
-						.eq('id', editingBusy.id);
+						.eq('id', editingBusy.id)
+						.select('id');
 					if (error) throw error;
+					if (!data || data.length === 0) {
+						throw new Error('The database refused the change (permissions rule?) — nothing saved');
+					}
 				} else {
-					const { error } = await supabase
+					const { data, error } = await supabase
 						.from('calendar_events')
 						.update({
 							title: manualForm.title,
 							start_time: startDateTime,
 							end_time: endDateTime
 						})
-						.eq('id', editingBusy.id);
+						.eq('id', editingBusy.id)
+						.select('id');
 					if (error) throw error;
+					if (!data || data.length === 0) {
+						throw new Error('The database refused the change (permissions rule?) — nothing saved');
+					}
 				}
 			} else if (manualForm.recurring) {
 				const { error } = await supabase.from('manual_busy_times').insert({
@@ -429,7 +442,10 @@
 			onUpdate();
 			toast.success(wasEditing ? 'Busy time updated' : 'Busy time added');
 		} catch (err) {
-			toast.error(editingBusy ? 'Failed to update busy time' : 'Failed to add busy time');
+			const message = err instanceof Error ? err.message : String(err);
+			toast.error(
+				(editingBusy ? 'Failed to update busy time: ' : 'Failed to add busy time: ') + message
+			);
 		}
 	}
 

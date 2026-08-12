@@ -101,7 +101,14 @@
 				nowInterval = setInterval(() => (now = Date.now()), 30000);
 			}
 		} catch (err) {
-			console.warn('Live card init failed:', errorMessage(err));
+			const msg = errorMessage(err);
+			if (msg.includes('care_moments')) {
+				console.warn(
+					'Live card disabled: the care_moments table is missing. Run supabase/care_moments.sql in the Supabase SQL editor (see CHRONICLE_CARE_DAY.md).'
+				);
+			} else {
+				console.warn('Live card init failed:', msg);
+			}
 		}
 	}
 

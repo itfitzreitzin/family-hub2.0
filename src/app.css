@@ -1395,11 +1395,65 @@ button,
    ============================================ */
 
 @media print {
+	/* Ink on paper. On screen both themes paint light text over dark (or
+	   parchment) surfaces via the tokens below; a white printed page with
+	   those tokens untouched comes out as blank outlined cards. Re-point
+	   every semantic token so each component's var() resolves to black-on-
+	   white without touching the components themselves. */
+	:root,
+	:root[data-theme='dark'],
+	:root[data-theme='light'] {
+		--bg: #fff;
+		--bg-deep: #fff;
+		--surface: #fff;
+		--surface-2: #fff;
+		--surface-hi: #fff;
+		--surface-glass: #fff;
+
+		--text: #000;
+		--text-muted: #1c1c1c;
+		--text-faint: #3d3d3d;
+		--text-on-accent: #000;
+
+		--border: #999;
+		--border-soft: #ccc;
+		--border-gilt: #999;
+
+		--accent: #000;
+		--accent-bright: #000;
+		--accent-dim: transparent;
+		--accent-tint: transparent;
+
+		--growing: #1e5c26;
+		--growing-dim: transparent;
+		--danger: #8a1f0f;
+		--danger-dim: transparent;
+		--arcane: #333;
+		--arcane-dim: transparent;
+
+		--star-opacity: 0;
+		--grain-opacity: 0;
+		--nebula-1: transparent;
+		--nebula-2: transparent;
+		--nebula-3: transparent;
+
+		--shadow-sm: none;
+		--shadow-md: none;
+		--shadow-lg: none;
+		--shadow-xl: none;
+		--glow-gilt: none;
+		--glow-moss: none;
+	}
+
 	nav,
 	.btn,
+	.btn-small,
+	.icon-btn,
 	.quick-actions,
 	.sign-out,
-	.grain-overlay {
+	.grain-overlay,
+	.toast-container,
+	.modal-overlay {
 		display: none !important;
 	}
 
@@ -1419,5 +1473,17 @@ button,
 		border: 1px solid #ccc;
 		background: white;
 		color: black;
+		/* A card split across a page boundary reads as an empty page. */
+		break-inside: avoid;
+		page-break-inside: avoid;
+	}
+
+	a {
+		color: black;
+		text-decoration: none;
+	}
+
+	@page {
+		margin: 12mm;
 	}
 }

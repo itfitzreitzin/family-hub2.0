@@ -261,6 +261,9 @@
 	}
 
 	$: kidsById = new Map(kids.map((k) => [k.id, k]));
+	// Reactive, unlike a helper function: Svelte re-renders the chips'
+	// nap dots the moment openNaps changes.
+	$: nappingKidIds = new Set(openNaps.flatMap((n) => n.kid_ids || []));
 	$: scopedKidIds = scopeKidId ? [scopeKidId] : kids.map((k) => k.id);
 	$: scopeOpenNaps = openNaps.filter((n) =>
 		(n.kid_ids || []).some((/** @type {string} */ id) => scopedKidIds.includes(id))
@@ -274,11 +277,6 @@
 	/** @param {any} m */
 	function canTouch(m) {
 		return canManage || (user && m.author_id === user.id);
-	}
-
-	/** @param {string} kidId */
-	function napFor(kidId) {
-		return openNaps.find((n) => (n.kid_ids || []).includes(kidId)) || null;
 	}
 
 	$: startOfToday = dayStartMs(now);
@@ -295,7 +293,22 @@
 		)
 		.sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())[0];
 
-	$: medNames = [...new Set(recentMeds.map((m) => m.payload?.name).filter(Boolean))];
+	// Suggestions for the meds sheet: everything given recently (this
+	// shift's log included, so a dose logged a minute ago suggests itself
+	// even when realtime is off) plus the Care Sheet's dosing charts.
+	$: medNames = [
+		...new Set(
+			[
+				...[...moments, ...recentMeds]
+					.filter((m) => m.kind === 'meds')
+					.sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())
+					.map((m) => m.payload?.name),
+				...kids.flatMap((k) =>
+					(Array.isArray(k.dosing) ? k.dosing : []).map((/** @type {any} */ d) => d.medicine)
+				)
+			].filter(Boolean)
+		)
+	];
 
 	/** @param {any} row */
 	function mergeMoment(row) {
@@ -328,8 +341,7 @@
 			endNap(soleScopeNap);
 			return;
 		}
-		const sleepers = new Set(openNaps.flatMap((n) => n.kid_ids || []));
-		const toStart = kids.filter((k) => scopedKidIds.includes(k.id) && !sleepers.has(k.id));
+		const toStart = kids.filter((k) => scopedKidIds.includes(k.id) && !nappingKidIds.has(k.id));
 		if (toStart.length === 0) {
 			toast.info('Everyone in view is already napping — end a nap from its row below.');
 			return;
@@ -439,6 +451,7 @@
 			if (error) throw error;
 
 			mergeMoment(data);
+			if (data.kind === 'meds') loadRecentMeds().catch(() => {});
 			if (!opts.quiet) toast.success('Logged');
 			sheetKind = null;
 			return data;
@@ -653,7 +666,9 @@
 	}
 </script>
 
-<svelte:window on:keydown={handleKeydown} />
+<!-- Realtime isn't guaranteed on every table; refetch on focus so a
+     second device's moments show up when this one comes back. -->
+<svelte:window on:keydown={handleKeydown} on:focus={() => scheduleResync()} />
 
 <section class="card arcana">
 	<div class="card-header">
@@ -729,6 +744,7 @@
 					<button
 						class="kid-chip"
 						class:active={scopeKidId === kid.id}
+						class:napping={nappingKidIds.has(kid.id)}
 						on:click={() => (scopeKidId = kid.id)}
 					>
 						<img
@@ -741,7 +757,7 @@
 							draggable="false"
 						/>
 						{kid.name}
-						{#if napFor(kid.id)}
+						{#if nappingKidIds.has(kid.id)}
 							<span class="live-dot" title="Napping"></span>
 						{/if}
 					</button>
@@ -1258,6 +1274,11 @@
 		color: var(--accent-bright);
 		border-color: var(--border-gilt);
 		background: var(--accent-dim);
+	}
+
+	/* A sleeping kid's chip carries the nap moss, active or not. */
+	.kid-chip.napping {
+		border-color: rgba(111, 191, 115, 0.45);
 	}
 
 	.chip-face {

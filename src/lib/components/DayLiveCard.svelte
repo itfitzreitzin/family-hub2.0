@@ -46,6 +46,8 @@
 	let now = Date.now();
 	/** @type {ReturnType<typeof setInterval> | null} */
 	let nowInterval = null;
+	/** @type {ReturnType<typeof setInterval> | null} */
+	let pollInterval = null;
 	/** @type {ReturnType<typeof supabase.channel> | null} */
 	let channel = null;
 	/** @type {ReturnType<typeof setTimeout> | null} */
@@ -64,6 +66,7 @@
 
 	onDestroy(() => {
 		if (nowInterval) clearInterval(nowInterval);
+		if (pollInterval) clearInterval(pollInterval);
 		if (resyncTimer) clearTimeout(resyncTimer);
 		if (channel) supabase.removeChannel(channel);
 	});
@@ -100,6 +103,16 @@
 			if (!nowInterval) {
 				nowInterval = setInterval(() => (now = Date.now()), 30000);
 			}
+			if (!pollInterval) {
+				// Realtime isn't guaranteed on every table (the publication is
+				// opt-in per table), and this card is what greets the parents
+				// in the evening — a slow poll keeps the wrap-up, heart, and
+				// Seen receipt from going stale when no event ever arrives.
+				pollInterval = setInterval(() => {
+					if (typeof document === 'undefined' || document.visibilityState === 'hidden') return;
+					refreshDay();
+				}, 60000);
+			}
 		} catch (err) {
 			const msg = errorMessage(err);
 			if (msg.includes('care_moments')) {
@@ -113,17 +126,23 @@
 	}
 
 	// The dashboard's realtime layer can change the active shift under us.
+	// A shift ending is exactly when the wrap-up appears, so reload the
+	// whole card — not just the feed — on any shift change.
 	$: if ((activeShift?.id || null) !== loadedShiftId) {
-		loadFeed().catch(() => {});
+		refreshDay();
+	}
+
+	function refreshDay() {
+		Promise.all([loadFeed(), loadMorningNote(), loadWrapUp()]).catch((err) => {
+			console.warn('Live card refresh failed:', errorMessage(err));
+		});
 	}
 
 	function scheduleResync() {
 		if (resyncTimer) clearTimeout(resyncTimer);
 		resyncTimer = setTimeout(() => {
 			resyncTimer = null;
-			Promise.all([loadFeed(), loadMorningNote(), loadWrapUp()]).catch((err) => {
-				console.warn('Live card resync failed:', errorMessage(err));
-			});
+			refreshDay();
 		}, 300);
 	}
 
@@ -308,7 +327,8 @@
 	}
 </script>
 
-<svelte:window on:keydown={handleKeydown} />
+<!-- Coming back to the tab is the other moment staleness shows. -->
+<svelte:window on:keydown={handleKeydown} on:focus={() => scheduleResync()} />
 
 <section class="card arcana live-root">
 	<div class="card-header">

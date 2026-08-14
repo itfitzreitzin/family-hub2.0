@@ -1,7 +1,7 @@
 ---
 name: Feature experiment
 about: Define an observed household problem before architecture or code
-labels: product-experiment
+labels: ''
 assignees: ''
 ---
 

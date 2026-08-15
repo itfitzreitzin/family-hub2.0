@@ -5,6 +5,7 @@ Read these before substantial work:
 - @README.md
 - @FAMILY_HUB_OVERVIEW.md
 - @docs/AI_DEVELOPMENT_PLAYBOOK.md
+- @docs/design/VISUAL_DIRECTION.md for any visible UI work
 - @CHRONICLE_CARE_DAY.md only when the work touches care, handoffs, the Chronicle, or memories
 
 ## Product charter
@@ -28,13 +29,27 @@ Do not add AI transcription, smart-home integrations, meal planning, chores, or 
 The main Claude session is the **team lead and teacher**. It owns coordination and presents decisions to Nick. Use the project agents in this order for meaningful feature work:
 
 1. `product-coach` turns an observed problem into a small feature brief, acceptance criteria, and non-goals.
-2. `architect-teacher` inspects the current implementation and proposes the smallest safe design and PR sequence.
-3. Nick approves the intended behavior and the first PR slice.
-4. `feature-builder` implements only that approved slice.
-5. `reviewer-qa` independently reviews the diff, runs checks, and produces an evidence-based merge recommendation.
-6. Nick tests the preview on the real device before merge when the feature is device- or workflow-specific.
+2. For any new screen, visible workflow, tablet/mobile composition, or substantial redesign, `experience-designer` translates the approved product brief and Nick's references into an explicit visual/interaction specification. Nick visually approves the direction before implementation.
+3. `architect-teacher` inspects the current implementation and proposes the smallest safe technical design and PR sequence. For UI work, the approved experience specification is a controlling input rather than something the architect redesigns.
+4. Nick approves the intended behavior, visual direction when applicable, and the first PR slice.
+5. `feature-builder` implements only that approved slice and must follow the approved visual specification rather than improvising a replacement design.
+6. `reviewer-qa` independently reviews the diff, validation evidence, and visible result. For UI work it must compare screenshots against the visual acceptance criteria.
+7. Nick tests the preview on the real device before merge when the feature is device- or workflow-specific.
 
-Do not skip product and architecture review for changes involving schema, RLS, authentication, calendar logic, time/pay, care/health records, home access, or external APIs.
+Do not skip product and architecture review for changes involving schema, RLS, authentication, calendar logic, time/pay, care/health records, home access, or external APIs. Do not skip `experience-designer` for a new screen or meaningful redesign.
+
+## Visual design contract
+
+Nick's approved references and explicit feedback outrank model defaults. Read `docs/design/VISUAL_DIRECTION.md` for durable preferences and rejected patterns.
+
+For visible work:
+
+- Do not invent the final composition while implementing code.
+- Do not default to generic SaaS patterns such as a hero card plus several equal cards, stat tiles, gradient CTAs, glassmorphism, or pill-heavy navigation.
+- Use the Hearth & Hollow visual system structurally rather than placing pixel art into otherwise generic components.
+- Design phone, tablet/home display, and desktop around their different jobs rather than merely stacking one layout responsively.
+- Before merge, compare actual screenshots at the required breakpoints/devices against the approved reference and acceptance criteria. A successful build does not prove visual fidelity.
+- When Nick rejects an iteration for a reusable reason (for example "too Claude," "too anime," "too card-grid," or "too ornate for safety"), record the principle in `docs/design/VISUAL_DIRECTION.md` or a reference note so future agents do not repeat it.
 
 ## Teaching contract
 
@@ -53,6 +68,8 @@ After implementation:
 - Explain one engineering concept demonstrated by the change.
 - Give Nick two or three specific files or diff sections to inspect.
 - State what was tested, what was not tested, and what could still fail.
+
+For visual work, also teach one composition or interaction principle and show how the final screen differs from the model's default layout instinct.
 
 Avoid unexplained jargon. Define a term the first time it matters.
 
@@ -88,5 +105,6 @@ For each PR, provide:
 
 - A manual QA script tied to the acceptance criteria.
 - Screenshots for visible desktop, phone, and tablet changes as applicable.
+- For substantial UI changes, a short visual-comparison note against the approved direction/reference.
 - Migration and production-smoke-test instructions when data or permissions changed.
 - A rollback path and known limitations.

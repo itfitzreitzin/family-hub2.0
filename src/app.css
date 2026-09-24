@@ -415,13 +415,14 @@ small {
    5. LAYOUT
    ============================================ */
 
+/* No z-index here: a stacking context on the page would trap every modal
+   sheet inside it under the nav bars and the gilt frame. */
 .container {
 	min-height: 100vh;
 	width: min(100%, var(--page-max-width));
 	margin: 0 auto;
 	padding: var(--page-padding-y) var(--page-padding-x);
 	position: relative;
-	z-index: 1;
 }
 
 .page-shell {

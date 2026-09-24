@@ -1,5 +1,6 @@
 <script>
 	import { onMount, onDestroy } from 'svelte';
+	import { resolve } from '$app/paths';
 	import { supabase } from '$lib/supabase';
 	import { toast } from '$lib/stores/toast.js';
 	import { confirm as confirmModal } from '$lib/stores/toast.js';
@@ -19,6 +20,7 @@
 		spanLabel,
 		napLengthMs,
 		dayStartMs,
+		dayWindowStartMs,
 		latestDose,
 		POTTY_OUTCOMES,
 		APPETITES
@@ -29,7 +31,14 @@
 	import PixelArt from './PixelArt.svelte';
 	import EmptyState from './EmptyState.svelte';
 
-	/** The open time_entries row this cockpit records against. */
+	/*
+	 * The Care Day: the moment buttons and the day's timeline, open to anyone
+	 * in the household at any hour. A running shift is optional — moments
+	 * logged during one are tagged with it, so they ride along to its
+	 * wrap-up; the rest belong to the day.
+	 */
+
+	/** The open time_entries row, if a shift is running. */
 	/** @type {any} */
 	export let shift = null;
 	/** @type {any} */
@@ -47,13 +56,6 @@
 	let recentMeds = [];
 	/** @type {string | null} */
 	let scopeKidId = null;
-	/** @type {any} */
-	let morningNote = null;
-	/** @type {any} */
-	let seenReact = null;
-	let markingSeen = false;
-	/** @type {Record<string, string>} */
-	let namesById = {};
 
 	let loading = true;
 	let now = Date.now();
@@ -63,8 +65,11 @@
 	let channel = null;
 	/** @type {ReturnType<typeof setTimeout> | null} */
 	let resyncTimer = null;
+	let ready = false;
 	/** @type {string | null} */
-	let loadedShiftId = null;
+	let loadedKey = null;
+	/** Start of the loaded timeline, ms epoch — see dayWindowStartMs. */
+	let windowStart = 0;
 	let momentsToken = 0;
 
 	// Detail sheets (one per tappable kind; nap never opens one)
@@ -105,26 +110,15 @@
 
 	async function init() {
 		try {
-			const { data: people } = await supabase.from('profiles').select('id, full_name');
-			namesById = Object.fromEntries((people || []).map((p) => [p.id, p.full_name || '']));
-
 			await loadKids();
-			await reloadForShift();
+			await reloadDay();
 
 			if (!channel) {
-				// Unfiltered like the tracker's channel: nap-end UPDATEs and
-				// DELETEs can't be usefully filtered server-side.
+				// Unfiltered like the shift clock's channel: nap-end UPDATEs
+				// and DELETEs can't be usefully filtered server-side.
 				channel = supabase
 					.channel('care-cockpit')
 					.on('postgres_changes', { event: '*', schema: 'public', table: 'care_moments' }, () =>
-						scheduleResync()
-					)
-					.on(
-						'postgres_changes',
-						{ event: '*', schema: 'public', table: 'chronicle_entries' },
-						() => scheduleResync()
-					)
-					.on('postgres_changes', { event: '*', schema: 'public', table: 'chronicle_reacts' }, () =>
 						scheduleResync()
 					)
 					.subscribe();
@@ -137,76 +131,30 @@
 			console.warn('Cockpit init failed:', errorMessage(err));
 		} finally {
 			loading = false;
+			ready = true;
 		}
 	}
 
-	// The tracker can switch nannies (and so shifts) under us.
-	$: if (shift?.id && shift.id !== loadedShiftId) {
-		reloadForShift().catch(() => {});
+	// The timeline's window moves when a shift starts or ends (an overnight
+	// shift reaches back past midnight) and when the day turns over.
+	$: windowKey = `${shift?.id || ''}|${localDateString(new Date(now))}`;
+	$: if (ready && windowKey !== loadedKey) {
+		reloadDay().catch(() => {});
 	}
 
-	async function reloadForShift() {
-		loadedShiftId = shift?.id || null;
-		await Promise.all([loadMoments(), loadOpenNaps(), loadRecentMeds(), loadMorningNote()]);
+	async function reloadDay() {
+		loadedKey = windowKey;
+		await Promise.all([loadMoments(), loadOpenNaps(), loadRecentMeds()]);
 	}
 
 	function scheduleResync() {
 		if (resyncTimer) clearTimeout(resyncTimer);
 		resyncTimer = setTimeout(() => {
 			resyncTimer = null;
-			Promise.all([loadMoments(), loadOpenNaps(), loadRecentMeds(), loadMorningNote()]).catch(
-				(err) => {
-					console.warn('Cockpit resync failed:', errorMessage(err));
-				}
-			);
+			Promise.all([loadMoments(), loadOpenNaps(), loadRecentMeds()]).catch((err) => {
+				console.warn('Cockpit resync failed:', errorMessage(err));
+			});
 		}, 250);
-	}
-
-	// The parents' note for this morning, pinned up top until it's been seen.
-	async function loadMorningNote() {
-		const { data, error } = await supabase
-			.from('chronicle_entries')
-			.select('*')
-			.eq('entry_date', localDateString())
-			.contains('tags', ['morning'])
-			.maybeSingle();
-
-		if (error) throw error;
-		morningNote = data;
-
-		if (morningNote) {
-			const { data: reacts } = await supabase
-				.from('chronicle_reacts')
-				.select('*')
-				.eq('entry_id', morningNote.id)
-				.eq('kind', 'seen');
-			seenReact = (reacts || [])[0] || null;
-		} else {
-			seenReact = null;
-		}
-	}
-
-	// The receipt the parents can see: a react row owned by the reader, so
-	// the nanny can stamp it without edit rights to the note itself.
-	async function markNoteSeen() {
-		if (!morningNote || markingSeen) return;
-		markingSeen = true;
-
-		try {
-			const { error } = await supabase
-				.from('chronicle_reacts')
-				.upsert(
-					{ entry_id: morningNote.id, user_id: user.id, kind: 'seen' },
-					{ onConflict: 'entry_id,user_id,kind', ignoreDuplicates: true }
-				);
-
-			if (error) throw error;
-			await loadMorningNote();
-		} catch (err) {
-			toast.error('Error marking seen: ' + errorMessage(err));
-		} finally {
-			markingSeen = false;
-		}
 	}
 
 	async function loadKids() {
@@ -223,23 +171,23 @@
 	}
 
 	async function loadMoments() {
-		if (!shift?.id) return;
 		const token = ++momentsToken;
-		const shiftId = shift.id;
+		const since = dayWindowStartMs(Date.now(), shift);
 
 		const { data, error } = await supabase
 			.from('care_moments')
 			.select('*')
-			.eq('shift_id', shiftId)
+			.gte('started_at', new Date(since).toISOString())
 			.order('started_at', { ascending: false });
 
 		if (error) throw error;
-		if (token !== momentsToken || shiftId !== shift?.id) return;
+		if (token !== momentsToken) return;
+		windowStart = since;
 		moments = data || [];
 	}
 
-	// Open naps are fetched without a shift window: a nap left running from
-	// an earlier shift must still surface its End button here.
+	// Open naps are fetched without a window: a nap left running from last
+	// night must still surface its End button here.
 	async function loadOpenNaps() {
 		const { data, error } = await supabase
 			.from('care_moments')
@@ -253,8 +201,8 @@
 	}
 
 	// Recent doses feed two things: the button face's "last dose" guard and
-	// the name suggestions in the meds sheet. Unscoped to this shift on
-	// purpose — the morning Tylenol a parent gave counts.
+	// the name suggestions in the meds sheet. Unscoped to the timeline's
+	// window on purpose — last night's 11:40 PM dose counts.
 	async function loadRecentMeds() {
 		const { data, error } = await supabase
 			.from('care_moments')
@@ -275,10 +223,12 @@
 	$: scopeOpenNaps = openNaps.filter((n) =>
 		(n.kid_ids || []).some((/** @type {string} */ id) => scopedKidIds.includes(id))
 	);
-	// The nap the button acts on directly, when the scope is one kid.
-	$: soleScopeNap = scopeKidId
-		? openNaps.find((n) => (n.kid_ids || []).includes(scopeKidId))
-		: null;
+	// The nap the button acts on directly, when the scope is one kid — a
+	// picked chip, or the only kid there is (one kid shows no chips).
+	$: soleScopeNap =
+		scopedKidIds.length === 1
+			? openNaps.find((n) => (n.kid_ids || []).includes(scopedKidIds[0]))
+			: null;
 	$: canManage = profile?.role === 'family' || profile?.role === 'admin';
 
 	/** @param {any} m */
@@ -302,9 +252,9 @@
 		return `${formatTime(m.started_at)}${at < startOfToday ? ' yesterday' : ''}`;
 	}
 
-	// Suggestions for the meds sheet: everything given recently (this
-	// shift's log included, so a dose logged a minute ago suggests itself
-	// even when realtime is off) plus the Care Sheet's dosing charts.
+	// Suggestions for the meds sheet: everything given recently (today's
+	// log included, so a dose logged a minute ago suggests itself even when
+	// realtime is off) plus the Care Sheet's dosing charts.
 	$: medNames = [
 		...new Set(
 			[
@@ -323,7 +273,8 @@
 	function mergeMoment(row) {
 		if (!row) return;
 		const rest = moments.filter((m) => m.id !== row.id);
-		if (row.shift_id !== shift?.id) {
+		// An edit can move a moment back out of the day's window.
+		if (new Date(row.started_at).getTime() < windowStart) {
 			moments = rest;
 			return;
 		}
@@ -368,7 +319,7 @@
 				const { data, error } = await supabase
 					.from('care_moments')
 					.insert({
-						shift_id: shift.id,
+						shift_id: shift?.id ?? null,
 						author_id: user.id,
 						kind: 'nap',
 						kid_ids: [kid.id],
@@ -449,7 +400,7 @@
 			const { data, error } = await supabase
 				.from('care_moments')
 				.insert({
-					shift_id: shift.id,
+					shift_id: shift?.id ?? null,
 					author_id: user.id,
 					kind: sheetKind,
 					kid_ids: sheetKidIds,
@@ -686,40 +637,13 @@
 		<h2>The Care Day</h2>
 		<a
 			class="care-notes-link"
-			href="/care"
+			href={resolve('/care/sheet')}
 			title="Allergies, doses, contacts and routines — the Care Sheet"
 		>
 			<PixelArt src={ART.iconClipboard} size={18} />
 			<span>Care Sheet</span>
 		</a>
 	</div>
-
-	<!-- ── The morning note, pinned until seen ──────────── -->
-	{#if morningNote}
-		<div class="morning-note" class:seen={seenReact}>
-			<div class="mn-head">
-				<Icon name="scroll" size={14} />
-				<span class="mn-label">Morning note</span>
-				{#if seenReact}
-					<span class="badge badge-live">
-						<Icon name="check" size={11} />
-						Seen {formatTime(seenReact.created_at)}
-					</span>
-				{:else if profile?.role === 'nanny'}
-					<button class="btn-small growing mn-seen" on:click={markNoteSeen} disabled={markingSeen}>
-						<Icon name="check" size={13} />
-						{markingSeen ? 'Marking…' : 'Seen ✓'}
-					</button>
-				{:else}
-					<span class="badge">Awaiting eyes</span>
-				{/if}
-			</div>
-			<p class="mn-body">{morningNote.body}</p>
-			{#if morningNote.author_id && namesById[morningNote.author_id]}
-				<span class="mn-author">— {namesById[morningNote.author_id].split(' ')[0]}</span>
-			{/if}
-		</div>
-	{/if}
 
 	{#if loading}
 		<div class="cockpit-loading">
@@ -731,10 +655,10 @@
 		<EmptyState
 			icon="heart"
 			title="No kids on the roster yet"
-			hint="Add them on the Family page and the care day starts here."
+			hint="Add them in Settings → Household and the care day starts here."
 		>
 			{#if canManage}
-				<a class="btn btn-primary" href="/family">
+				<a class="btn btn-primary" href={resolve('/settings/household')}>
 					<Icon name="plus" size={16} /> Add the kids
 				</a>
 			{/if}
@@ -827,12 +751,12 @@
 			</div>
 		{/if}
 
-		<!-- ── The shift's timeline ─────────────────────────── -->
+		<!-- ── The day's timeline ───────────────────────────── -->
 		{#if moments.length === 0}
 			<EmptyState
 				icon="grimoire"
 				title="The day is unwritten"
-				hint="Taps build the day — the wrap-up writes itself."
+				hint={shift ? 'Taps build the day — the wrap-up writes itself.' : 'Taps build the day.'}
 			/>
 		{:else}
 			<div class="cockpit-timeline">
@@ -1018,8 +942,9 @@
 							></textarea>
 							{#if sheetKind === 'headsup'}
 								<small
-									>Flagged in red on the parents' Today card — the scraped-knee stuff. It doesn't
-									send a notification, so call or text them for anything urgent.</small
+									>Flagged in red on the day's timeline and named on the parents' Home — the
+									scraped-knee stuff. It doesn't send a notification, so call or text them for
+									anything urgent.</small
 								>
 							{/if}
 						</div>
@@ -1192,58 +1117,6 @@
 
 	.cockpit-loading {
 		padding: 0.5rem 0;
-	}
-
-	/* ── The pinned morning note ──────────────────────────── */
-	.morning-note {
-		padding: 0.85rem 1rem;
-		margin-bottom: 1rem;
-		background: var(--accent-tint);
-		border: 1px solid var(--border-gilt);
-		border-radius: var(--radius-sm);
-	}
-
-	.morning-note.seen {
-		background: var(--surface-2);
-		border-color: var(--border-soft);
-	}
-
-	.mn-head {
-		display: flex;
-		align-items: center;
-		flex-wrap: wrap;
-		gap: 0.5rem;
-		color: var(--accent);
-		--icon-accent: var(--accent);
-	}
-
-	.mn-label {
-		font-family: var(--font-body);
-		font-size: 0.7rem;
-		font-weight: 700;
-		letter-spacing: 0.12em;
-		text-transform: uppercase;
-		color: var(--text-faint);
-	}
-
-	.mn-seen {
-		margin-left: auto;
-	}
-
-	.mn-body {
-		margin: 0.5rem 0 0;
-		font-size: 0.95rem;
-		line-height: 1.5;
-		color: var(--text);
-		overflow-wrap: anywhere;
-	}
-
-	.mn-author {
-		display: block;
-		margin-top: 0.25rem;
-		font-size: 0.78rem;
-		font-style: italic;
-		color: var(--text-faint);
 	}
 
 	/* ── Kid chips ────────────────────────────────────────── */

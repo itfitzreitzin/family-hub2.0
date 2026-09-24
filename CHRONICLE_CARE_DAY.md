@@ -5,6 +5,14 @@
 > ask Nick for the "Hearth & Hollow — Feature Concepts" artifact link (screens
 > III "The Chronicle" and IV "The Care Day") — but this file is self-sufficient.
 > Read FAMILY_HUB_OVERVIEW.md first for app context and conventions.
+>
+> **Where it lives now (Sept 2026):** everything below moved under **Care**. The
+> cockpit, the morning note and the wrap-up are on Care → Today (`/care`), and the
+> Care Day there is open at any hour, not only during a shift — moments logged
+> with no shift running simply carry no `shift_id`. The Chronicle is Care →
+> Journal (`/care/journal`), the Care Sheet is Care → Care Sheet (`/care/sheet`),
+> and the parents' ambient card became Home's "Right now" card. The spec below is
+> kept as agreed in August.
 
 ## The idea in one paragraph
 

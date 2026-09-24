@@ -1,7 +1,6 @@
 <script>
 	import { onMount, onDestroy, tick } from 'svelte';
 	import { supabase } from '$lib/supabase';
-	import Nav from '$lib/Nav.svelte';
 	import CalendarManager from '$lib/components/CalendarManager.svelte';
 	import MonthGrid from '$lib/components/MonthGrid.svelte';
 	import MonthSidePanel from '$lib/components/MonthSidePanel.svelte';
@@ -1503,8 +1502,6 @@
 		if (item.kind === 'shift') editShift(item.raw);
 	}
 </script>
-
-<Nav currentPage="schedule" />
 
 <div class="schedule-page">
 	{#if loading}

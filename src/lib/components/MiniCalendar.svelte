@@ -179,8 +179,11 @@
 		color: var(--accent);
 	}
 
+	/* min-width undoes the global table floor (sized for data tables), which
+	   pushed Saturday off the side of a phone. */
 	.cal-grid {
 		width: 100%;
+		min-width: 0;
 		border-collapse: collapse;
 		table-layout: fixed;
 	}

@@ -1,17 +1,17 @@
 <script>
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
+	import { page } from '$app/stores';
 	import { supabase } from '$lib/supabase';
 	import { browser } from '$app/environment';
 	import Icon from '$lib/icons/Icon.svelte';
 	import MoonPhase from '$lib/components/MoonPhase.svelte';
 	import ThemeToggle from '$lib/components/ThemeToggle.svelte';
 	import PixelArt from '$lib/components/PixelArt.svelte';
-	import { ART } from '$lib/art.js';
+	import { SECTIONS, landingFor, visibleTo, sectionFor, tabIsActive } from '$lib/nav.js';
 
-	export let currentPage = '';
-
-	let isAdmin = false;
+	/** @type {string | null} */
 	let userRole = null;
 	let mobileMenuOpen = false;
 	let isMobile = false;
@@ -19,71 +19,21 @@
 	let lastScrollY = 0;
 	let hideNav = false;
 
-	// Each destination gets a painted icon, rendered at 22px+ where the art
-	// stays legible. Labels stay practical; the arcana voice lives in page
-	// ledes and card names instead. Active state is carried by the tab's text
-	// and background, not icon colour — the paintings keep their own palette.
-	const LINKS = [
-		{ href: '/dashboard', key: 'dashboard', label: 'Today', art: ART.navToday, short: 'Today' },
-		{ href: '/tracker', key: 'tracker', label: 'Tracker', art: ART.iconClock, short: 'Tracker' },
-		{
-			href: '/chronicle',
-			key: 'chronicle',
-			label: 'Chronicle',
-			art: ART.navCare,
-			short: 'Chronicle'
-		},
-		{
-			href: '/schedule',
-			key: 'schedule',
-			label: 'Calendar',
-			art: ART.navCalendar,
-			short: 'Calendar',
-			roles: ['family', 'admin']
-		},
-		{ href: '/family', key: 'family', label: 'Family', art: ART.navHome, short: 'Family' },
-		{ href: '/care', key: 'care', label: 'Care Sheet', art: ART.iconClipboard, short: 'Care' },
-		{ href: '/history', key: 'history', label: 'History', art: ART.navPayments, short: 'History' },
-		{
-			href: '/admin',
-			key: 'admin',
-			label: 'Admin',
-			art: ART.iconLock,
-			short: 'Admin',
-			adminOnly: true
-		},
-		{ href: '/settings', key: 'settings', label: 'Settings', art: ART.iconOrb, short: 'Settings' }
-	];
+	// Three sections up top, and the open section's pages as tabs beneath.
+	// The layout renders this once for every signed-in page, so the active
+	// state comes from the URL rather than from each page. (resolve() is
+	// typed one route at a time and the tree's hrefs are a union of them,
+	// hence the casts on its links.)
+	$: pathname = $page.url.pathname;
+	$: sections = SECTIONS.filter((s) => visibleTo(s, userRole));
+	$: current = sectionFor(pathname);
+	$: tabs = (current?.tabs || []).filter((t) => visibleTo(t, userRole));
+	$: home = landingFor(userRole);
 
-	const BOTTOM = ['dashboard', 'tracker', 'chronicle', 'history'];
-
-	// Both sides of this are constant, so it never needs to recompute.
-	const bottomLinks = LINKS.filter((link) => BOTTOM.includes(link.key));
-
-	$: visibleLinks = LINKS.filter((link) => {
-		if (link.adminOnly) return isAdmin;
-		if (link.roles) return link.roles.includes(userRole);
-		return true;
-	});
-
-	onMount(async () => {
+	onMount(() => {
 		checkMobile();
 		window.addEventListener('resize', checkMobile);
-
-		const {
-			data: { user }
-		} = await supabase.auth.getUser();
-
-		if (user) {
-			const { data: profile } = await supabase
-				.from('profiles')
-				.select('role')
-				.eq('id', user.id)
-				.maybeSingle();
-
-			isAdmin = profile?.role === 'admin';
-			userRole = profile?.role || null;
-		}
+		loadRole();
 
 		// Slide the mobile bar out of the way when scrolling down a long ledger.
 		let ticking = false;
@@ -109,6 +59,21 @@
 			if (mobileMenuOpen) unlockBody();
 		};
 	});
+
+	async function loadRole() {
+		const {
+			data: { user }
+		} = await supabase.auth.getUser();
+		if (!user) return;
+
+		const { data: profile } = await supabase
+			.from('profiles')
+			.select('role')
+			.eq('id', user.id)
+			.maybeSingle();
+
+		userRole = profile?.role || null;
+	}
 
 	function checkMobile() {
 		isMobile = window.innerWidth < 768;
@@ -138,7 +103,7 @@
 	async function signOut() {
 		buzz();
 		await supabase.auth.signOut();
-		goto('/');
+		goto(resolve('/'));
 	}
 
 	function toggleMobileMenu() {
@@ -158,6 +123,7 @@
 		buzz();
 	}
 
+	/** @param {KeyboardEvent} event */
 	function handleKeydown(event) {
 		if (event.key === 'Escape' && mobileMenuOpen) toggleMobileMenu();
 	}
@@ -167,23 +133,23 @@
 
 {#if !isMobile}
 	<!-- ── Desktop ─────────────────────────────────────────── -->
-	<nav class="desktop-nav" class:crowded={visibleLinks.length > 8} aria-label="Main navigation">
+	<nav class="desktop-nav" aria-label="Main navigation">
 		<div class="nav-content">
-			<a href="/dashboard" class="logo" aria-label="Family Hub — go to the hearth">
+			<a href={resolve(home)} class="logo" aria-label="Family Hub — go to the hearth">
 				<MoonPhase size={20} />
 				<span class="wordmark">Family Hub</span>
 			</a>
 
 			<div class="nav-links">
-				{#each visibleLinks as link (link.key)}
+				{#each sections as section (section.key)}
+					{@const active = current?.key === section.key}
 					<a
-						href={link.href}
-						class:active={currentPage === link.key}
-						class:admin-link={link.adminOnly}
-						aria-current={currentPage === link.key ? 'page' : undefined}
+						href={resolve(/** @type {any} */ (section.href))}
+						class:active
+						aria-current={pathname === section.href ? 'page' : active ? 'true' : undefined}
 					>
-						<PixelArt src={link.art} size={22} loading="eager" />
-						<span>{link.label}</span>
+						<PixelArt src={section.art} size={22} loading="eager" />
+						<span>{section.label}</span>
 					</a>
 				{/each}
 			</div>
@@ -196,13 +162,27 @@
 				</button>
 			</div>
 		</div>
+
+		{#if current && tabs.length > 1}
+			<div class="section-tabs">
+				{#each tabs as tab (tab.href)}
+					{@const active = tabIsActive(current, tab, pathname)}
+					<a
+						href={resolve(/** @type {any} */ (tab.href))}
+						class:active
+						aria-current={active ? 'page' : undefined}
+						on:click={buzz}>{tab.label}</a
+					>
+				{/each}
+			</div>
+		{/if}
 	</nav>
 {:else}
 	<!-- ── Mobile top bar ──────────────────────────────────── -->
 	<nav class="mobile-nav" class:hide={hideNav} aria-label="Main navigation">
 		<div class="mobile-nav-header">
 			<a
-				href="/dashboard"
+				href={resolve(home)}
 				class="logo"
 				on:click={handleNavClick}
 				aria-label="Family Hub — go to the hearth"
@@ -213,6 +193,21 @@
 			<ThemeToggle compact />
 		</div>
 	</nav>
+
+	<!-- The open section's pages, in the flow just under the fixed bar. -->
+	{#if current && tabs.length > 1}
+		<nav class="mobile-tabs" aria-label="{current.label} pages">
+			{#each tabs as tab (tab.href)}
+				{@const active = tabIsActive(current, tab, pathname)}
+				<a
+					href={resolve(/** @type {any} */ (tab.href))}
+					class:active
+					aria-current={active ? 'page' : undefined}
+					on:click={buzz}>{tab.label}</a
+				>
+			{/each}
+		</nav>
+	{/if}
 
 	{#if mobileMenuOpen}
 		<div
@@ -231,21 +226,40 @@
 			</div>
 
 			<nav class="mobile-menu-links" aria-label="Page navigation">
-				{#each visibleLinks as link (link.key)}
+				{#each sections as section (section.key)}
+					{@const sectionTabs = (section.tabs || []).filter((t) => visibleTo(t, userRole))}
+					{@const here = pathname === section.href}
 					<a
-						href={link.href}
-						class:active={currentPage === link.key}
-						class:admin-link-mobile={link.adminOnly}
+						href={resolve(/** @type {any} */ (section.href))}
+						class:active={here}
 						on:click={handleNavClick}
-						aria-current={currentPage === link.key ? 'page' : undefined}
+						aria-current={here ? 'page' : undefined}
 					>
-						<PixelArt src={link.art} size={22} loading="eager" />
-						<span>{link.label}</span>
-						{#if currentPage === link.key}
+						<PixelArt src={section.art} size={22} loading="eager" />
+						<span>{section.label}</span>
+						{#if here}
 							<span class="active-indicator" aria-hidden="true"><Icon name="star" size={12} /></span
 							>
 						{/if}
 					</a>
+					<!-- The first tab is the section itself; list the rest beneath it. -->
+					{#each sectionTabs.slice(1) as tab (tab.href)}
+						{@const tabHere = tabIsActive(section, tab, pathname)}
+						<a
+							href={resolve(/** @type {any} */ (tab.href))}
+							class="sub-link"
+							class:active={tabHere}
+							on:click={handleNavClick}
+							aria-current={tabHere ? 'page' : undefined}
+						>
+							<span>{tab.label}</span>
+							{#if tabHere}
+								<span class="active-indicator" aria-hidden="true"
+									><Icon name="star" size={12} /></span
+								>
+							{/if}
+						</a>
+					{/each}
 				{/each}
 			</nav>
 
@@ -261,15 +275,16 @@
 
 	<!-- ── Mobile bottom bar ───────────────────────────────── -->
 	<nav class="mobile-bottom-nav" aria-label="Quick navigation">
-		{#each bottomLinks as link (link.key)}
+		{#each sections as section (section.key)}
+			{@const active = current?.key === section.key}
 			<a
-				href={link.href}
-				class:active={currentPage === link.key}
+				href={resolve(/** @type {any} */ (section.href))}
+				class:active
 				on:click={handleNavClick}
-				aria-current={currentPage === link.key ? 'page' : undefined}
+				aria-current={pathname === section.href ? 'page' : active ? 'true' : undefined}
 			>
-				<PixelArt src={link.art} size={24} loading="eager" />
-				<span class="bottom-label">{link.short}</span>
+				<PixelArt src={section.art} size={24} loading="eager" />
+				<span class="bottom-label">{section.label}</span>
 			</a>
 		{/each}
 		<button class="menu-trigger" on:click={toggleMobileMenu} aria-label="More options">
@@ -322,7 +337,7 @@
 
 	.nav-links {
 		display: flex;
-		gap: 0.15rem;
+		gap: 0.35rem;
 		flex: 1;
 		justify-content: center;
 	}
@@ -331,12 +346,12 @@
 		position: relative;
 		display: inline-flex;
 		align-items: center;
-		gap: 0.45rem;
-		padding: 0.5rem 0.8rem;
+		gap: 0.5rem;
+		padding: 0.5rem 1rem;
 		border-radius: var(--radius-sm);
 		color: var(--text-muted);
 		font-family: var(--font-display);
-		font-size: 0.85rem;
+		font-size: 0.88rem;
 		font-weight: 500;
 		letter-spacing: 0.04em;
 		text-decoration: none;
@@ -357,7 +372,7 @@
 		--icon-accent: var(--accent-bright);
 	}
 
-	/* A gilt underline that grows in on the active page */
+	/* A gilt underline that grows in on the active section */
 	.nav-links a.active::after {
 		content: '';
 		position: absolute;
@@ -380,21 +395,6 @@
 			width: 18px;
 			opacity: 1;
 		}
-	}
-
-	.nav-links a.admin-link {
-		color: var(--arcane);
-		--icon-accent: var(--arcane);
-	}
-
-	.nav-links a.admin-link:hover,
-	.nav-links a.admin-link.active {
-		background: var(--arcane-dim);
-		color: var(--arcane);
-	}
-
-	.nav-links a.admin-link.active::after {
-		background: var(--arcane);
 	}
 
 	.nav-tail {
@@ -430,81 +430,43 @@
 		--icon-accent: var(--danger);
 	}
 
-	/*
-	 * Between the mobile breakpoint and a roomy desktop the six titled links
-	 * don't fit at full size, so the bar sheds weight in steps: tighter
-	 * padding, then the wordmark and "Leave" label, then the link titles
-	 * themselves (kept for screen readers via the clip pattern).
-	 */
-	@media (max-width: 1180px) {
-		.nav-content {
-			gap: 0.75rem;
-		}
-
-		.nav-links {
-			gap: 0;
-		}
-
-		.nav-links a {
-			gap: 0.35rem;
-			padding: 0.45rem 0.55rem;
-			font-size: 0.78rem;
-		}
+	/* The open section's pages, a quieter row under the three sections. */
+	.section-tabs {
+		display: flex;
+		justify-content: center;
+		gap: 0.3rem;
+		max-width: var(--page-max-width);
+		margin: 0 auto;
+		padding: 0 clamp(1rem, 4vw, 2rem) 0.55rem;
 	}
 
-	/*
-	 * Nine links (the admin's) never fit the page width at full size, so the
-	 * crowded nav takes the same steps earlier and gets a little more room.
-	 */
-	.desktop-nav.crowded .nav-content {
-		max-width: 1360px;
-		gap: 0.75rem;
+	.section-tabs a,
+	.mobile-tabs a {
+		padding: 0.4rem 0.9rem;
+		border-radius: 999px;
+		color: var(--text-faint);
+		font-family: var(--font-body);
+		font-size: 0.72rem;
+		font-weight: 700;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		text-decoration: none;
+		white-space: nowrap;
+		transition: all var(--transition-fast);
 	}
 
-	.desktop-nav.crowded .nav-links {
-		gap: 0;
+	.section-tabs a:hover {
+		color: var(--accent-bright);
+		background: var(--accent-tint);
 	}
 
-	.desktop-nav.crowded .nav-links a {
-		gap: 0.35rem;
-		padding: 0.45rem 0.55rem;
-		font-size: 0.78rem;
+	.section-tabs a.active,
+	.mobile-tabs a.active {
+		color: var(--accent-bright);
+		background: var(--accent-dim);
 	}
 
-	@media (max-width: 1340px) {
-		.desktop-nav.crowded .sign-out span {
-			display: none;
-		}
-
-		.desktop-nav.crowded .sign-out {
-			width: 38px;
-			padding: 0;
-			justify-content: center;
-		}
-	}
-
-	@media (max-width: 1240px) {
-		.desktop-nav.crowded .wordmark {
-			display: none;
-		}
-	}
-
-	@media (max-width: 1120px) {
-		.desktop-nav.crowded .nav-links a span {
-			position: absolute;
-			width: 1px;
-			height: 1px;
-			overflow: hidden;
-			clip: rect(0, 0, 0, 0);
-			white-space: nowrap;
-		}
-
-		.desktop-nav.crowded .nav-links a {
-			padding: 0.5rem 0.7rem;
-		}
-	}
-
-	@media (max-width: 1040px) {
+	@media (max-width: 900px) {
 		.desktop-nav .wordmark {
 			display: none;
 		}
@@ -517,21 +479,6 @@
 			width: 38px;
 			padding: 0;
 			justify-content: center;
-		}
-	}
-
-	@media (max-width: 890px) {
-		.nav-links a span {
-			position: absolute;
-			width: 1px;
-			height: 1px;
-			overflow: hidden;
-			clip: rect(0, 0, 0, 0);
-			white-space: nowrap;
-		}
-
-		.nav-links a {
-			padding: 0.5rem 0.7rem;
 		}
 	}
 
@@ -560,6 +507,35 @@
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
+	}
+
+	/* A segmented strip; scrolls sideways rather than wrapping if a narrow
+	   phone can't fit every label. */
+	.mobile-tabs {
+		display: flex;
+		gap: 0.25rem;
+		margin: 0.75rem var(--page-padding-x) 0;
+		padding: 0.25rem;
+		background: var(--surface-2);
+		border: 1px solid var(--border-soft);
+		border-radius: 999px;
+		overflow-x: auto;
+		scrollbar-width: none;
+	}
+
+	.mobile-tabs::-webkit-scrollbar {
+		display: none;
+	}
+
+	.mobile-tabs a {
+		flex: 1 0 auto;
+		display: grid;
+		place-items: center;
+		min-height: 36px;
+		padding: 0.3rem 0.7rem;
+		font-size: 0.66rem;
+		letter-spacing: 0.07em;
+		-webkit-tap-highlight-color: transparent;
 	}
 
 	/* ── Drawer ────────────────────────────────────────────── */
@@ -668,6 +644,13 @@
 		--icon-accent: var(--text-faint);
 	}
 
+	/* A section's other pages, tucked under it and lined up with its label. */
+	.mobile-menu-links a.sub-link {
+		padding: 0.6rem 1.25rem 0.6rem calc(1.25rem + 22px + 0.9rem);
+		font-family: var(--font-body);
+		font-size: 0.9rem;
+	}
+
 	.mobile-menu-links a:active {
 		background: var(--surface-2);
 	}
@@ -677,16 +660,6 @@
 		background: linear-gradient(90deg, var(--accent-dim), transparent);
 		border-left-color: var(--accent);
 		--icon-accent: var(--accent-bright);
-	}
-
-	.mobile-menu-links a.admin-link-mobile {
-		color: var(--arcane);
-		--icon-accent: var(--arcane);
-	}
-
-	.mobile-menu-links a.admin-link-mobile.active {
-		background: linear-gradient(90deg, var(--arcane-dim), transparent);
-		border-left-color: var(--arcane);
 	}
 
 	.active-indicator {

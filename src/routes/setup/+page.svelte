@@ -5,13 +5,14 @@
 	import { toast } from '$lib/stores/toast.js';
 	import { supabase } from '$lib/supabase';
 	import { errorMessage } from '$lib/errors.js';
+	import { landingFor } from '$lib/nav.js';
 	import Icon from '$lib/icons/Icon.svelte';
 	import MoonPhase from '$lib/components/MoonPhase.svelte';
 	import ThemeToggle from '$lib/components/ThemeToggle.svelte';
 
 	/*
 	 * A new account doesn't choose its own role: an admin lets people in
-	 * (Admin → Waiting to be let in), and the database refuses a role set any
+	 * (Settings → Accounts → Waiting to be let in), and the database refuses a role set any
 	 * other way (supabase/household_access.sql). Until then this is where a
 	 * new account waits: leave a name so the admin knows who is knocking.
 	 */
@@ -42,7 +43,7 @@
 			.maybeSingle();
 
 		if (profile?.role) {
-			goto(resolve('/dashboard'));
+			goto(resolve(landingFor(profile.role)));
 			return;
 		}
 
@@ -79,7 +80,7 @@
 				.eq('id', user.id)
 				.maybeSingle();
 			if (profile?.role) {
-				goto(resolve('/dashboard'));
+				goto(resolve(landingFor(profile.role)));
 			} else {
 				toast.info('Not yet — ask an admin to let you in.');
 			}
@@ -132,7 +133,7 @@
 		{:else}
 			<p class="waiting-note">
 				Thanks, <strong>{fullName}</strong>. Ask whoever runs Family Hub for your household to let
-				you in from the Admin page, then check again.
+				you in from Settings → Accounts, then check again.
 			</p>
 
 			<div class="after-actions">

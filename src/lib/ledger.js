@@ -86,7 +86,7 @@ export function weekPayStatus(week) {
 /**
  * Everything the Purse shows as owed, summed across nannies: unpaid weeks at
  * their total, short-paid weeks by the difference. Same rules as the
- * Tracker's ledger, so Today and the Tracker never disagree about money.
+ * Purse on Hours & Pay, so Home and the Purse never disagree about money.
  *
  * @param {{ nanny_id: string, clock_in: string, hours: string | number | null }[]} entries completed entries on or after `since`, any nanny
  * @param {any[]} payments payment rows, any nanny

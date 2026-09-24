@@ -13,7 +13,7 @@
 --     nanny. An account without one sees nothing and can change nothing.
 --   • Only an admin can give out or change a role. A parent can still create
 --     a new nanny's profile ("Add a nanny"). Anyone else who signs up waits on
---     the setup screen until an admin lets them in from the Admin page.
+--     the setup screen until an admin lets them in from Settings → Accounts.
 --   • Household-only journal entries are hidden from the nanny even when she
 --     wrote them, and so are the hearts on them.
 --   • Everything else keeps the permissions the app already relies on: the
@@ -123,7 +123,7 @@ begin
 
   raise exception 'Only an admin can give out or change a role'
     using errcode = '42501',
-          hint = 'An admin can let people in from the Admin page.';
+          hint = 'An admin can let people in from Settings → Accounts.';
 end;
 $$;
 

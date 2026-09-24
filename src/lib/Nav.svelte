@@ -167,7 +167,7 @@
 
 {#if !isMobile}
 	<!-- ── Desktop ─────────────────────────────────────────── -->
-	<nav class="desktop-nav" aria-label="Main navigation">
+	<nav class="desktop-nav" class:crowded={visibleLinks.length > 8} aria-label="Main navigation">
 		<div class="nav-content">
 			<a href="/dashboard" class="logo" aria-label="Family Hub — go to the hearth">
 				<MoonPhase size={20} />
@@ -452,7 +452,59 @@
 		}
 	}
 
-	@media (max-width: 1010px) {
+	/*
+	 * Nine links (the admin's) never fit the page width at full size, so the
+	 * crowded nav takes the same steps earlier and gets a little more room.
+	 */
+	.desktop-nav.crowded .nav-content {
+		max-width: 1360px;
+		gap: 0.75rem;
+	}
+
+	.desktop-nav.crowded .nav-links {
+		gap: 0;
+	}
+
+	.desktop-nav.crowded .nav-links a {
+		gap: 0.35rem;
+		padding: 0.45rem 0.55rem;
+		font-size: 0.78rem;
+	}
+
+	@media (max-width: 1340px) {
+		.desktop-nav.crowded .sign-out span {
+			display: none;
+		}
+
+		.desktop-nav.crowded .sign-out {
+			width: 38px;
+			padding: 0;
+			justify-content: center;
+		}
+	}
+
+	@media (max-width: 1240px) {
+		.desktop-nav.crowded .wordmark {
+			display: none;
+		}
+	}
+
+	@media (max-width: 1120px) {
+		.desktop-nav.crowded .nav-links a span {
+			position: absolute;
+			width: 1px;
+			height: 1px;
+			overflow: hidden;
+			clip: rect(0, 0, 0, 0);
+			white-space: nowrap;
+		}
+
+		.desktop-nav.crowded .nav-links a {
+			padding: 0.5rem 0.7rem;
+		}
+	}
+
+	@media (max-width: 1040px) {
 		.desktop-nav .wordmark {
 			display: none;
 		}

@@ -185,17 +185,17 @@
 				<p class="lede">The Keys — everything the household can change.</p>
 			</div>
 			<button class="btn btn-primary" on:click={() => (showAddNanny = true)}>
-				<Icon name="plus" size={16} /> Add a keeper
+				<Icon name="plus" size={16} /> Add a nanny
 			</button>
 		</header>
 
 		<div class="card arcana">
-			<h2>Keepers ({nannies.length})</h2>
+			<h2>Nannies ({nannies.length})</h2>
 
 			{#if nannies.length === 0}
 				<EmptyState
 					icon="cauldron"
-					title="No keepers yet"
+					title="No nannies yet"
 					hint="Add someone and their hours, rate and payments all become manageable from here."
 				>
 					<button class="btn btn-primary" on:click={() => (showAddNanny = true)}>
@@ -239,7 +239,7 @@
 	{#if showAddNanny}
 		<div class="modal-overlay" on:click={cancelNannyForm} role="presentation">
 			<div class="modal-content" on:click|stopPropagation role="dialog" aria-modal="true">
-				<h2>{selectedNanny ? 'Edit keeper' : 'Add a keeper'}</h2>
+				<h2>{selectedNanny ? 'Edit nanny' : 'Add a nanny'}</h2>
 
 				<form on:submit|preventDefault={saveNanny}>
 					<div class="form-group">

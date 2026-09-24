@@ -4,7 +4,6 @@
 	import { goto } from '$app/navigation';
 	import { toast } from '$lib/stores/toast.js';
 	import { confirm as confirmModal } from '$lib/stores/toast.js';
-	import Nav from '$lib/Nav.svelte';
 	import { errorMessage } from '$lib/errors.js';
 	import { MEMBER_KINDS, memberPortrait, ageLabel } from '$lib/family.js';
 	import Icon from '$lib/icons/Icon.svelte';
@@ -244,8 +243,6 @@
 </script>
 
 <svelte:window on:keydown={handleModalKeydown} />
-
-<Nav currentPage="family" />
 
 <div class="container">
 	{#if initializing}

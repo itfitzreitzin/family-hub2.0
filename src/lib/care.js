@@ -76,6 +76,20 @@ export function dayStartMs(nowMs) {
 }
 
 /**
+ * Where the Care Day's timeline starts: local midnight, or the running
+ * shift's clock-in when that came first — an overnight shift keeps its
+ * evening on the page after midnight.
+ * @param {number} nowMs
+ * @param {{ clock_in?: string } | null | undefined} shift
+ * @returns {number} ms epoch
+ */
+export function dayWindowStartMs(nowMs, shift) {
+	const midnight = dayStartMs(nowMs);
+	const clockIn = shift?.clock_in ? new Date(shift.clock_in).getTime() : NaN;
+	return Number.isFinite(clockIn) && clockIn < midnight ? clockIn : midnight;
+}
+
+/**
  * The most recent dose since `sinceMs` given to any of `kidIds` — the
  * double-dose guard. A dose logged without kids counts for everyone.
  * @param {any[]} moments care_moments rows (any kinds; duplicates are fine)

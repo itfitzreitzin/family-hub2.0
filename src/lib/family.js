@@ -3,7 +3,7 @@
 // Rows come from public.family_members (see supabase/family_members.sql):
 // the whole household — parents, kids, pets — where members are people (and
 // animals), not accounts. The Care Day cockpit and the Chronicle both anchor
-// to these rows, so the helpers live here rather than in the Family page.
+// to these rows, so the helpers live here rather than in the Household page.
 
 import { ART, avatarFor } from '$lib/art.js';
 import { parseLocalDate } from '$lib/time.js';

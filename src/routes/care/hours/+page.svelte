@@ -2,16 +2,15 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { supabase } from '$lib/supabase';
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { toast } from '$lib/stores/toast.js';
 	import { confirm as confirmModal } from '$lib/stores/toast.js';
-	import Nav from '$lib/Nav.svelte';
 	import {
 		localDateString,
 		localTimeString,
 		combineLocalDateTime,
 		getWeekBounds,
 		weekOffsetFor,
-		formatDuration,
 		hoursBetween,
 		formatTime,
 		formatDate,
@@ -30,11 +29,14 @@
 		buildVenmoLink
 	} from '$lib/venmo.js';
 	import { buildTimesheetCsv, timesheetFilename, downloadCsv } from '$lib/csv.js';
-	import { draftWrapUp } from '$lib/care.js';
 	import Icon from '$lib/icons/Icon.svelte';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
-	import CareCockpit from '$lib/components/CareCockpit.svelte';
+
+	/*
+	 * Care → Hours & Pay: the week's hours, the Purse, and the long ledger
+	 * the old History page kept. Clocking in and out lives on Care → Today.
+	 */
 
 	/** @type {any} */
 	let user = null;
@@ -44,24 +46,17 @@
 	let nannies = [];
 	/** @type {string | null} */
 	let selectedNannyId = null;
-	/** @type {any} */
-	let currentEntry = null;
-	let timerDisplay = '00:00:00';
-	/** @type {ReturnType<typeof setInterval> | null} */
-	let timerInterval = null;
 	let initializing = true;
 	/** @type {string | null} */
 	let initError = null;
-	let clockingIn = false;
-	let clockingOut = false;
 	let weekLoading = false;
 	let generatingPayment = false;
 	/** @type {string | number | null} */
 	let paymentBusyId = null;
-	let entryLoadToken = 0;
 	let weekLoadToken = 0;
 	let paymentsLoadToken = 0;
 	let ledgerLoadToken = 0;
+	let allTimeLoadToken = 0;
 	/** @type {ReturnType<typeof supabase.channel> | null} */
 	let realtimeChannel = null;
 	/** @type {ReturnType<typeof setTimeout> | null} */
@@ -75,18 +70,11 @@
 	/** @type {any[]} */
 	let ledgerEntries = [];
 	let ledgerSince = localDateString(getWeekBounds(-(LEDGER_WEEKS - 1)).start);
+	// Every completed entry, for the all-time totals and export.
+	/** @type {any[]} */
+	let allEntries = [];
 	/** @type {HTMLElement | null} */
 	let weekCard = null;
-	let showClockInConfirm = false;
-	let clockInTime = '09:00';
-	let showClockOutConfirm = false;
-	let clockOutTime = '17:00';
-	// The wrap-up: pre-drafted from the shift's moments, garnished by hand,
-	// written into the Chronicle at clock-out.
-	let wrapDraft = '';
-	let wrapLine = '';
-	/** @type {string[]} */
-	let wrapKidIds = [];
 	let showManualEntry = false;
 	/** @type {any} */
 	let editingEntry = null;
@@ -109,16 +97,15 @@
 	let mobileView = 'summary'; // 'summary' or 'details'
 
 	onMount(() => {
-		initTracker();
+		initHours();
 	});
 
 	onDestroy(() => {
-		if (timerInterval) clearInterval(timerInterval);
 		if (resyncTimer) clearTimeout(resyncTimer);
 		if (realtimeChannel) supabase.removeChannel(realtimeChannel);
 	});
 
-	async function initTracker() {
+	async function initHours() {
 		initializing = true;
 		initError = null;
 
@@ -128,7 +115,7 @@
 			} = await supabase.auth.getUser();
 
 			if (!currentUser) {
-				goto('/');
+				goto(resolve('/'));
 				return;
 			}
 
@@ -155,9 +142,9 @@
 				nannies = nanniesData || [];
 
 				if (nannies.length > 0) {
-					// Open on whoever is on the clock. Alphabetical-first put a
-					// resting nanny's 00:00:00 and a Clock in button in front of a
-					// parent while someone else's shift was running.
+					// A link from Accounts names the nanny (?nanny=<id>). Otherwise
+					// open on whoever is on the clock, then the first by name.
+					const asked = new URLSearchParams(window.location.search).get('nanny');
 					const { data: openShift } = await supabase
 						.from('time_entries')
 						.select('nanny_id')
@@ -166,13 +153,14 @@
 						.limit(1)
 						.maybeSingle();
 					const onClock = openShift?.nanny_id;
-					selectedNannyId = nannies.some((n) => n.id === onClock) ? onClock : nannies[0].id;
+					selectedNannyId =
+						[asked, onClock].find((id) => id && nannies.some((n) => n.id === id)) || nannies[0].id;
 				}
 			} else if (profile?.role === 'nanny') {
 				selectedNannyId = user.id;
 			}
 
-			await Promise.all([checkCurrentEntry(), loadWeekData(), loadPayments(), loadLedger()]);
+			await Promise.all([loadWeekData(), loadPayments(), loadLedger(), loadAllTime()]);
 
 			if (!realtimeChannel) {
 				subscribeRealtime();
@@ -186,11 +174,10 @@
 	}
 
 	function subscribeRealtime() {
-		// Unfiltered on purpose: a clock-out UPDATE leaves the clock_out=is.null
-		// set (filtered subscriptions never see it), and DELETE events can't be
-		// filtered by non-key columns at all. Relevance is checked client-side.
+		// Unfiltered on purpose: DELETE events can't be filtered by non-key
+		// columns at all. Relevance is checked client-side.
 		realtimeChannel = supabase
-			.channel('tracker-live')
+			.channel('hours-live')
 			.on(
 				'postgres_changes',
 				{ event: '*', schema: 'public', table: 'time_entries' },
@@ -207,25 +194,6 @@
 	/** @param {any} payload */
 	function handleTimeEntryEvent(payload) {
 		const row = payload.new || {};
-
-		// Fast paths keep the timer honest before the refetch lands
-		if (
-			payload.eventType === 'UPDATE' &&
-			currentEntry &&
-			row.id === currentEntry.id &&
-			row.clock_out
-		) {
-			currentEntry = null;
-			stopTimer();
-			toast.info('Shift was clocked out on another device');
-		} else if (
-			payload.eventType === 'INSERT' &&
-			row.nanny_id === selectedNannyId &&
-			!row.clock_out
-		) {
-			currentEntry = row;
-			startTimer();
-		}
 
 		// DELETE payloads only carry the primary key, so treat them as relevant
 		if (payload.eventType === 'DELETE' || row.nanny_id === selectedNannyId) {
@@ -253,16 +221,15 @@
 
 	async function resyncAll() {
 		try {
-			await Promise.all([checkCurrentEntry(), loadWeekData(true), loadPayments(), loadLedger()]);
+			await Promise.all([loadWeekData(true), loadPayments(), loadLedger(), loadAllTime()]);
 		} catch (err) {
 			// Background sync: keep showing the last good data
-			console.warn('Tracker resync failed:', errorMessage(err));
+			console.warn('Hours resync failed:', errorMessage(err));
 		}
 	}
 
 	function handleVisibility() {
 		if (document.visibilityState !== 'visible' || initializing) return;
-		updateTimerDisplay();
 		scheduleResync();
 	}
 
@@ -272,18 +239,13 @@
 		entries = [];
 		payments = [];
 		ledgerEntries = [];
-		currentEntry = null;
-		stopTimer();
+		allEntries = [];
 		try {
-			await Promise.all([checkCurrentEntry(), loadWeekData(), loadPayments(), loadLedger()]);
+			await Promise.all([loadWeekData(), loadPayments(), loadLedger(), loadAllTime()]);
 		} catch (err) {
 			toast.error('Error loading data: ' + errorMessage(err));
 		}
 	}
-
-	// A shift ended elsewhere (another device, a resync, a nanny switch) takes
-	// its clock-out prompt with it, so it can't resurface over the next shift.
-	$: if (!currentEntry && showClockOutConfirm) showClockOutConfirm = false;
 
 	$: filteredEntries = entries.filter((e) => e.clock_out);
 	$: weekTotal = filteredEntries.reduce((sum, e) => sum + (parseFloat(e.hours) || 0), 0);
@@ -299,35 +261,11 @@
 		selectedNanny?.hourly_rate || 20,
 		ledgerSince
 	);
-
-	async function checkCurrentEntry() {
-		if (!selectedNannyId) return;
-
-		// Tokens drop responses that arrive after a newer request or a nanny
-		// switch, so rapid interactions can't apply stale data.
-		const token = ++entryLoadToken;
-		const nannyId = selectedNannyId;
-
-		const { data, error } = await supabase
-			.from('time_entries')
-			.select('*')
-			.eq('nanny_id', nannyId)
-			.is('clock_out', null)
-			.order('clock_in', { ascending: false })
-			.limit(1)
-			.maybeSingle();
-
-		if (error) throw error;
-		if (token !== entryLoadToken || nannyId !== selectedNannyId) return;
-
-		if (data) {
-			currentEntry = data;
-			startTimer();
-		} else {
-			currentEntry = null;
-			stopTimer();
-		}
-	}
+	// The long view the History page used to hold: every completed shift,
+	// priced at the nanny's rate.
+	$: allTimeHours = allEntries.reduce((sum, e) => sum + (parseFloat(e.hours) || 0), 0);
+	$: allTimePay = allTimeHours * (selectedNanny?.hourly_rate || 20);
+	$: firstShift = allEntries.length > 0 ? allEntries[allEntries.length - 1].clock_in : null;
 
 	async function loadWeekData(quiet = false) {
 		if (!selectedNannyId) return;
@@ -405,9 +343,30 @@
 		ledgerEntries = data || [];
 	}
 
+	async function loadAllTime() {
+		if (!selectedNannyId) return;
+
+		const token = ++allTimeLoadToken;
+		const nannyId = selectedNannyId;
+
+		const { data, error } = await supabase
+			.from('time_entries')
+			.select('*')
+			.eq('nanny_id', nannyId)
+			.not('clock_out', 'is', null)
+			.order('clock_in', { ascending: false });
+
+		if (error) throw error;
+		if (token !== allTimeLoadToken || nannyId !== selectedNannyId) return;
+
+		allEntries = data || [];
+	}
+
 	// Entry edits change a week's total: refresh the ledger in the background.
 	function refreshLedger() {
-		loadLedger().catch((err) => console.warn('Ledger refresh failed:', errorMessage(err)));
+		Promise.all([loadLedger(), loadAllTime()]).catch((err) =>
+			console.warn('Ledger refresh failed:', errorMessage(err))
+		);
 	}
 
 	// Clicking a week in the ledger opens it in The Week card above.
@@ -423,100 +382,12 @@
 		weekCard?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 	}
 
+	/** @param {number} direction */
 	function changeWeek(direction) {
 		currentWeekOffset += direction;
 		loadWeekData().catch((err) => {
 			toast.error('Error loading week: ' + errorMessage(err));
 		});
-	}
-
-	function updateTimerDisplay() {
-		if (!currentEntry) return;
-		timerDisplay = formatDuration(Date.now() - new Date(currentEntry.clock_in).getTime());
-	}
-
-	function startTimer() {
-		if (timerInterval) clearInterval(timerInterval);
-		updateTimerDisplay();
-		timerInterval = setInterval(updateTimerDisplay, 1000);
-	}
-
-	function stopTimer() {
-		if (timerInterval) {
-			clearInterval(timerInterval);
-			timerInterval = null;
-		}
-		timerDisplay = '00:00:00';
-	}
-
-	async function clockIn() {
-		if (!selectedNannyId) {
-			toast.error('Please select a nanny');
-			return;
-		}
-
-		if (profile?.role !== 'nanny' && selectedNannyId === user.id) {
-			toast.error('You cannot clock yourself in. Please select a nanny.');
-			return;
-		}
-
-		showClockInConfirm = true;
-		clockInTime = localTimeString();
-	}
-
-	async function confirmClockIn() {
-		if (clockingIn) return;
-		clockingIn = true;
-
-		try {
-			const { data: activeEntry } = await supabase
-				.from('time_entries')
-				.select('*, profiles!time_entries_nanny_id_fkey(full_name)')
-				.is('clock_out', null)
-				.limit(1)
-				.maybeSingle();
-
-			if (activeEntry) {
-				toast.error(
-					`${activeEntry.profiles?.full_name || 'Another nanny'} is already clocked in. Only one nanny can be on the clock at a time.`
-				);
-				showClockInConfirm = false;
-				return;
-			}
-
-			const clockInDateTime = combineLocalDateTime(localDateString(), clockInTime);
-
-			if (clockInDateTime.getTime() > Date.now() + 60 * 1000) {
-				toast.error("Clock-in time can't be in the future");
-				return;
-			}
-
-			const { data, error } = await supabase
-				.from('time_entries')
-				.insert({
-					nanny_id: selectedNannyId,
-					clock_in: clockInDateTime.toISOString()
-				})
-				.select()
-				.single();
-
-			if (error) throw error;
-
-			currentEntry = data;
-			startTimer();
-			showClockInConfirm = false;
-		} catch (err) {
-			if (/** @type {any} */ (err).code === '23505') {
-				// Unique index one_open_shift_per_nanny: an open shift already exists
-				toast.error('This nanny is already clocked in.');
-				showClockInConfirm = false;
-				await checkCurrentEntry().catch(() => {});
-			} else {
-				toast.error('Error clocking in: ' + errorMessage(err));
-			}
-		} finally {
-			clockingIn = false;
-		}
 	}
 
 	// Replace an entry in the week table (or remove it) without a refetch.
@@ -543,164 +414,9 @@
 		);
 	}
 
-	// Compose the wrap-up draft from whatever the cockpit logged this shift.
-	// Best-effort: a failed fetch just means an empty draft.
-	async function prepareWrapUp() {
-		wrapDraft = '';
-		wrapLine = '';
-		wrapKidIds = [];
-		if (!currentEntry) return;
-
-		try {
-			const [momentsRes, kidsRes] = await Promise.all([
-				supabase.from('care_moments').select('*').eq('shift_id', currentEntry.id),
-				supabase.from('family_members').select('*').eq('kind', 'child')
-			]);
-
-			if (momentsRes.error || kidsRes.error) return;
-
-			const moments = momentsRes.data || [];
-			const kids = kidsRes.data || [];
-			const kidsById = new Map(kids.map((k) => [k.id, k]));
-
-			wrapDraft = draftWrapUp(moments, kidsById, kids.length);
-			wrapKidIds = [...new Set(moments.flatMap((/** @type {any} */ m) => m.kid_ids || []))];
-		} catch {
-			// The clock-out itself never waits on the chronicle
-		}
-	}
-
-	// The day becomes a Chronicle entry: the tapped draft plus whatever was
-	// added by hand, auto-linked to the shift. Empty days write nothing —
-	// no guilt for quiet days.
-	/** @param {any} closedRow */
-	async function writeWrapUp(closedRow) {
-		const line = wrapLine.trim();
-		const body = [wrapDraft, line].filter(Boolean).join('\n\n');
-		if (!body) return;
-
-		try {
-			const { error } = await supabase.from('chronicle_entries').insert({
-				author_id: user.id,
-				shift_id: closedRow.id,
-				entry_date: localDateString(new Date(closedRow.clock_in)),
-				body,
-				tags: ['wrapup'],
-				kid_ids: wrapKidIds
-			});
-
-			if (error) throw error;
-			toast.success('The day is written into the Chronicle');
-		} catch (err) {
-			toast.error('Clocked out, but the wrap-up failed to save: ' + errorMessage(err));
-		}
-	}
-
-	/** @param {Date} endTime */
-	async function performClockOut(endTime) {
-		if (clockingOut) return null;
-		clockingOut = true;
-
-		try {
-			// Fetch ALL open shifts for this nanny. Duplicates can exist (e.g. from
-			// a double-tapped clock-in), and a single-row query errors on them.
-			const { data: openEntries, error: fetchError } = await supabase
-				.from('time_entries')
-				.select('*')
-				.eq('nanny_id', selectedNannyId)
-				.is('clock_out', null)
-				.order('clock_in', { ascending: false });
-
-			if (fetchError) throw fetchError;
-
-			if (!openEntries || openEntries.length === 0) {
-				toast.error('No active shift found for this nanny');
-				return null;
-			}
-
-			// The newest open entry is the shift the timer displays; any older open
-			// entries are stray duplicates. Close the strays first with 0 hours so
-			// they can't inflate the week total or block future clock-ins — if that
-			// fails, the real shift is still open and clock-out can be retried.
-			const [activeEntry, ...staleEntries] = openEntries;
-
-			for (const stale of staleEntries) {
-				const { error: staleError } = await supabase
-					.from('time_entries')
-					.update({
-						clock_out: stale.clock_in,
-						hours: '0.00'
-					})
-					.eq('id', stale.id);
-
-				if (staleError) throw staleError;
-			}
-
-			const hours = hoursBetween(new Date(activeEntry.clock_in), endTime);
-
-			const { data: closedRow, error: updateError } = await supabase
-				.from('time_entries')
-				.update({
-					clock_out: endTime.toISOString(),
-					hours: hours.toFixed(2)
-				})
-				.eq('id', activeEntry.id)
-				.select()
-				.single();
-
-			if (updateError) throw updateError;
-
-			toast.success(`Clocked out! Worked ${hours.toFixed(2)} hours`);
-
-			currentEntry = null;
-			stopTimer();
-			mergeEntry(closedRow);
-			return closedRow;
-		} catch (err) {
-			toast.error('Error clocking out: ' + errorMessage(err));
-			return null;
-		} finally {
-			clockingOut = false;
-		}
-	}
-
-	function clockOut() {
-		if (!currentEntry) return;
-		clockOutTime = localTimeString();
-		showClockOutConfirm = true;
-		// Draft fills in as it arrives; the modal never waits on it.
-		prepareWrapUp();
-	}
-
-	async function confirmClockOut() {
-		if (!currentEntry) return;
-
-		const end = combineLocalDateTime(localDateString(), clockOutTime);
-		const start = new Date(currentEntry.clock_in);
-
-		if (end.getTime() <= start.getTime()) {
-			toast.error(`End time must be after clock-in (${formatTime(currentEntry.clock_in)})`);
-			return;
-		}
-
-		if (end.getTime() > Date.now() + 60 * 1000) {
-			toast.error("Clock-out time can't be in the future");
-			return;
-		}
-
-		const closedRow = await performClockOut(end);
-		if (closedRow) {
-			showClockOutConfirm = false;
-			await writeWrapUp(closedRow);
-		}
-	}
-
 	/** @param {KeyboardEvent} event */
 	function handleModalKeydown(event) {
-		if (event.key !== 'Escape') return;
-		if (showClockOutConfirm) showClockOutConfirm = false;
-		else if (showClockInConfirm) showClockInConfirm = false;
-		else if (showManualEntry) showManualEntry = false;
+		if (event.key === 'Escape' && showManualEntry) showManualEntry = false;
 	}
 
 	async function generateVenmoPayment() {
@@ -716,7 +432,7 @@
 
 		if (!recipient) {
 			toast.error(
-				`${nanny?.full_name || 'This nanny'} has no Venmo username set. Add it in Settings.`
+				`${nanny?.full_name || 'This nanny'} has no Venmo username set. Add it in Settings → Accounts.`
 			);
 			return;
 		}
@@ -999,9 +715,14 @@
 		);
 	}
 
-	function getSelectedNannyName() {
-		if (profile?.role === 'nanny') return 'You';
-		return nannies.find((n) => n.id === selectedNannyId)?.full_name || 'Select a nanny';
+	// Every completed shift, the export the History page used to offer.
+	function exportAllCSV() {
+		const rate = selectedNanny?.hourly_rate || 20;
+
+		downloadCsv(
+			timesheetFilename({ nannyName: selectedNanny?.full_name }),
+			buildTimesheetCsv(allEntries, () => rate)
+		);
 	}
 
 	/** @param {string | number} paymentId */
@@ -1045,7 +766,7 @@
 
 		if (!requester) {
 			toast.error('Please add your Venmo username in Settings first');
-			goto('/settings');
+			goto(resolve('/settings'));
 			return;
 		}
 
@@ -1233,20 +954,35 @@
 <svelte:document on:visibilitychange={handleVisibility} />
 <svelte:window on:focus={handleVisibility} on:keydown={handleModalKeydown} />
 
-<Nav currentPage="tracker" />
-
 <div class="container">
 	{#if initializing}
 		<Skeleton variant="card" count={2} />
 	{:else if initError}
 		<div class="card arcana">
 			<EmptyState icon="warning" title="The hourglass is stuck" hint={initError}>
-				<button class="btn btn-primary" on:click={initTracker}>
+				<button class="btn btn-primary" on:click={initHours}>
 					<Icon name="star" size={16} /> Try again
 				</button>
 			</EmptyState>
 		</div>
 	{:else}
+		<div class="page-head">
+			<div>
+				<h1>Hours &amp; Pay</h1>
+				<p class="lede">Every hour kept, every week settled.</p>
+			</div>
+			<div class="head-actions">
+				{#if profile?.role === 'family' || profile?.role === 'admin'}
+					<button class="btn btn-secondary btn-small" on:click={openManualEntry}>
+						<Icon name="quill" size={16} /> Manual entry
+					</button>
+				{/if}
+				<button class="btn btn-secondary btn-small" on:click={exportCSV}>
+					<Icon name="download" size={16} /> Export week
+				</button>
+			</div>
+		</div>
+
 		<!-- ── Who are we counting for? ─────────────────────── -->
 		{#if (profile?.role === 'family' || profile?.role === 'admin') && nannies.length > 0}
 			<div class="nanny-selector">
@@ -1257,70 +993,6 @@
 					{/each}
 				</select>
 			</div>
-		{/if}
-
-		<!-- ── The hourglass ────────────────────────────────── -->
-		<div class="card arcana">
-			{#if currentEntry}
-				<!-- On the clock the timer shrinks to a strip, and the care
-				     cockpit below owns the screen. -->
-				<div class="timer-strip">
-					<span class="strip-glyph" aria-hidden="true"><Icon name="hourglass" size={22} /></span>
-					<span class="badge badge-live"><span class="live-dot"></span> On the clock</span>
-					<span class="strip-timer">{timerDisplay}</span>
-					<span class="strip-since">since {formatTime(currentEntry.clock_in)}</span>
-					<button
-						class="btn btn-danger btn-small strip-out"
-						on:click={clockOut}
-						disabled={clockingOut}
-					>
-						<Icon name="close" size={14} />
-						{clockingOut ? 'Clocking out…' : 'Clock out'}
-					</button>
-				</div>
-			{:else}
-				<div class="timer-card">
-					<div class="timer-glyph" aria-hidden="true">
-						<Icon name="candle" size={48} />
-					</div>
-
-					<span class="badge">Not clocked in</span>
-
-					<p class="timer">{timerDisplay}</p>
-
-					<p class="timer-info">The hours are yours to begin</p>
-
-					<div class="button-container">
-						<button
-							class="btn btn-success btn-large"
-							on:click={clockIn}
-							disabled={clockingIn || !selectedNannyId}
-						>
-							<Icon name="sprout" size={16} />
-							{clockingIn ? 'Clocking in…' : 'Clock in'}
-						</button>
-					</div>
-				</div>
-			{/if}
-
-			<div class="quick-actions">
-				<button class="btn btn-secondary btn-small" on:click={() => goto('/dashboard')}>
-					<Icon name="cottage" size={16} /> Hearth
-				</button>
-				{#if profile?.role === 'family' || profile?.role === 'admin'}
-					<button class="btn btn-secondary btn-small" on:click={openManualEntry}>
-						<Icon name="quill" size={16} /> Manual entry
-					</button>
-				{/if}
-				<button class="btn btn-secondary btn-small" on:click={exportCSV}>
-					<Icon name="download" size={16} /> Export
-				</button>
-			</div>
-		</div>
-
-		<!-- ── The care day (only while a shift is running) ── -->
-		{#if currentEntry}
-			<CareCockpit shift={currentEntry} {user} {profile} />
 		{/if}
 
 		<!-- ── The week ─────────────────────────────────────── -->
@@ -1748,93 +1420,28 @@
 				</div>
 			{/if}
 		</div>
+
+		<!-- ── The long ledger: every hour kept ─────────────── -->
+		{#if allEntries.length > 0}
+			<div class="all-time">
+				<div class="all-time-figures">
+					<span class="total-label">All time</span>
+					<span class="all-time-value">
+						{allTimeHours.toFixed(1)} hours · {formatMoney(allTimePay)}
+					</span>
+					<span class="total-hours">
+						{allEntries.length}
+						{allEntries.length === 1 ? 'shift' : 'shifts'}
+						{#if firstShift}since {formatDate(firstShift)}{/if}
+					</span>
+				</div>
+				<button class="btn btn-secondary btn-small" on:click={exportAllCSV}>
+					<Icon name="download" size={16} /> Export all
+				</button>
+			</div>
+		{/if}
 	{/if}
 </div>
-
-<!-- ── Clock in ───────────────────────────────────────── -->
-{#if showClockInConfirm}
-	<div class="modal-overlay" on:click={() => (showClockInConfirm = false)} role="presentation">
-		<div class="modal-content" on:click|stopPropagation role="dialog" aria-modal="true">
-			<h2>Begin the shift</h2>
-			<p class="modal-lede">Clocking in <strong>{getSelectedNannyName()}</strong></p>
-
-			<div class="form-group">
-				<label for="cit">Clock in time</label>
-				<input id="cit" type="time" bind:value={clockInTime} />
-				<small>Adjust if they started earlier or later.</small>
-			</div>
-
-			<div class="button-row">
-				<button class="btn btn-success" on:click={confirmClockIn} disabled={clockingIn}>
-					<Icon name="sprout" size={16} />
-					{clockingIn ? 'Clocking in…' : 'Confirm'}
-				</button>
-				<button
-					class="btn btn-secondary"
-					on:click={() => (showClockInConfirm = false)}
-					disabled={clockingIn}
-				>
-					Cancel
-				</button>
-			</div>
-		</div>
-	</div>
-{/if}
-
-<!-- ── Clock out ──────────────────────────────────────── -->
-{#if showClockOutConfirm && currentEntry}
-	<div class="modal-overlay" on:click={() => (showClockOutConfirm = false)} role="presentation">
-		<div class="modal-content" on:click|stopPropagation role="dialog" aria-modal="true">
-			<h2>End the shift</h2>
-			<p class="modal-lede">Clocking out <strong>{getSelectedNannyName()}</strong></p>
-			<p class="modal-note">
-				Started at {formatTime(currentEntry.clock_in)} · {timerDisplay} elapsed
-			</p>
-
-			<div class="form-group">
-				<label for="cot">Clock out time</label>
-				<input id="cot" type="time" bind:value={clockOutTime} />
-				<small>Adjust if they actually finished earlier.</small>
-			</div>
-
-			{#if wrapDraft}
-				<div class="wrap-draft">
-					<span class="wrap-label"><Icon name="grimoire" size={13} /> The day, as tapped</span>
-					<p class="wrap-text">{wrapDraft}</p>
-				</div>
-			{/if}
-
-			<div class="form-group">
-				<label for="cow">In your own words</label>
-				<textarea
-					id="cow"
-					rows="3"
-					bind:value={wrapLine}
-					placeholder="A line or two to top off the day — optional, dictation welcome."
-				></textarea>
-				<small>
-					{wrapDraft
-						? 'The tapped day plus your words become the Chronicle entry.'
-						: 'Anything written here becomes the day’s Chronicle entry.'}
-				</small>
-			</div>
-
-			<div class="button-row">
-				<button class="btn btn-primary" on:click={confirmClockOut} disabled={clockingOut}>
-					<Icon name="check" size={16} />
-					{clockingOut ? 'Clocking out…' : 'Confirm'}
-				</button>
-				<button
-					class="btn btn-secondary"
-					on:click={() => (showClockOutConfirm = false)}
-					disabled={clockingOut}
-				>
-					Cancel
-				</button>
-			</div>
-		</div>
-	</div>
-{/if}
 
 <!-- ── Manual entry ───────────────────────────────────── -->
 {#if showManualEntry}
@@ -1882,6 +1489,23 @@
 {/if}
 
 <style>
+	/* ── Head ─────────────────────────────────────────────── */
+	.page-head h1 {
+		color: var(--accent-bright);
+	}
+
+	.lede {
+		color: var(--text-faint);
+		font-size: 0.95rem;
+		margin-top: 0.2rem;
+	}
+
+	.head-actions {
+		display: flex;
+		gap: 0.5rem;
+		flex-wrap: wrap;
+	}
+
 	/* ── Who ──────────────────────────────────────────────── */
 	.nanny-selector {
 		display: flex;
@@ -1903,90 +1527,6 @@
 	.nanny-selector select {
 		flex: 1;
 		min-width: 180px;
-	}
-
-	/* ── The hourglass ────────────────────────────────────── */
-	.timer-card {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 0.6rem;
-		padding: clamp(1.5rem, 6vw, 2.5rem) 1.25rem;
-		text-align: center;
-		background: var(--surface-2);
-		border: 1px solid var(--border-soft);
-		border-radius: var(--card-radius);
-		transition: all var(--transition-slow);
-	}
-
-	.timer-glyph {
-		color: var(--text-faint);
-		--icon-accent: var(--accent);
-	}
-
-	/* On shift the timer is a strip and the cockpit card takes the room it
-	   frees. */
-	.timer-strip {
-		display: flex;
-		align-items: center;
-		flex-wrap: wrap;
-		gap: 0.7rem;
-		padding: 0.85rem 1rem;
-		background: var(--surface-2);
-		background-image: linear-gradient(90deg, var(--growing-dim), transparent 62%);
-		border: 1px solid rgba(111, 191, 115, 0.4);
-		border-radius: var(--card-radius);
-	}
-
-	.strip-glyph {
-		display: grid;
-		place-items: center;
-		color: var(--growing);
-		--icon-accent: var(--growing);
-		animation: flicker 4s ease-in-out infinite;
-	}
-
-	.strip-timer {
-		font-family: var(--font-body);
-		font-variant-numeric: lining-nums tabular-nums;
-		font-size: 1.6rem;
-		font-weight: 700;
-		line-height: 1;
-		color: var(--growing);
-		text-shadow: 0 0 22px var(--growing-dim);
-	}
-
-	.strip-since {
-		font-size: 0.85rem;
-		color: var(--text-muted);
-	}
-
-	.strip-out {
-		margin-left: auto;
-	}
-
-	.timer {
-		font-family: var(--font-body);
-		font-variant-numeric: lining-nums tabular-nums;
-		font-size: clamp(2.6rem, 12vw, 4.4rem);
-		font-weight: 700;
-		line-height: 1;
-		letter-spacing: 0.01em;
-		color: var(--text-faint);
-		margin: 0.35rem 0 0.15rem;
-	}
-
-	.timer-info {
-		font-size: 0.92rem;
-		color: var(--text-muted);
-		margin-bottom: 0.9rem;
-	}
-
-	.quick-actions {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.5rem;
-		margin-top: 1.15rem;
 	}
 
 	/* ── Week nav ─────────────────────────────────────────── */
@@ -2254,50 +1794,32 @@
 		flex-wrap: wrap;
 	}
 
-	/* ── Modal extras ─────────────────────────────────────── */
-	.wrap-draft {
-		padding: 0.75rem 0.9rem;
-		margin-bottom: 1.1rem;
-		background: var(--accent-tint);
-		border: 1px solid var(--border-gilt);
-		border-radius: var(--radius-sm);
-	}
-
-	.wrap-label {
-		display: inline-flex;
+	/* ── All time ─────────────────────────────────────────── */
+	.all-time {
+		display: flex;
 		align-items: center;
-		gap: 0.4rem;
+		justify-content: space-between;
+		flex-wrap: wrap;
+		gap: 1rem;
+		margin-bottom: var(--section-gap);
+		padding: 1rem 1.2rem;
+		background: var(--surface-2);
+		border: 1px solid var(--border-soft);
+		border-radius: var(--card-radius);
+	}
+
+	.all-time-figures {
+		display: flex;
+		flex-direction: column;
+		gap: 0.1rem;
+	}
+
+	.all-time-value {
 		font-family: var(--font-body);
-		font-size: 0.68rem;
+		font-variant-numeric: lining-nums tabular-nums;
+		font-size: 1.2rem;
 		font-weight: 700;
-		letter-spacing: 0.12em;
-		text-transform: uppercase;
-		color: var(--text-faint);
-		--icon-accent: var(--accent);
-	}
-
-	.wrap-text {
-		margin: 0.4rem 0 0;
-		font-size: 0.92rem;
-		line-height: 1.5;
 		color: var(--text);
-		overflow-wrap: anywhere;
-	}
-
-	textarea {
-		resize: vertical;
-		min-height: 84px;
-	}
-
-	.modal-lede {
-		color: var(--text-muted);
-		margin-bottom: 0.4rem;
-	}
-
-	.modal-note {
-		font-size: 0.88rem;
-		color: var(--text-faint);
-		margin-bottom: 1.15rem;
 	}
 
 	.form-row {
@@ -2307,13 +1829,17 @@
 	}
 
 	@media (max-width: 768px) {
-		.quick-actions {
-			flex-direction: row;
+		.head-actions {
+			width: 100%;
 		}
 
-		.quick-actions .btn {
+		.head-actions .btn {
 			flex: 1;
-			width: auto;
+		}
+
+		.all-time {
+			flex-direction: column;
+			align-items: stretch;
 		}
 
 		.week-total {

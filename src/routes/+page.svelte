@@ -1,7 +1,9 @@
 <script>
 	import { supabase } from '$lib/supabase';
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { toast } from '$lib/stores/toast.js';
+	import { landingFor } from '$lib/nav.js';
 	import Icon from '$lib/icons/Icon.svelte';
 	import MoonPhase from '$lib/components/MoonPhase.svelte';
 	import ThemeToggle from '$lib/components/ThemeToggle.svelte';
@@ -40,6 +42,8 @@
 				// After login, check if user has a profile/role
 				const { data: userData } = await supabase.auth.getUser();
 				const uid = userData?.user?.id;
+				/** @type {string | null} */
+				let role = null;
 
 				if (uid) {
 					const { data: profile, error: profileError } = await supabase
@@ -52,13 +56,14 @@
 
 					// If no profile or no role yet, send to setup
 					if (!profile || !profile.role) {
-						goto('/setup');
+						goto(resolve('/setup'));
 						return;
 					}
+					role = profile.role;
 				}
 
-				// Otherwise go to dashboard
-				goto('/dashboard');
+				// Otherwise to their landing page: Care for the nanny, Home for parents
+				goto(resolve(landingFor(role)));
 			}
 		} catch (err) {
 			error = err.message;

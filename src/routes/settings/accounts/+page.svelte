@@ -2,8 +2,8 @@
 	import { onMount } from 'svelte';
 	import { supabase } from '$lib/supabase';
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { toast, confirm as confirmModal } from '$lib/stores/toast.js';
-	import Nav from '$lib/Nav.svelte';
 	import Icon from '$lib/icons/Icon.svelte';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
@@ -11,6 +11,7 @@
 	import { errorMessage } from '$lib/errors.js';
 
 	let user = null;
+	/** @type {any} */
 	let profile = null;
 	let loading = true;
 	let nannies = [];
@@ -48,16 +49,18 @@
 
 		profile = profileData;
 
-		// Only admin can access this page
-		if (profile?.role !== 'admin') {
-			toast.error('Access denied. Admin only.');
-			goto('/dashboard');
+		// Parents look after the nannies' accounts (the database lets them);
+		// only an admin lets new people in, so only an admin sees the waiting list.
+		if (profile?.role !== 'admin' && profile?.role !== 'family') {
+			goto(resolve('/settings'));
 			return;
 		}
 
-		await Promise.all([loadNannies(), loadWaiting()]);
+		await Promise.all([loadNannies(), profile.role === 'admin' ? loadWaiting() : null]);
 		loading = false;
 	});
+
+	$: isAdmin = profile?.role === 'admin';
 
 	async function loadNannies() {
 		const { data } = await supabase
@@ -212,14 +215,7 @@
 		nannyVenmo = '';
 		nannyPassword = '';
 	}
-
-	async function viewNannyHistory(nanny) {
-		// Redirect to history page with filter (we'll add this feature next)
-		goto(`/history?nanny=${nanny.id}`);
-	}
 </script>
-
-<Nav currentPage="admin" />
 
 {#if loading}
 	<div class="container"><Skeleton variant="card" count={3} /></div>
@@ -227,15 +223,15 @@
 	<div class="container">
 		<header class="page-head">
 			<div>
-				<h1>Admin</h1>
-				<p class="lede">The Keys — everything the household can change.</p>
+				<h1>Accounts</h1>
+				<p class="lede">The Keys — who can come in, and the nannies' rates and Venmo.</p>
 			</div>
 			<button class="btn btn-primary" on:click={() => (showAddNanny = true)}>
 				<Icon name="plus" size={16} /> Add a nanny
 			</button>
 		</header>
 
-		{#if waiting.length > 0}
+		{#if isAdmin && waiting.length > 0}
 			<div class="card arcana">
 				<h2>Waiting to be let in ({waiting.length})</h2>
 				<p class="lede">
@@ -299,9 +295,10 @@
 							</div>
 
 							<div class="nanny-actions">
-								<button class="btn-small" on:click={() => viewNannyHistory(nanny)}>
+								<!-- Their weeks and payments, on Hours & Pay. -->
+								<a class="btn-small" href="{resolve('/care/hours')}?nanny={nanny.id}">
 									<Icon name="scroll" size={16} /> Ledger
-								</button>
+								</a>
 								<button class="btn-small" on:click={() => editNanny(nanny)}>
 									<Icon name="quill" size={16} /> Edit
 								</button>

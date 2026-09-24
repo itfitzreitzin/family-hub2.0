@@ -1,65 +1,64 @@
 <script>
 	import '../fonts.css';
 	import '../app.css';
-	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { supabase } from '$lib/supabase';
+	import { landingFor } from '$lib/nav.js';
 	import favicon from '$lib/assets/favicon.svg';
+	import Nav from '$lib/Nav.svelte';
 	import Toast from '$lib/components/Toast.svelte';
 	import ConfirmModal from '$lib/components/ConfirmModal.svelte';
 	import OrnateFrame from '$lib/components/OrnateFrame.svelte';
 
 	let { children } = $props();
 
-	let cachedHasRole = null;
+	/** @type {string | null} */
+	let cachedRole = null;
 
+	// The sign-in gate and the waiting room stand outside the app; every
+	// other page shares one nav.
+	const OUTSIDE = ['/', '/setup'];
+	let showNav = $derived(!OUTSIDE.includes(page.url.pathname));
+
+	/** @param {string} pathname */
 	async function guard(pathname) {
 		try {
 			const {
 				data: { user }
 			} = await supabase.auth.getUser();
 			if (!user) {
-				cachedHasRole = null;
+				cachedRole = null;
 				return;
 			}
 
-			if (cachedHasRole === true) {
-				if (pathname === '/') {
-					goto('/dashboard');
-				}
+			// No role yet means waiting to be let in: ask again each time, so
+			// the first page after an admin says yes picks it up.
+			if (!cachedRole) {
+				const { data: profile, error } = await supabase
+					.from('profiles')
+					.select('role')
+					.eq('id', user.id)
+					.maybeSingle();
+
+				if (error) return;
+				cachedRole = profile?.role || null;
+			}
+
+			if (!cachedRole) {
+				if (pathname !== '/setup') goto(resolve('/setup'));
 				return;
 			}
 
-			const { data: profile, error } = await supabase
-				.from('profiles')
-				.select('role')
-				.eq('id', user.id)
-				.maybeSingle();
-
-			if (error) return;
-
-			const hasRole = !!(profile && profile.role);
-			cachedHasRole = hasRole;
-
-			if (!hasRole && pathname !== '/setup') {
-				goto('/setup');
-				return;
-			}
-
-			if (hasRole && pathname === '/') {
-				goto('/dashboard');
-			}
-		} catch (e) {
+			if (pathname === '/') goto(resolve(landingFor(cachedRole)));
+		} catch {
 			// Swallow guard errors to avoid blocking rendering
 		}
 	}
 
-	onMount(() => {
-		const unsubscribe = page.subscribe(($page) => {
-			guard($page.url.pathname);
-		});
-		return () => unsubscribe();
+	$effect(() => {
+		guard(page.url.pathname);
 	});
 </script>
 
@@ -75,5 +74,9 @@
 
 <Toast />
 <ConfirmModal />
+
+{#if showNav}
+	<Nav />
+{/if}
 
 {@render children?.()}

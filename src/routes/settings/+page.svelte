@@ -3,7 +3,6 @@
 	import { supabase } from '$lib/supabase';
 	import { goto } from '$app/navigation';
 	import { toast, prompt as promptModal } from '$lib/stores/toast.js';
-	import Nav from '$lib/Nav.svelte';
 	import Icon from '$lib/icons/Icon.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
 	import MoonPhase from '$lib/components/MoonPhase.svelte';
@@ -126,8 +125,6 @@
 		}
 	}
 </script>
-
-<Nav currentPage="settings" />
 
 {#if loading}
 	<div class="container"><Skeleton variant="card" count={2} /></div>

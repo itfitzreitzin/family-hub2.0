@@ -293,7 +293,11 @@
 					'Content-Type': 'application/json',
 					Authorization: `Bearer ${session.access_token}`
 				},
-				body: JSON.stringify({ calendarId })
+				body: JSON.stringify({
+					calendarId,
+					// All-day events are read in the household's zone, not the server's
+					timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+				})
 			});
 
 			const result = await response.json();

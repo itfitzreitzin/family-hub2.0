@@ -1,36 +1,47 @@
 <script>
-	import { SPRITES, spriteRects } from './sprites.js';
+	import { GLYPHS } from './glyphs.js';
 
-	/** Name of a sprite in sprites.js. */
+	/** Name of a glyph in glyphs.js. */
 	export let name = 'star';
-	/** Rendered edge length in px. Multiples of 16 stay perfectly crisp. */
+	/** Rendered edge length in px. */
 	export let size = 20;
 	/** Accessible label. Omit for purely decorative icons. */
 	export let label = '';
 
-	$: grid = SPRITES[name] || SPRITES.star;
-	$: rects = spriteRects(grid);
+	$: glyph = GLYPHS[name] || GLYPHS.star;
+	// Heavier lines when small, lighter when large, so a 12px chevron and a
+	// 48px empty-state glyph look like the same hand drew them.
+	$: stroke = size <= 14 ? 2.25 : size <= 20 ? 2 : size <= 32 ? 1.75 : 1.4;
 </script>
 
 <svg
-	class="pixel-icon"
+	class="icon"
 	width={size}
 	height={size}
-	viewBox="0 0 16 16"
-	shape-rendering="crispEdges"
+	viewBox="0 0 24 24"
 	role={label ? 'img' : 'presentation'}
 	aria-label={label || undefined}
 	aria-hidden={label ? undefined : 'true'}
 	focusable="false"
 >
 	{#if label}<title>{label}</title>{/if}
-	{#each rects as r, i (i)}
-		<rect x={r.x} y={r.y} width={r.w} height="1" fill={r.fill} />
+	{#each glyph.line || [] as d (d)}
+		<path
+			{d}
+			fill="none"
+			stroke="currentColor"
+			stroke-width={stroke}
+			stroke-linecap="round"
+			stroke-linejoin="round"
+		/>
+	{/each}
+	{#each glyph.solid || [] as d (d)}
+		<path {d} fill="var(--icon-accent, currentColor)" />
 	{/each}
 </svg>
 
 <style>
-	.pixel-icon {
+	.icon {
 		display: block;
 		flex-shrink: 0;
 	}

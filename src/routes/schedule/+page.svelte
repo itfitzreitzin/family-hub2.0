@@ -17,6 +17,7 @@
 		getMonthGridRange,
 		addMonths
 	} from '$lib/time.js';
+	import { formatMoney } from '$lib/money.js';
 	import {
 		fetchShiftsInRange,
 		fetchBusyEventsInRange,
@@ -1664,7 +1665,7 @@
 						<div class="summary-divider"></div>
 						<div class="summary-stat">
 							<span class="summary-label">Est. income</span>
-							<span class="summary-value summary-income">${summary.totalCost.toFixed(2)}</span>
+							<span class="summary-value summary-income">{formatMoney(summary.totalCost)}</span>
 						</div>
 					{:else}
 						<div class="summary-stat">
@@ -1683,7 +1684,7 @@
 						<div class="summary-divider"></div>
 						<div class="summary-stat">
 							<span class="summary-label">Est. cost</span>
-							<span class="summary-value summary-cost">${summary.totalCost.toFixed(2)}</span>
+							<span class="summary-value summary-cost">{formatMoney(summary.totalCost)}</span>
 						</div>
 					{/if}
 				</div>

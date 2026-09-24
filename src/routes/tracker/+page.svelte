@@ -20,6 +20,7 @@
 		parseLocalDate
 	} from '$lib/time.js';
 	import { buildWeekLedger } from '$lib/ledger.js';
+	import { formatMoney } from '$lib/money.js';
 	import { errorMessage } from '$lib/errors.js';
 	import {
 		normalizeVenmoHandle,
@@ -727,7 +728,7 @@
 			if (isMobileDevice()) {
 				const confirmed = await confirmModal.show({
 					title: 'Venmo Payment',
-					message: `Pay $${weekPay.toFixed(2)} to @${recipient} via Venmo?`,
+					message: `Pay ${formatMoney(weekPay)} to @${recipient} via Venmo?`,
 					confirmText: 'Pay'
 				});
 				if (confirmed) {
@@ -1021,7 +1022,7 @@
 			if (isMobileDevice()) {
 				const confirmed = await confirmModal.show({
 					title: 'Request Payment',
-					message: `Request $${weekPay.toFixed(2)} from @${target} via Venmo?`,
+					message: `Request ${formatMoney(weekPay)} from @${target} via Venmo?`,
 					confirmText: 'Request'
 				});
 				if (confirmed) {
@@ -1319,8 +1320,8 @@
 									<td>{formatTime(entry.clock_out)}</td>
 									<td class="num">{(parseFloat(entry.hours) || 0).toFixed(1)}</td>
 									<td class="num gilt-text">
-										${((parseFloat(entry.hours) || 0) * (selectedNanny?.hourly_rate || 20)).toFixed(
-											2
+										{formatMoney(
+											(parseFloat(entry.hours) || 0) * (selectedNanny?.hourly_rate || 20)
 										)}
 									</td>
 									<td class="notes">{entry.notes || '—'}</td>
@@ -1363,9 +1364,9 @@
 									</div>
 									<div class="entry-bottom">
 										<span class="entry-earnings">
-											${(
+											{formatMoney(
 												(parseFloat(entry.hours) || 0) * (selectedNanny?.hourly_rate || 20)
-											).toFixed(2)}
+											)}
 										</span>
 										{#if profile?.role === 'family' || profile?.role === 'admin'}
 											<span class="entry-actions">
@@ -1406,9 +1407,9 @@
 									<div class="detail-row">
 										<span>Earnings</span>
 										<span class="gilt-text">
-											${(
+											{formatMoney(
 												(parseFloat(entry.hours) || 0) * (selectedNanny?.hourly_rate || 20)
-											).toFixed(2)}
+											)}
 										</span>
 									</div>
 									{#if entry.notes}
@@ -1434,7 +1435,7 @@
 				<div class="week-total">
 					<div class="total-figures">
 						<span class="total-label">Owed this week</span>
-						<span class="total-value">${weekPay.toFixed(2)}</span>
+						<span class="total-value">{formatMoney(weekPay)}</span>
 						<span class="total-hours">{weekTotal.toFixed(1)} hours</span>
 					</div>
 
@@ -1529,11 +1530,9 @@
 									</td>
 									<td class="num">{week.hours.toFixed(1)}</td>
 									<td class="num gilt-text">
-										${week.amount.toFixed(2)}
+										{formatMoney(week.amount)}
 										{#if payment?.is_paid && Math.abs((parseFloat(payment.amount) || 0) - week.amount) >= 0.01}
-											<span class="paid-diff"
-												>paid ${(parseFloat(payment.amount) || 0).toFixed(2)}</span
-											>
+											<span class="paid-diff">paid {formatMoney(payment.amount)}</span>
 										{/if}
 									</td>
 									<td>
@@ -1612,11 +1611,11 @@
 								</span>
 							</button>
 							<div class="entry-bottom">
-								<span class="entry-earnings">${week.amount.toFixed(2)}</span>
+								<span class="entry-earnings">{formatMoney(week.amount)}</span>
 								<span class="entry-time">{week.hours.toFixed(1)}h</span>
 							</div>
 							{#if payment?.is_paid && Math.abs((parseFloat(payment.amount) || 0) - week.amount) >= 0.01}
-								<span class="paid-diff">paid ${(parseFloat(payment.amount) || 0).toFixed(2)}</span>
+								<span class="paid-diff">paid {formatMoney(payment.amount)}</span>
 							{/if}
 							{#if profile?.role === 'family' || profile?.role === 'admin'}
 								<div class="entry-actions">
@@ -1838,8 +1837,8 @@
 		--icon-accent: var(--accent);
 	}
 
-	/* On shift the timer is a strip (the pixel face stays ≥1.4rem per the
-	   design-system rule) and the cockpit card takes the room it frees. */
+	/* On shift the timer is a strip and the cockpit card takes the room it
+	   frees. */
 	.timer-strip {
 		display: flex;
 		align-items: center;
@@ -1861,9 +1860,10 @@
 	}
 
 	.strip-timer {
-		font-family: var(--font-pixel);
-		font-size: 1.5rem;
-		font-weight: 600;
+		font-family: var(--font-body);
+		font-variant-numeric: lining-nums tabular-nums;
+		font-size: 1.6rem;
+		font-weight: 700;
 		line-height: 1;
 		color: var(--growing);
 		text-shadow: 0 0 22px var(--growing-dim);
@@ -1879,11 +1879,12 @@
 	}
 
 	.timer {
-		font-family: var(--font-pixel);
-		font-size: clamp(2.4rem, 12vw, 4.2rem);
-		font-weight: 600;
+		font-family: var(--font-body);
+		font-variant-numeric: lining-nums tabular-nums;
+		font-size: clamp(2.6rem, 12vw, 4.4rem);
+		font-weight: 700;
 		line-height: 1;
-		letter-spacing: 0.03em;
+		letter-spacing: 0.01em;
 		color: var(--text-faint);
 		margin: 0.35rem 0 0.15rem;
 	}
@@ -2145,9 +2146,10 @@
 	}
 
 	.total-value {
-		font-family: var(--font-pixel);
-		font-size: clamp(1.6rem, 5vw, 2.1rem);
-		font-weight: 600;
+		font-family: var(--font-body);
+		font-variant-numeric: lining-nums tabular-nums;
+		font-size: clamp(1.7rem, 5vw, 2.2rem);
+		font-weight: 700;
 		line-height: 1.1;
 		color: var(--accent-bright);
 		text-shadow: 0 0 24px var(--accent-dim);

@@ -11,6 +11,7 @@ import {
 	combineLocalDateTime,
 	normalizeDateValue
 } from '$lib/time.js';
+import { formatMoney } from '$lib/money.js';
 
 /**
  * One unified calendar entry, whatever table it came from.
@@ -306,7 +307,7 @@ export function toCalendarItems({
 		items.push({
 			id: `payment-${payment.id}`,
 			kind: 'payment',
-			title: `Payment due $${Number(payment.amount || 0).toFixed(0)}`,
+			title: `Payment due ${formatMoney(payment.amount)}`,
 			start,
 			end,
 			allDay: true,

@@ -15,6 +15,7 @@
 		normalizeDateValue,
 		getMonthGridRange
 	} from '$lib/time.js';
+	import { formatMoney } from '$lib/money.js';
 	import { errorMessage } from '$lib/errors.js';
 	import Icon from '$lib/icons/Icon.svelte';
 	import MoonPhase from '$lib/components/MoonPhase.svelte';
@@ -414,12 +415,10 @@
 		.reduce((sum, e) => sum + entryHours(e, now), 0)
 		.toFixed(1);
 
-	$: weeklyTotal = weekEntries
-		.reduce((sum, e) => {
-			const rate = nannies.find((n) => n.id === e.nanny_id)?.hourly_rate || 20;
-			return sum + entryHours(e, now) * rate;
-		}, 0)
-		.toFixed(2);
+	$: weeklyTotal = weekEntries.reduce((sum, e) => {
+		const rate = nannies.find((n) => n.id === e.nanny_id)?.hourly_rate || 20;
+		return sum + entryHours(e, now) * rate;
+	}, 0);
 
 	$: unpaidHours = unpaidPayments.reduce((sum, p) => sum + (parseFloat(p.hours) || 0), 0);
 	$: unpaidAmount = unpaidPayments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
@@ -577,7 +576,7 @@
 							<span class="approval-label">hours today</span>
 						</div>
 						<div class="approval-stat">
-							<span class="approval-big">${weeklyTotal}</span>
+							<span class="approval-big">{formatMoney(weeklyTotal)}</span>
 							<span class="approval-label">this week</span>
 						</div>
 						<img
@@ -592,7 +591,7 @@
 
 					{#if unpaidPayments.length > 0}
 						<div class="approval-alert unpaid">
-							${unpaidAmount.toFixed(2)} unpaid ({unpaidHours.toFixed(1)} hrs)
+							{formatMoney(unpaidAmount)} unpaid ({unpaidHours.toFixed(1)} hrs)
 						</div>
 					{/if}
 
@@ -1567,9 +1566,10 @@
 	}
 
 	.watch-elapsed {
-		font-family: var(--font-pixel);
-		font-size: clamp(1.75rem, 6vw, 2.5rem);
-		font-weight: 600;
+		font-family: var(--font-body);
+		font-variant-numeric: lining-nums tabular-nums;
+		font-size: clamp(1.85rem, 6vw, 2.6rem);
+		font-weight: 700;
 		color: var(--growing);
 		text-shadow: 0 0 20px var(--growing-dim);
 	}

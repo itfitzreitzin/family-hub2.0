@@ -2,14 +2,14 @@
 	import Icon from '$lib/icons/Icon.svelte';
 	import { ART } from '$lib/art.js';
 
-	/** Sprite name to show in the vignette. */
+	/** Glyph name (see $lib/icons/glyphs.js) to show in the vignette. */
 	export let icon = 'cauldron';
 	export let title = 'Nothing here yet';
 	export let hint = '';
 
 	/**
-	 * Sprites that have a painted counterpart get the illustration instead —
-	 * every call site upgrades without being touched. `warning` stays a sprite
+	 * Glyphs that have a painted counterpart get the illustration instead —
+	 * every call site upgrades without being touched. `warning` stays a glyph
 	 * on purpose: an error state should look like a warning, not a still life.
 	 */
 	/** @type {Record<string, string>} */

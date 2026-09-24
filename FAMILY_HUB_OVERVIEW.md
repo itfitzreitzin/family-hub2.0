@@ -306,12 +306,14 @@ system, documented in the README and enforced by semantic tokens.
 - **Tokens only** — `--surface`, `--text`, `--accent` (gilt), `--growing` (moss =
   "on the clock"), `--danger` (ember), `--border-gilt`. Both themes define the
   same set.
-- **Type:** Cinzel (headings), Cinzel Decorative (wordmark), Alegreya Sans (body),
-  Pixelify Sans (the shift timer only — its 5/8 are confusable small, so tables
-  use tabular-nums body figures). All OFL, self-hosted.
-- **Icons as source code:** original 16×16 sprites in `src/lib/icons/sprites.js`
-  where each icon *is* its picture — sixteen rows of sixteen characters
-  (`#` = currentColor, `o` = gilt, `~` = moss…). Edit the art by editing the grid.
+- **Type:** Cinzel (headings), Cinzel Decorative (wordmark), Alegreya Sans (body
+  and every number — lining figures throughout, tabular where digits must align
+  or tick). All OFL, self-hosted. The Pixelify Sans "digital" timer face was
+  retired in Sept 2026 for readability.
+- **Icons as source code:** original line glyphs on a 24-unit grid in
+  `src/lib/icons/glyphs.js` (they replaced hand-coded 16×16 pixel sprites that
+  blurred at small sizes). New pixel sprites are being sourced for the art slots
+  — moment buttons, empty states, portraits.
 - **Pixel paintings** (downscaled from 1024px masters): the hearth family scene,
   gilt corner filigree, a three-part painted shelf, still lifes, painted nav
   icons, and **portraits of Nick, Sarah, Jack, Emma, and the nanny**. A stable

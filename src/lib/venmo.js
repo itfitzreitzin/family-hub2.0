@@ -1,5 +1,7 @@
 // Shared Venmo helpers: handle normalization, payment notes, and deep links.
 
+import { formatMoney } from './money.js'
+
 /**
  * Normalize a Venmo handle for use in links. Returns null when missing so
  * callers must handle the no-handle case instead of paying a bogus default.
@@ -29,9 +31,9 @@ export function buildVenmoNote({ direction, name, weekStart, hours, rate, total 
       : `Weekly payment for ${name}`
   return `${heading}
 Week of ${weekStart.toLocaleDateString()}
-Hours: ${hours.toFixed(1)}
-Rate: $${rate}/hour
-Total: $${total.toFixed(2)}`
+Hours: ${hours.toFixed(2)}
+Rate: ${formatMoney(rate)}/hour
+Total: ${formatMoney(total)}`
 }
 
 /**

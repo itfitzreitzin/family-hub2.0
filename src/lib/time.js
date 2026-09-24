@@ -235,11 +235,11 @@ export function hoursBetween(start, end) {
 
 /**
  * @param {string | Date} value
- * @returns {string} e.g. '09:02 AM'
+ * @returns {string} e.g. '9:02 AM' — no leading zero, the way clocks are read
  */
 export function formatTime(value) {
 	return parseLocalDate(value).toLocaleTimeString('en-US', {
-		hour: '2-digit',
+		hour: 'numeric',
 		minute: '2-digit'
 	});
 }

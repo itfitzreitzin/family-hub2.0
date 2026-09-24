@@ -8,6 +8,7 @@
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
 	import { getWeekBounds, formatTime, formatDateWeekday as formatDate } from '$lib/time.js';
+	import { formatMoney } from '$lib/money.js';
 	import {
 		normalizeVenmoHandle,
 		isMobileDevice,
@@ -217,7 +218,7 @@
 		if (isMobileDevice()) {
 			const confirmed = await confirmModal.show({
 				title: 'Venmo Payment',
-				message: `Pay $${weekPay.toFixed(2)} to @${recipient} via Venmo?`,
+				message: `Pay ${formatMoney(weekPay)} to @${recipient} via Venmo?`,
 				confirmText: 'Pay'
 			});
 			if (confirmed) {
@@ -312,7 +313,7 @@
 				</div>
 				<div class="stat">
 					<span class="stat-icon"><Icon name="coin" size={24} /></span>
-					<span class="stat-value gilt-text">${weekPay.toFixed(2)}</span>
+					<span class="stat-value gilt-text">{formatMoney(weekPay)}</span>
 					<span class="stat-label">Total pay</span>
 				</div>
 				<div class="stat">
@@ -369,9 +370,9 @@
 									<td>{formatTime(entry.clock_out)}</td>
 									<td class="num">{(parseFloat(entry.hours) || 0).toFixed(2)}</td>
 									<td class="num gilt-text">
-										${(
+										{formatMoney(
 											(parseFloat(entry.hours) || 0) * rateForEntry(entry, nannyById, profile)
-										).toFixed(2)}
+										)}
 									</td>
 									<td class="notes">{entry.notes || '—'}</td>
 								</tr>
@@ -386,9 +387,9 @@
 							<div class="entry-top">
 								<span class="entry-date">{formatDate(entry.clock_in)}</span>
 								<span class="entry-earnings">
-									${(
+									{formatMoney(
 										(parseFloat(entry.hours) || 0) * rateForEntry(entry, nannyById, profile)
-									).toFixed(2)}
+									)}
 								</span>
 							</div>
 							<div class="entry-bottom">

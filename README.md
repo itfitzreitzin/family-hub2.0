@@ -54,18 +54,22 @@ the primary accent; moss green (`--growing`) means "on the clock"; ember
 (`--danger`) is destructive.
 
 **Type.** Cinzel for headings, Cinzel Decorative for the wordmark, Alegreya Sans
-for body, Pixelify Sans for the shift timer. Fonts are self-hosted from
-`static/fonts` via `src/fonts.css` — no third-party request at runtime. They're
-OFL-licensed; see `static/fonts/OFL.txt`.
+for body — and for every number, timers and money included. Fonts are
+self-hosted from `static/fonts` via `src/fonts.css` — no third-party request at
+runtime. They're OFL-licensed; see `static/fonts/OFL.txt`.
 
-> Pixelify Sans is display-only. Its `5` and `8` are hard to tell apart below
-> roughly 1.4rem, so numbers in tables and stat tiles use the body face with
-> `font-variant-numeric: tabular-nums` instead.
+> Alegreya Sans defaults to old-style figures (3 4 5 7 9 hang below the line).
+> The body sets `lining-nums`; columns and ticking timers add `tabular-nums`
+> (`.num` does both). `tabular-nums` on its own gives the tabular *old-style*
+> set, so always pair them. Cinzel has no lowercase — keep sentences out of it.
+> Money on screen goes through `formatMoney` (`src/lib/money.js`): `$1,006.50`.
 
-**Icons.** Original 16×16 pixel sprites in `src/lib/icons/sprites.js`, where each
-icon *is* its picture — sixteen rows of sixteen characters. Edit the art by
-editing the grid. `<Icon name="cottage" size={24} />` renders one; colour comes
-from `currentColor` plus `--icon-accent`. No third-party icon set is used.
+**Icons.** Line glyphs on a 24-unit grid in `src/lib/icons/glyphs.js`, drawn for
+this app. `<Icon name="cottage" size={24} />` renders one; lines take
+`currentColor`, and the few solid accents (heart, star, moon, candle flame) take
+`--icon-accent`. They replaced 16×16 pixel sprites, which smeared at the 11–16px
+the UI actually uses. Pixel art belongs in the paintings (`static/art`,
+`src/lib/art.js`), shown at their drawn size. No third-party icon set is used.
 
 **Components.** `MoonPhase` draws the real current lunar phase (`src/lib/moon.js`),
 `EmptyState` gives empty screens an illustrated vignette, and `Skeleton` provides

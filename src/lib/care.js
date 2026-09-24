@@ -10,47 +10,33 @@
 //   note        { text }
 //   headsup     { text }
 
-import { ART } from '$lib/art.js';
 import { formatTime, formatDateWeekday } from '$lib/time.js';
 
 /**
- * The moment buttons, in cockpit order. `art` is a painted icon where one
- * was drawn for the care log; kinds without a painting use a 16px sprite.
+ * The moment buttons, in cockpit order. `glyph` names the line icon in
+ * $lib/icons/glyphs.js — one per kind, so a glance tells a meal from a snack.
  * `tone` colours the button: 'growing' is the nap timer's moss, 'danger'
  * is the heads-up ember (the only tier meant to ping parents).
  *
  * @type {{
  *   kind: string,
  *   label: string,
- *   art?: string,
- *   sprite?: string,
+ *   glyph: string,
  *   hint: string,
  *   tone?: 'growing' | 'danger'
  * }[]}
  */
 export const MOMENT_KINDS = [
-	{ kind: 'nap', label: 'Nap', sprite: 'moon', hint: 'Tap to start, tap to end', tone: 'growing' },
-	{
-		kind: 'meal',
-		label: 'Meal',
-		art: ART.iconCauldron,
-		sprite: 'cauldron',
-		hint: 'A proper plate'
-	},
-	{ kind: 'snack', label: 'Snack', sprite: 'cauldron', hint: 'A little something' },
-	{
-		kind: 'potty',
-		label: 'Potty',
-		art: ART.iconDroplet,
-		sprite: 'potion',
-		hint: 'Tried, star, or accident'
-	},
-	{ kind: 'meds', label: 'Meds', sprite: 'potion', hint: 'Name, dose, time' },
-	{ kind: 'note', label: 'Note', sprite: 'quill', hint: 'Jot anything down' },
+	{ kind: 'nap', label: 'Nap', glyph: 'moon', hint: 'Tap to start, tap to end', tone: 'growing' },
+	{ kind: 'meal', label: 'Meal', glyph: 'bowl', hint: 'A proper plate' },
+	{ kind: 'snack', label: 'Snack', glyph: 'apple', hint: 'A little something' },
+	{ kind: 'potty', label: 'Potty', glyph: 'droplet', hint: 'Tried, star, or accident' },
+	{ kind: 'meds', label: 'Meds', glyph: 'potion', hint: 'Name, dose, time' },
+	{ kind: 'note', label: 'Note', glyph: 'quill', hint: 'Jot anything down' },
 	{
 		kind: 'headsup',
 		label: 'Heads-up',
-		sprite: 'warning',
+		glyph: 'warning',
 		hint: 'The parents see this one',
 		tone: 'danger'
 	}
@@ -243,8 +229,8 @@ export function draftWrapUp(moments, kidsById, totalKids) {
 	};
 
 	for (const nap of asc.filter((m) => m.kind === 'nap')) {
-		const start = formatTime(nap.started_at).replace(/^0/, '');
-		const end = nap.ended_at ? formatTime(nap.ended_at).replace(/^0/, '') : null;
+		const start = formatTime(nap.started_at);
+		const end = nap.ended_at ? formatTime(nap.ended_at) : null;
 		parts.push(
 			`${kidPrefix(nap) || ''}${kidPrefix(nap) ? 'napped' : 'nap'} ${start}–${end || 'still asleep at clock-out'}`
 		);
@@ -278,7 +264,7 @@ export function draftWrapUp(moments, kidsById, totalKids) {
 	for (const med of asc.filter((m) => m.kind === 'meds')) {
 		const p = med.payload || {};
 		const what = [p.name, p.dose].filter(Boolean).join(', ');
-		parts.push(`meds: ${what || 'given'} at ${formatTime(med.started_at).replace(/^0/, '')}`);
+		parts.push(`meds: ${what || 'given'} at ${formatTime(med.started_at)}`);
 	}
 
 	for (const heads of asc.filter((m) => m.kind === 'headsup')) {

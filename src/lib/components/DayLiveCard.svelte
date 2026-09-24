@@ -394,11 +394,7 @@
 					<div class="lf-row" class:flagged={m.kind === 'headsup'}>
 						<span class="lf-time">{formatTime(m.started_at)}</span>
 						<span class="lf-icon">
-							{#if mk.art}
-								<PixelArt src={mk.art} size={14} />
-							{:else}
-								<Icon name={mk.sprite || 'star'} size={14} />
-							{/if}
+							<Icon name={mk.glyph} size={14} />
 						</span>
 						<span class="lf-text">
 							{#if kids.length > 1 && momentKidsLabel(m, kidsById, kids.length)}
@@ -585,11 +581,14 @@
 	}
 
 	/* ── Status + feed ────────────────────────────────────── */
+	/* A sentence, so the body face — Cinzel has no lowercase and turns a
+	   whole status line into shouting capitals. */
 	.status-line {
 		margin: 0 0 0.75rem;
-		font-family: var(--font-display);
-		font-size: 1rem;
-		line-height: 1.45;
+		font-family: var(--font-body);
+		font-size: 1.08rem;
+		font-weight: 500;
+		line-height: 1.5;
 		color: var(--text);
 	}
 

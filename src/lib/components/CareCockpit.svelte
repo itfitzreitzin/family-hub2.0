@@ -777,11 +777,7 @@
 					on:click={() => tapMoment(mk.kind)}
 				>
 					<span class="moment-icon">
-						{#if mk.art}
-							<PixelArt src={mk.art} size={20} />
-						{:else}
-							<Icon name={mk.sprite || 'star'} size={20} />
-						{/if}
+						<Icon name={mk.glyph} size={20} />
 					</span>
 					<span class="moment-label">
 						{#if napRunning}End nap{:else}{mk.label}{/if}
@@ -836,11 +832,7 @@
 					<div class="ct-row" class:live={openNap} class:flagged={m.kind === 'headsup'}>
 						<span class="ct-time">{formatTime(m.started_at)}</span>
 						<span class="ct-icon" title={mk.label}>
-							{#if mk.art}
-								<PixelArt src={mk.art} size={18} />
-							{:else}
-								<Icon name={mk.sprite || 'star'} size={18} />
-							{/if}
+							<Icon name={mk.glyph} size={18} />
 						</span>
 						<div class="ct-body">
 							{#if kidsLabel && kids.length > 1}

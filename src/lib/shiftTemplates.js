@@ -93,6 +93,21 @@ export async function generateThrough(supabase, template, through, createdBy) {
 	if (from > to) return 0;
 
 	const dates = occurrencesBetween(template, from, to);
+	const toStr = localDateString(to);
+
+	// Claim the span before writing it: advance generated_until only while it
+	// still holds the value this device read. Two tabs or devices topping up
+	// at once used to both insert the same dates; now the second matches no
+	// row and backs off. The span is marked covered even when it held no
+	// occurrences, so top-ups never re-walk it.
+	const { data: claimed, error: claimError } = await supabase
+		.from('shift_templates')
+		.update({ generated_until: toStr })
+		.eq('id', template.id)
+		.eq('generated_until', template.generated_until)
+		.select('id');
+	if (claimError) throw claimError;
+	if (!claimed || claimed.length === 0) return 0;
 
 	if (dates.length > 0) {
 		const rows = dates.map((date) => ({
@@ -105,16 +120,17 @@ export async function generateThrough(supabase, template, through, createdBy) {
 			template_id: template.id
 		}));
 		const { error } = await supabase.from('schedules').insert(rows);
-		if (error) throw error;
+		if (error) {
+			// Hand the span back so the next top-up retries it, rather than
+			// leaving it marked covered with no shifts in it.
+			await supabase
+				.from('shift_templates')
+				.update({ generated_until: template.generated_until })
+				.eq('id', template.id)
+				.eq('generated_until', toStr);
+			throw error;
+		}
 	}
-
-	// Mark the span covered even when it held no occurrences, so top-ups
-	// never re-walk it.
-	const { error: updateError } = await supabase
-		.from('shift_templates')
-		.update({ generated_until: localDateString(to) })
-		.eq('id', template.id);
-	if (updateError) throw updateError;
 
 	return dates.length;
 }

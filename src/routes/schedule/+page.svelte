@@ -15,7 +15,8 @@
 		combineLocalDateTime,
 		buildMonthGrid,
 		getMonthGridRange,
-		addMonths
+		addMonths,
+		nextDay
 	} from '$lib/time.js';
 	import { formatMoney } from '$lib/money.js';
 	import {
@@ -359,10 +360,13 @@
 	}
 
 	async function loadFamilyMembers() {
+		// Parents hold either role — the admin is a parent too. Filtering on
+		// 'family' alone dropped the admin's busy time from the month view,
+		// the partner lane and the coverage-gap check.
 		const { data, error } = await supabase
 			.from('profiles')
 			.select('*')
-			.eq('role', 'family')
+			.in('role', ['family', 'admin'])
 			.order('created_at');
 
 		if (error) return;
@@ -430,7 +434,11 @@
 					'Content-Type': 'application/json',
 					Authorization: `Bearer ${session.access_token}`
 				},
-				body: JSON.stringify({ calendarId })
+				body: JSON.stringify({
+					calendarId,
+					// All-day events are read in the household's zone, not the server's
+					timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+				})
 			});
 			const result = await response.json();
 			if (!response.ok) throw new Error(result.error || 'Sync failed');
@@ -487,11 +495,7 @@
 		try {
 			const [busyRows, manualRows] = await Promise.all([
 				fetchBusyEventsInRange(supabase, currentWeekStart, weekEnd),
-				// Parity with the month view: manual busy times are a family-member
-				// feature; the nanny view never shows them.
-				isFamilyViewer
-					? fetchManualBusyInRange(supabase, currentWeekStart, weekEnd)
-					: Promise.resolve([])
+				fetchManualBusyInRange(supabase, currentWeekStart, weekEnd)
 			]);
 
 			const youId = user.id;
@@ -524,7 +528,6 @@
 			}
 
 			for (const manual of manualRows) {
-				if (!familyIds.has(manual.user_id)) continue;
 				const eventData = {
 					title: manual.title,
 					startTime: new Date(manual.start_time),
@@ -532,8 +535,15 @@
 					color: '#718096',
 					calendarName: 'Manual Entry'
 				};
-				if (manual.user_id === youId) newParentEvents.you.push(eventData);
-				else if (manual.user_id === partnerId) newParentEvents.partner.push(eventData);
+				if (nannyIds.has(manual.user_id)) {
+					// A nanny's own repeating unavailability — shown and checked for
+					// conflicts like her synced calendar. (For a nanny viewer,
+					// nannyIds is just themselves.)
+					(newNannyEvents[manual.user_id] ||= []).push({ ...eventData, nannyId: manual.user_id });
+				} else if (isFamilyViewer && familyIds.has(manual.user_id)) {
+					if (manual.user_id === youId) newParentEvents.you.push(eventData);
+					else if (manual.user_id === partnerId) newParentEvents.partner.push(eventData);
+				}
 			}
 
 			parentCalendarEvents = newParentEvents;
@@ -740,7 +750,7 @@
 
 		try {
 			if (editingShiftId) {
-				const { error } = await supabase
+				const { data: updated, error } = await supabase
 					.from('schedules')
 					.update({
 						nanny_id: shiftForm.nannyId,
@@ -749,9 +759,16 @@
 						end_time: shiftForm.endTime,
 						notes: shiftForm.notes || ''
 					})
-					.eq('id', editingShiftId);
+					.eq('id', editingShiftId)
+					.select('id');
 
 				if (error) throw error;
+				// Zero rows: deleted elsewhere (or refused by RLS) — not "updated".
+				if (!updated || updated.length === 0) {
+					throw new Error(
+						'That shift no longer exists — it may have been deleted on another device.'
+					);
+				}
 			} else if (savingRepeat) {
 				// The series starts the day before its first date has been
 				// generated, so generateThrough picks up starts_on itself.
@@ -1288,7 +1305,7 @@
 			if (s.nanny_id !== shiftForm.nannyId || s.id === editingShiftId) return false;
 			const start = combineLocalDateTime(normalizeDateValue(s.date), s.start_time.slice(0, 5));
 			let end = combineLocalDateTime(normalizeDateValue(s.date), s.end_time.slice(0, 5));
-			if (end <= start) end = new Date(end.getTime() + 24 * 60 * 60 * 1000);
+			if (end <= start) end = nextDay(end);
 			if (start < shiftEnd && end > shiftStart) {
 				conflicts.push({ title: 'Already scheduled to work', startTime: start, endTime: end });
 			}
@@ -1392,7 +1409,7 @@
 			const [shiftRows, busyRows, manualRows, paymentRows] = await Promise.all([
 				fetchShiftsInRange(supabase, startStr, endStr, nannyScope),
 				fetchBusyEventsInRange(supabase, gridStart, gridEnd),
-				isNanny ? Promise.resolve([]) : fetchManualBusyInRange(supabase, gridStart, gridEnd),
+				fetchManualBusyInRange(supabase, gridStart, gridEnd),
 				fetchPaymentsDueInRange(supabase, startStr, endStr, nannyScope)
 			]);
 
@@ -1405,8 +1422,11 @@
 			const scopedBusy = isNanny
 				? busyRows.filter((e) => (e.parent_calendars?.user_id ?? e.user_id) === user.id)
 				: busyRows;
-			// Family view keeps week-view parity: manual rows from family members only.
-			const scopedManual = isNanny ? [] : manualRows.filter((m) => familyIds.has(m.user_id));
+			// Manual busy times: a nanny's own (her recurring unavailability is
+			// what parents schedule around), plus the family's for family viewers.
+			const scopedManual = isNanny
+				? manualRows.filter((m) => m.user_id === user.id)
+				: manualRows.filter((m) => familyIds.has(m.user_id) || nannyIds.has(m.user_id));
 
 			monthItems = toCalendarItems({
 				shifts: shiftRows,
@@ -1449,15 +1469,20 @@
 	async function setView(next) {
 		if (next === view) return;
 		view = next;
+		// Month and Week/Day keep separate copies of the data, and an edit in
+		// one never reaches the other. Reload on every switch, so a stale block
+		// can't be opened and saved back over a newer change.
 		if (next === 'week') {
 			if (!currentWeekStart) await setCurrentWeek(0);
+			else await Promise.all([loadShifts(), loadCalendarEvents()]);
 			await tick();
 			scrollGridToNow();
 		} else if (next === 'day') {
 			await setCurrentDay(currentDay);
+			await Promise.all([loadShifts(), loadCalendarEvents()]);
 			await tick();
 			scrollGridToNow();
-		} else if (!monthInitialized) {
+		} else {
 			await loadMonthData();
 		}
 	}

@@ -16,8 +16,10 @@
 		formatTime,
 		formatDate,
 		formatDateShort,
-		formatWeekDisplay
+		formatWeekDisplay,
+		parseLocalDate
 	} from '$lib/time.js';
+	import { buildWeekLedger } from '$lib/ledger.js';
 	import { errorMessage } from '$lib/errors.js';
 	import {
 		normalizeVenmoHandle,
@@ -57,6 +59,7 @@
 	let entryLoadToken = 0;
 	let weekLoadToken = 0;
 	let paymentsLoadToken = 0;
+	let ledgerLoadToken = 0;
 	/** @type {ReturnType<typeof supabase.channel> | null} */
 	let realtimeChannel = null;
 	/** @type {ReturnType<typeof setTimeout> | null} */
@@ -65,6 +68,14 @@
 	let entries = [];
 	/** @type {any[]} */
 	let payments = [];
+	// Completed entries for the last LEDGER_WEEKS weeks, summed per week in
+	// the ledger so totals show whether or not a payment was recorded.
+	const LEDGER_WEEKS = 26;
+	/** @type {any[]} */
+	let ledgerEntries = [];
+	let ledgerSince = localDateString(getWeekBounds(-(LEDGER_WEEKS - 1)).start);
+	/** @type {HTMLElement | null} */
+	let weekCard = null;
 	let showClockInConfirm = false;
 	let clockInTime = '09:00';
 	let showClockOutConfirm = false;
@@ -90,6 +101,8 @@
 	let currentWeekOffset = 0;
 	let currentWeekStart = null;
 	let currentWeekEnd = null;
+	/** @type {string | null} 'YYYY-MM-DD' start of the week shown in The Week */
+	let viewedWeekKey = null;
 
 	// Mobile table view toggle
 	let mobileView = 'summary'; // 'summary' or 'details'
@@ -147,7 +160,7 @@
 				selectedNannyId = user.id;
 			}
 
-			await Promise.all([checkCurrentEntry(), loadWeekData(), loadPayments()]);
+			await Promise.all([checkCurrentEntry(), loadWeekData(), loadPayments(), loadLedger()]);
 
 			if (!realtimeChannel) {
 				subscribeRealtime();
@@ -228,7 +241,7 @@
 
 	async function resyncAll() {
 		try {
-			await Promise.all([checkCurrentEntry(), loadWeekData(true), loadPayments()]);
+			await Promise.all([checkCurrentEntry(), loadWeekData(true), loadPayments(), loadLedger()]);
 		} catch (err) {
 			// Background sync: keep showing the last good data
 			console.warn('Tracker resync failed:', errorMessage(err));
@@ -243,7 +256,7 @@
 
 	async function handleNannyChange() {
 		try {
-			await Promise.all([checkCurrentEntry(), loadWeekData(), loadPayments()]);
+			await Promise.all([checkCurrentEntry(), loadWeekData(), loadPayments(), loadLedger()]);
 		} catch (err) {
 			toast.error('Error loading data: ' + errorMessage(err));
 		}
@@ -257,6 +270,12 @@
 	$: currentWeekPayment = currentWeekStart
 		? payments.find((p) => p.week_start === localDateString(currentWeekStart)) || null
 		: null;
+	$: ledger = buildWeekLedger(
+		ledgerEntries,
+		payments,
+		selectedNanny?.hourly_rate || 20,
+		ledgerSince
+	);
 
 	async function checkCurrentEntry() {
 		if (!selectedNannyId) return;
@@ -298,6 +317,7 @@
 			const bounds = getWeekBounds(currentWeekOffset);
 			currentWeekStart = bounds.start;
 			currentWeekEnd = bounds.end;
+			viewedWeekKey = localDateString(bounds.start);
 
 			const { data, error } = await supabase
 				.from('time_entries')
@@ -327,12 +347,52 @@
 			.select('*')
 			.eq('nanny_id', nannyId)
 			.order('week_start', { ascending: false })
-			.limit(20);
+			.limit(LEDGER_WEEKS + 14);
 
 		if (error) throw error;
 		if (token !== paymentsLoadToken || nannyId !== selectedNannyId) return;
 
 		payments = data || [];
+	}
+
+	async function loadLedger() {
+		if (!selectedNannyId) return;
+
+		const token = ++ledgerLoadToken;
+		const nannyId = selectedNannyId;
+		const since = getWeekBounds(-(LEDGER_WEEKS - 1)).start;
+
+		const { data, error } = await supabase
+			.from('time_entries')
+			.select('id, clock_in, hours')
+			.eq('nanny_id', nannyId)
+			.not('clock_out', 'is', null)
+			.gte('clock_in', since.toISOString())
+			.order('clock_in', { ascending: false });
+
+		if (error) throw error;
+		if (token !== ledgerLoadToken || nannyId !== selectedNannyId) return;
+
+		ledgerSince = localDateString(since);
+		ledgerEntries = data || [];
+	}
+
+	// Entry edits change a week's total: refresh the ledger in the background.
+	function refreshLedger() {
+		loadLedger().catch((err) => console.warn('Ledger refresh failed:', errorMessage(err)));
+	}
+
+	// Clicking a week in the ledger opens it in The Week card above.
+	/** @param {string} weekStart 'YYYY-MM-DD' */
+	function openWeek(weekStart) {
+		const offset = weekOffsetFor(parseLocalDate(weekStart));
+		if (offset !== currentWeekOffset) {
+			currentWeekOffset = offset;
+			loadWeekData().catch((err) => {
+				toast.error('Error loading week: ' + errorMessage(err));
+			});
+		}
+		weekCard?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 	}
 
 	function changeWeek(direction) {
@@ -435,6 +495,7 @@
 	/** @param {any} row */
 	function mergeEntry(row) {
 		if (!row) return;
+		refreshLedger();
 
 		const rest = entries.filter((e) => e.id !== row.id);
 		const inViewedWeek =
@@ -817,6 +878,52 @@
 		setPaidState(paymentId, { is_paid: false, paid_date: null });
 	}
 
+	// A ledger week with hours but no payment record yet (paid outside the
+	// app, or before anyone pressed pay): record it as paid in one step.
+	/** @param {{ weekStart: string, weekEnd: string, hours: number, amount: number }} week */
+	async function recordWeekAsPaid(week) {
+		if (paymentBusyId) return;
+		paymentBusyId = week.weekStart;
+
+		const paid = { is_paid: true, paid_date: new Date().toISOString() };
+
+		try {
+			let { data, error } = await supabase
+				.from('payments')
+				.insert({
+					nanny_id: selectedNannyId,
+					week_start: week.weekStart,
+					week_end: week.weekEnd,
+					hours: Math.round(week.hours * 100) / 100,
+					amount: Math.round(week.amount * 100) / 100,
+					payment_method: 'Venmo',
+					...paid
+				})
+				.select()
+				.single();
+
+			if (error && /** @type {any} */ (error).code === '23505') {
+				// Unique index one_payment_per_nanny_week: another device recorded
+				// this week first — mark that row paid instead.
+				({ data, error } = await supabase
+					.from('payments')
+					.update(paid)
+					.eq('nanny_id', selectedNannyId)
+					.eq('week_start', week.weekStart)
+					.select()
+					.single());
+			}
+
+			if (error) throw error;
+			mergePayment(data);
+			toast.success('Week marked paid');
+		} catch (err) {
+			toast.error('Error recording payment: ' + errorMessage(err));
+		} finally {
+			paymentBusyId = null;
+		}
+	}
+
 	function exportCSV() {
 		const rate = selectedNanny?.hourly_rate || 20;
 
@@ -1053,6 +1160,7 @@
 			if (error) throw error;
 
 			entries = entries.filter((e) => e.id !== entryId);
+			refreshLedger();
 			toast.success('Entry deleted');
 		} catch (err) {
 			toast.error('Error deleting: ' + errorMessage(err));
@@ -1154,7 +1262,7 @@
 		{/if}
 
 		<!-- ── The week ─────────────────────────────────────── -->
-		<div class="card arcana">
+		<div class="card arcana week-card" bind:this={weekCard}>
 			<div class="card-header">
 				<h2>The Week</h2>
 				<div class="week-nav">
@@ -1378,50 +1486,69 @@
 			{/if}
 		</div>
 
-		<!-- ── Payments ─────────────────────────────────────── -->
+		<!-- ── The ledger: every week's total, paid or not ──── -->
 		<div class="card arcana">
 			<h2>The Purse</h2>
 
-			{#if payments.length === 0}
+			{#if ledger.length === 0}
 				<EmptyState
 					icon="coin"
 					title="The purse is empty"
-					hint="Payments appear here once a week has been settled."
+					hint="Each week's total appears here as soon as hours are logged."
 				/>
 			{:else}
+				<p class="ledger-hint">Tap a week to open its hours.</p>
+
 				<div class="desktop-table desktop-only">
 					<table>
 						<thead>
 							<tr>
 								<th>Week</th>
-								<th>Status</th>
 								<th>Hours</th>
-								<th>Amount</th>
+								<th>Total</th>
+								<th>Status</th>
 								<th>Paid</th>
-								<th>Method</th>
 								{#if profile?.role === 'family' || profile?.role === 'admin'}<th></th>{/if}
 							</tr>
 						</thead>
 						<tbody>
-							{#each payments as payment (payment.id)}
-								<tr>
-									<td>{formatDate(payment.week_start)} – {formatDate(payment.week_end)}</td>
+							{#each ledger as week (week.weekStart)}
+								{@const payment = week.payment}
+								<tr
+									class="ledger-row"
+									class:viewing={week.weekStart === viewedWeekKey}
+									on:click={() => openWeek(week.weekStart)}
+								>
+									<td>
+										<button
+											class="week-link"
+											on:click|stopPropagation={() => openWeek(week.weekStart)}
+										>
+											{formatDateShort(week.weekStart)} – {formatDateShort(week.weekEnd)}
+										</button>
+									</td>
+									<td class="num">{week.hours.toFixed(1)}</td>
+									<td class="num gilt-text">
+										${week.amount.toFixed(2)}
+										{#if payment?.is_paid && Math.abs((parseFloat(payment.amount) || 0) - week.amount) >= 0.01}
+											<span class="paid-diff"
+												>paid ${(parseFloat(payment.amount) || 0).toFixed(2)}</span
+											>
+										{/if}
+									</td>
 									<td>
 										<span
 											class="badge"
-											class:badge-live={payment.is_paid}
-											class:badge-danger={!payment.is_paid}
+											class:badge-live={payment?.is_paid}
+											class:badge-danger={!payment?.is_paid}
 										>
-											{payment.is_paid ? 'Paid' : 'Unpaid'}
+											{payment?.is_paid ? 'Paid' : 'Unpaid'}
 										</span>
 									</td>
-									<td class="num">{payment.hours?.toFixed(1) || 0}</td>
-									<td class="num gilt-text">${payment.amount?.toFixed(2) || 0}</td>
-									<td>{payment.paid_date ? formatDate(payment.paid_date) : '—'}</td>
-									<td>{payment.payment_method || 'Venmo'}</td>
+									<td>{payment?.paid_date ? formatDate(payment.paid_date) : '—'}</td>
 									{#if profile?.role === 'family' || profile?.role === 'admin'}
-										<td class="row-actions">
-											{#if payment.is_paid}
+										<td class="row-actions" on:click|stopPropagation>
+											{#if payment?.is_paid}
 												<button
 													class="btn-small"
 													on:click={() => markUnpaid(payment.id)}
@@ -1429,7 +1556,7 @@
 												>
 													Mark unpaid
 												</button>
-											{:else}
+											{:else if payment}
 												<button
 													class="btn-small growing"
 													on:click={() => markPaid(payment.id)}
@@ -1437,15 +1564,25 @@
 												>
 													<Icon name="check" size={16} /> Paid
 												</button>
+											{:else}
+												<button
+													class="btn-small growing"
+													on:click={() => recordWeekAsPaid(week)}
+													disabled={paymentBusyId === week.weekStart}
+												>
+													<Icon name="check" size={16} /> Paid
+												</button>
 											{/if}
-											<button
-												class="icon-btn danger"
-												on:click={() => deletePayment(payment.id)}
-												disabled={paymentBusyId === payment.id}
-												aria-label="Delete payment"
-											>
-												<Icon name="urn" size={16} />
-											</button>
+											{#if payment}
+												<button
+													class="icon-btn danger"
+													on:click={() => deletePayment(payment.id)}
+													disabled={paymentBusyId === payment.id}
+													aria-label="Delete payment record"
+												>
+													<Icon name="urn" size={16} />
+												</button>
+											{/if}
 										</td>
 									{/if}
 								</tr>
@@ -1455,27 +1592,35 @@
 				</div>
 
 				<div class="mobile-only entry-list">
-					{#each payments as payment (payment.id)}
-						<div class="entry-card" class:settled={payment.is_paid}>
-							<div class="entry-top">
+					{#each ledger as week (week.weekStart)}
+						{@const payment = week.payment}
+						<div
+							class="entry-card"
+							class:settled={payment?.is_paid}
+							class:viewing={week.weekStart === viewedWeekKey}
+						>
+							<button class="entry-top week-link" on:click={() => openWeek(week.weekStart)}>
 								<span class="entry-date">
-									{formatDateShort(payment.week_start)} – {formatDateShort(payment.week_end)}
+									{formatDateShort(week.weekStart)} – {formatDateShort(week.weekEnd)}
 								</span>
 								<span
 									class="badge"
-									class:badge-live={payment.is_paid}
-									class:badge-danger={!payment.is_paid}
+									class:badge-live={payment?.is_paid}
+									class:badge-danger={!payment?.is_paid}
 								>
-									{payment.is_paid ? 'Paid' : 'Unpaid'}
+									{payment?.is_paid ? 'Paid' : 'Unpaid'}
 								</span>
-							</div>
+							</button>
 							<div class="entry-bottom">
-								<span class="entry-earnings">${payment.amount?.toFixed(2) || 0}</span>
-								<span class="entry-time">{payment.hours?.toFixed(1) || 0}h</span>
+								<span class="entry-earnings">${week.amount.toFixed(2)}</span>
+								<span class="entry-time">{week.hours.toFixed(1)}h</span>
 							</div>
+							{#if payment?.is_paid && Math.abs((parseFloat(payment.amount) || 0) - week.amount) >= 0.01}
+								<span class="paid-diff">paid ${(parseFloat(payment.amount) || 0).toFixed(2)}</span>
+							{/if}
 							{#if profile?.role === 'family' || profile?.role === 'admin'}
 								<div class="entry-actions">
-									{#if payment.is_paid}
+									{#if payment?.is_paid}
 										<button
 											class="btn-small"
 											on:click={() => markUnpaid(payment.id)}
@@ -1483,7 +1628,7 @@
 										>
 											Mark unpaid
 										</button>
-									{:else}
+									{:else if payment}
 										<button
 											class="btn-small growing"
 											on:click={() => markPaid(payment.id)}
@@ -1491,15 +1636,25 @@
 										>
 											<Icon name="check" size={16} /> Mark paid
 										</button>
+									{:else}
+										<button
+											class="btn-small growing"
+											on:click={() => recordWeekAsPaid(week)}
+											disabled={paymentBusyId === week.weekStart}
+										>
+											<Icon name="check" size={16} /> Mark paid
+										</button>
 									{/if}
-									<button
-										class="icon-btn danger"
-										on:click={() => deletePayment(payment.id)}
-										disabled={paymentBusyId === payment.id}
-										aria-label="Delete payment"
-									>
-										<Icon name="urn" size={16} />
-									</button>
+									{#if payment}
+										<button
+											class="icon-btn danger"
+											on:click={() => deletePayment(payment.id)}
+											disabled={paymentBusyId === payment.id}
+											aria-label="Delete payment record"
+										>
+											<Icon name="urn" size={16} />
+										</button>
+									{/if}
 								</div>
 							{/if}
 						</div>
@@ -1910,6 +2065,57 @@
 		display: flex;
 		gap: 0.4rem;
 		margin-top: 0.3rem;
+	}
+
+	/* ── Ledger ───────────────────────────────────────────── */
+	.week-card {
+		scroll-margin-top: 1rem;
+	}
+
+	.ledger-hint {
+		margin: -0.35rem 0 0.9rem;
+		font-size: 0.85rem;
+		color: var(--text-faint);
+	}
+
+	.ledger-row {
+		cursor: pointer;
+		transition: background var(--transition-fast);
+	}
+
+	.ledger-row:hover {
+		background: var(--accent-tint);
+	}
+
+	.ledger-row.viewing,
+	.entry-card.viewing {
+		background: var(--accent-dim);
+	}
+
+	.week-link {
+		padding: 0;
+		background: none;
+		border: none;
+		font: inherit;
+		color: inherit;
+		text-align: left;
+		cursor: pointer;
+	}
+
+	.week-link:hover,
+	.week-link:focus-visible {
+		color: var(--accent-bright);
+	}
+
+	button.entry-top {
+		width: 100%;
+	}
+
+	.paid-diff {
+		display: block;
+		font-size: 0.75rem;
+		font-weight: 400;
+		color: var(--text-faint);
 	}
 
 	/* ── Week total ───────────────────────────────────────── */

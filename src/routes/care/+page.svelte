@@ -113,9 +113,14 @@
 		return typeof v === 'string' ? v : '';
 	}
 
-	/** @param {string} phone */
+	/**
+	 * Dial the first number only: "555-123-4567 ext. 204" or "555-1234 or
+	 * 555-9876" would otherwise run together into one long wrong number.
+	 * @param {string} phone
+	 */
 	function telHref(phone) {
-		return 'tel:' + String(phone).replace(/[^\d+]/g, '');
+		const first = String(phone).split(/\s*(?:ext\.?|extension|x(?=\s*\d)|\bor\b|[,;/])\s*/i)[0];
+		return 'tel:' + first.replace(/[^\d+]/g, '');
 	}
 
 	// ── Household sections ──────────────────────────────────
@@ -321,7 +326,7 @@
 				</p>
 			{:else}
 				<div class="contact-rows">
-					{#each contacts as c (c.name + (c.phone || ''))}
+					{#each contacts as c, i (i)}
 						<div class="contact-row">
 							<div class="contact-who">
 								<span class="contact-name">{c.name}</span>
@@ -355,7 +360,7 @@
 				</p>
 			{:else}
 				<div class="pickup-rows">
-					{#each pickups as p (p.name)}
+					{#each pickups as p, i (i)}
 						<div class="pickup-row">
 							<Icon name="person" size={16} />
 							<span class="pickup-name">{p.name}</span>
@@ -438,7 +443,9 @@
 										<tr><th>Medicine</th><th>Dose</th><th>Every</th></tr>
 									</thead>
 									<tbody>
-										{#each dosing as d (d.medicine)}
+										<!-- Keyed by position: two rows for one medicine (weight brackets) are real,
+										     and a duplicate key would silently drop one of them. -->
+										{#each dosing as d, i (i)}
 											<tr>
 												<td>{d.medicine}</td>
 												<td class="num">{d.dose || '—'}</td>

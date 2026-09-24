@@ -4,7 +4,13 @@
 	import { toast } from '$lib/stores/toast.js';
 	import { confirm as confirmModal } from '$lib/stores/toast.js';
 	import { errorMessage } from '$lib/errors.js';
-	import { localDateString, localTimeString, combineLocalDateTime, formatTime } from '$lib/time.js';
+	import {
+		localDateString,
+		localTimeString,
+		combineLocalDateTime,
+		formatTime,
+		nextDay
+	} from '$lib/time.js';
 	import {
 		MOMENT_KINDS,
 		momentKind,
@@ -13,6 +19,7 @@
 		spanLabel,
 		napLengthMs,
 		dayStartMs,
+		latestDose,
 		POTTY_OUTCOMES,
 		APPETITES
 	} from '$lib/care.js';
@@ -281,17 +288,19 @@
 
 	$: startOfToday = dayStartMs(now);
 
-	// The double-dose guard on the Meds button face: the latest dose today
-	// for any kid in scope (shared log, AAP-style).
-	$: lastDose = [...moments, ...recentMeds]
-		.filter((m) => m.kind === 'meds')
-		.filter((m) => new Date(m.started_at).getTime() >= startOfToday)
-		.filter(
-			(m) =>
-				(m.kid_ids || []).length === 0 ||
-				(m.kid_ids || []).some((/** @type {string} */ id) => scopedKidIds.includes(id))
-		)
-		.sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())[0];
+	// The double-dose guard (shared log, AAP-style): the latest dose in the
+	// last 24 hours — rolling, so an 11:40 PM dose still counts after midnight
+	// on an overnight shift. The button face checks the kids in scope; the
+	// meds sheet checks the kids actually picked in it.
+	$: doseWindowStart = now - 24 * 60 * 60 * 1000;
+	$: lastDose = latestDose([...moments, ...recentMeds], scopedKidIds, doseWindowStart);
+	$: sheetLastDose = latestDose([...moments, ...recentMeds], sheetKidIds, doseWindowStart);
+
+	/** @param {any} m a meds moment */
+	function doseWhen(m) {
+		const at = new Date(m.started_at).getTime();
+		return `${formatTime(m.started_at)}${at < startOfToday ? ' yesterday' : ''}`;
+	}
 
 	// Suggestions for the meds sheet: everything given recently (this
 	// shift's log included, so a dose logged a minute ago suggests itself
@@ -332,7 +341,9 @@
 			return;
 		}
 		sheetKind = kind;
-		sheetKidIds = [...scopedKidIds];
+		// Meds name the kid on purpose: with "Both" in scope, pre-ticking both
+		// would log a dose for a child who didn't get one.
+		sheetKidIds = kind === 'meds' && scopedKidIds.length > 1 ? [] : [...scopedKidIds];
 		sheetForm = { time: localTimeString(), detail: '', appetite: '', name: '', dose: '', text: '' };
 	}
 
@@ -557,7 +568,7 @@
 			}
 			// A wake time before the start means the nap crossed midnight
 			if (ended.getTime() < startedAt.getTime()) {
-				ended = new Date(ended.getTime() + 24 * 60 * 60 * 1000);
+				ended = nextDay(ended);
 			}
 			if (ended.getTime() > Date.now() + 60 * 1000) {
 				toast.error("The wake time can't be in the future");
@@ -786,7 +797,7 @@
 						{#if napRunning}
 							asleep {spanLabel(napLengthMs(soleScopeNap, now))}
 						{:else if mk.kind === 'meds' && lastDose}
-							last dose {formatTime(lastDose.started_at)}
+							last dose {doseWhen(lastDose)}
 						{:else}
 							{mk.hint}
 						{/if}
@@ -981,11 +992,16 @@
 							<label for="cs-dose">Dose</label>
 							<input id="cs-dose" type="text" bind:value={sheetForm.dose} placeholder="e.g. 5 ml" />
 						</div>
-						{#if lastDose}
+						{#if sheetLastDose}
+							{@const who =
+								kids.length > 1 ? momentKidsLabel(sheetLastDose, kidsById, kids.length) : ''}
 							<p class="sheet-note dose-note">
-								Last dose today: {lastDose.payload?.name || 'meds'} at {formatTime(
-									lastDose.started_at
-								)}
+								Last dose{who ? ` for ${who}` : ''}: {[
+									sheetLastDose.payload?.name,
+									sheetLastDose.payload?.dose
+								]
+									.filter(Boolean)
+									.join(', ') || 'meds'} at {doseWhen(sheetLastDose)}
 							</p>
 						{/if}
 					{:else}
@@ -1002,8 +1018,8 @@
 							></textarea>
 							{#if sheetKind === 'headsup'}
 								<small
-									>The one tier that reaches the parents right away — use it for the scraped-knee
-									stuff.</small
+									>Flagged in red on the parents' Today card — the scraped-knee stuff. It doesn't
+									send a notification, so call or text them for anything urgent.</small
 								>
 							{/if}
 						</div>

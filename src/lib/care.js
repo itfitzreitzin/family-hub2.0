@@ -76,6 +76,25 @@ export function dayStartMs(nowMs) {
 }
 
 /**
+ * The most recent dose since `sinceMs` given to any of `kidIds` — the
+ * double-dose guard. A dose logged without kids counts for everyone.
+ * @param {any[]} moments care_moments rows (any kinds; duplicates are fine)
+ * @param {string[]} kidIds
+ * @param {number} sinceMs
+ * @returns {any | undefined}
+ */
+export function latestDose(moments, kidIds, sinceMs) {
+	return moments
+		.filter((m) => m.kind === 'meds' && new Date(m.started_at).getTime() >= sinceMs)
+		.filter(
+			(m) =>
+				(m.kid_ids || []).length === 0 ||
+				(m.kid_ids || []).some((/** @type {string} */ id) => kidIds.includes(id))
+		)
+		.sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())[0];
+}
+
+/**
  * Human length of a span — '45m', '1h 20m', '2h'.
  * @param {number} ms
  * @returns {string}

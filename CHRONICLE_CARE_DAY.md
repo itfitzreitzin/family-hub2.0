@@ -47,7 +47,7 @@ successes-per-day trend view — celebrate the kid, never gamify them.
 ## Screens by role
 
 - **Nanny on shift (the cockpit):** shift timer shrinks to a strip
-  (Pixelify, ≥1.4rem per design-system rule), morning note pinned, kid-face
+  (tabular lining figures), morning note pinned, kid-face
   selector (per kid / both), moment buttons grid big and thumb-height, live
   timeline below, one-tap Care Sheet link. Art note: `nav-care.png` and the
   droplet / cauldron / thermometer / clipboard icons already exist in
@@ -139,7 +139,8 @@ safety-critical paths.
 ## Design-system rules that apply (from README + app.css)
 
 Semantic tokens only; moss = active/on-the-clock; ember = danger/heads-up;
-labels stay practical, arcana voice lives in ledes and empty states; Pixelify
-only for timers ≥1.4rem; tabular-nums for aligned digits; empty states get
+labels stay practical, arcana voice lives in ledes and empty states; numbers in
+the body face with lining figures (plus tabular-nums where digits align or
+tick); empty states get
 illustrated vignettes; every new table ships as a `supabase/*.sql` file with
 RLS mirroring existing policies.

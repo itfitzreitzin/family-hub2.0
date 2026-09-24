@@ -78,8 +78,11 @@ nanny on the clock at any moment** (enforced in app logic and by a DB index).
 - Email/password auth via Supabase. The login screen is styled as tarot card 0 —
   moon-phase crest (the *real* current lunar phase, computed astronomically) with a
   phase meaning as the motto; sign-up is "Light a candle."
-- First login routes to **/setup**, "Choose your card": pick Family Member or
-  Nanny/Caregiver; nannies also set an hourly rate (default $20) and Venmo handle.
+- New accounts can't choose their own role. First login routes to **/setup**
+  ("Almost in"): the person leaves their name and waits until an admin lets
+  them in as family or nanny from the Admin page's "Waiting to be let in" list.
+  Nannies added with "Add a nanny" skip the wait. (Before Sept 2026, /setup let
+  anyone pick "Family Member" — see `supabase/household_access.sql`.)
 
 ### Today (dashboard, `/dashboard`)
 - **Family/admin view:** greeting hero with the family pixel painting and moon
@@ -267,8 +270,11 @@ nanny on the clock at any moment** (enforced in app logic and by a DB index).
 | `care_sheet` | The sitter's reference: contacts jsonb, pickups jsonb, house_notes, updated_at/by | Added by `care_sheet.sql`; a `one boolean` latch enforces the singleton; also adds `allergies` + `dosing` to family_members |
 | `availability`, `schedule_blocks` | Defined in `supabase/schedule.sql` | **Legacy — no longer referenced by code** |
 
-Security: RLS on all tables — any authenticated household member can read;
-writes require ownership or family/admin role. Realtime publication on
+Security: RLS on all tables, set by `supabase/household_access.sql` — reading
+or writing anything needs a role (family, admin or nanny), so an account
+without one sees nothing; writes also require ownership or family/admin; and a
+trigger lets only an admin give out or change a role (parents may create a
+nanny's profile). Realtime publication on
 `time_entries` and `payments`. Two SQL "fix" scripts in `supabase/` document
 production incidents (duplicate open shifts; duplicate weekly payments) and the
 constraints that now prevent them.
@@ -306,12 +312,14 @@ system, documented in the README and enforced by semantic tokens.
 - **Tokens only** — `--surface`, `--text`, `--accent` (gilt), `--growing` (moss =
   "on the clock"), `--danger` (ember), `--border-gilt`. Both themes define the
   same set.
-- **Type:** Cinzel (headings), Cinzel Decorative (wordmark), Alegreya Sans (body),
-  Pixelify Sans (the shift timer only — its 5/8 are confusable small, so tables
-  use tabular-nums body figures). All OFL, self-hosted.
-- **Icons as source code:** original 16×16 sprites in `src/lib/icons/sprites.js`
-  where each icon *is* its picture — sixteen rows of sixteen characters
-  (`#` = currentColor, `o` = gilt, `~` = moss…). Edit the art by editing the grid.
+- **Type:** Cinzel (headings), Cinzel Decorative (wordmark), Alegreya Sans (body
+  and every number — lining figures throughout, tabular where digits must align
+  or tick). All OFL, self-hosted. The Pixelify Sans "digital" timer face was
+  retired in Sept 2026 for readability.
+- **Icons as source code:** original line glyphs on a 24-unit grid in
+  `src/lib/icons/glyphs.js` (they replaced hand-coded 16×16 pixel sprites that
+  blurred at small sizes). New pixel sprites are being sourced for the art slots
+  — moment buttons, empty states, portraits.
 - **Pixel paintings** (downscaled from 1024px masters): the hearth family scene,
   gilt corner filigree, a three-part painted shelf, still lifes, painted nav
   icons, and **portraits of Nick, Sarah, Jack, Emma, and the nanny**. A stable

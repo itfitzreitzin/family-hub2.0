@@ -187,7 +187,6 @@
 	--font-display: 'Cinzel', 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
 	--font-wordmark: 'Cinzel Decorative', var(--font-display);
 	--font-body: 'Alegreya Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-	--font-pixel: 'Pixelify Sans', 'Silkscreen', 'Courier New', monospace;
 
 	/* Safe area insets */
 	--safe-top: env(safe-area-inset-top, 0px);
@@ -242,6 +241,10 @@ body {
 	line-height: 1.6;
 	color: var(--text);
 	font-size: 1.0625rem;
+	/* Alegreya Sans defaults to old-style figures, whose 3 4 5 7 9 drop below
+	   the baseline. Nice in a novel, jumpy in an app that is mostly times and
+	   money — so every figure sits on the line. */
+	font-variant-numeric: lining-nums;
 	-webkit-font-smoothing: antialiased;
 	-moz-osx-font-smoothing: grayscale;
 	overflow-x: hidden;
@@ -372,11 +375,7 @@ small {
 
 /* ── Utility type styles ── */
 
-/*
- * Pixelify Sans is drawn on a coarse pixel grid and turns to mush below
- * ~12px, so small caps labels use the body face with heavy tracking instead.
- * The pixel face is reserved for numerals and anything 0.75rem or larger.
- */
+/* Small caps labels: the body face with heavy tracking. */
 .label-caps,
 .rune-label {
 	font-family: var(--font-body);
@@ -389,11 +388,6 @@ small {
 
 .gilt-text {
 	color: var(--accent-bright);
-}
-
-.pixel {
-	font-family: var(--font-pixel);
-	font-weight: 500;
 }
 
 /* A gilt rule with a diamond in the middle — the tarot section break */
@@ -562,14 +556,14 @@ small {
 }
 
 /*
- * Numerals in dense contexts use the body face with tabular figures. Pixelify
- * Sans is reserved for display sizes — its 5 and 8 are too close to tell apart
- * at table scale, which is not a risk worth taking in a payments ledger.
+ * Numerals in dense contexts: tabular lining figures, so columns of hours and
+ * money line up digit for digit. (tabular-nums alone gives Alegreya's tabular
+ * *old-style* set, whose digits bob above and below the line.)
  */
 .num,
 td.num {
 	font-family: var(--font-body);
-	font-variant-numeric: tabular-nums;
+	font-variant-numeric: lining-nums tabular-nums;
 	font-weight: 600;
 	color: var(--text);
 }
@@ -577,6 +571,16 @@ td.num {
 /* ============================================
    7. BUTTONS
    ============================================ */
+
+/*
+ * Browsers give <button> its own font (Arial, 13px) rather than inheriting.
+ * Take the family and figures from the page so a bare button — a moment tile,
+ * a heart count — doesn't drop into the system face. Size stays per-component.
+ */
+button {
+	font-family: inherit;
+	font-variant-numeric: inherit;
+}
 
 button,
 .btn,
@@ -656,8 +660,6 @@ button:disabled {
 	color: var(--text-on-accent);
 	box-shadow: var(--shadow-sm);
 	--icon-accent: currentColor;
-	--icon-growing: currentColor;
-	--icon-hi: currentColor;
 }
 
 .btn-primary:hover:not(:disabled) {
@@ -683,10 +685,8 @@ button:disabled {
 	background: linear-gradient(160deg, var(--moss), var(--moss-deep));
 	border-color: var(--moss-deep);
 	color: #f4f9f0;
-	/* Sprite colour slots follow the label, or the sprout vanishes moss-on-moss. */
+	/* Solid glyph parts follow the label rather than gilt-on-moss. */
 	--icon-accent: currentColor;
-	--icon-growing: currentColor;
-	--icon-hi: currentColor;
 }
 
 .btn-success:hover:not(:disabled) {
@@ -718,6 +718,7 @@ button:disabled {
 	gap: 0.35rem;
 	min-height: 36px;
 	padding: 0.35rem 0.8rem;
+	font-family: var(--font-body);
 	font-size: 0.85rem;
 	font-weight: 600;
 	border-radius: 6px;
@@ -846,6 +847,7 @@ textarea {
 	width: 100%;
 	padding: 0.7rem 0.85rem;
 	font-family: var(--font-body);
+	font-variant-numeric: lining-nums;
 	color: var(--text);
 	background: var(--surface-2);
 	border: 1px solid var(--border);

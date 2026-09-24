@@ -3,6 +3,9 @@
 
 import { localDateString, parseLocalDate } from './time.js';
 
+/** How many weeks the Purse reads from live entries (older weeks fall back to their payment rows). */
+export const LEDGER_WEEKS = 26;
+
 /**
  * 'YYYY-MM-DD' of the Sunday that starts the local week containing `value`.
  * @param {string | Date} value
@@ -63,4 +66,56 @@ export function buildWeekLedger(entries, payments, rate, since) {
 		})
 		.filter((row) => row.hours > 0 || row.payment)
 		.sort((a, b) => b.weekStart.localeCompare(a.weekStart));
+}
+
+/**
+ * Where a ledger week stands. 'short' is a week recorded as paid for less
+ * than its hours now come to — hours logged after the payment, or a week
+ * paid while a shift was still running — so it can't hide behind "Paid".
+ *
+ * @param {{ amount: number, payment: any }} week a buildWeekLedger row
+ * @returns {{ status: 'paid' | 'short' | 'unpaid', owed: number }}
+ */
+export function weekPayStatus(week) {
+	const payment = week.payment;
+	if (!payment?.is_paid) return { status: 'unpaid', owed: week.amount };
+	const owed = Math.round((week.amount - (parseFloat(payment.amount) || 0)) * 100) / 100;
+	return owed >= 0.01 ? { status: 'short', owed } : { status: 'paid', owed: 0 };
+}
+
+/**
+ * Everything the Purse shows as owed, summed across nannies: unpaid weeks at
+ * their total, short-paid weeks by the difference. Same rules as the
+ * Tracker's ledger, so Today and the Tracker never disagree about money.
+ *
+ * @param {{ nanny_id: string, clock_in: string, hours: string | number | null }[]} entries completed entries on or after `since`, any nanny
+ * @param {any[]} payments payment rows, any nanny
+ * @param {(nannyId: string) => number} rateFor hourly rate for a nanny
+ * @param {string} since 'YYYY-MM-DD' week start of the oldest loaded entries
+ * @param {string} [before] 'YYYY-MM-DD' — count only weeks starting earlier (finished weeks)
+ * @returns {{ amount: number, hours: number, weeks: number }}
+ */
+export function outstandingBalance(entries, payments, rateFor, since, before) {
+	const nannyIds = new Set([...entries.map((e) => e.nanny_id), ...payments.map((p) => p.nanny_id)]);
+	let amount = 0;
+	let hours = 0;
+	let weeks = 0;
+	for (const nannyId of nannyIds) {
+		const ledger = buildWeekLedger(
+			entries.filter((e) => e.nanny_id === nannyId),
+			payments.filter((p) => p.nanny_id === nannyId),
+			rateFor(nannyId),
+			since
+		);
+		for (const week of ledger) {
+			if (before && week.weekStart >= before) continue;
+			const { status, owed } = weekPayStatus(week);
+			if (status === 'paid' || owed < 0.01) continue;
+			amount += owed;
+			hours +=
+				status === 'short' ? week.hours - (parseFloat(week.payment?.hours) || 0) : week.hours;
+			weeks++;
+		}
+	}
+	return { amount: Math.round(amount * 100) / 100, hours, weeks };
 }

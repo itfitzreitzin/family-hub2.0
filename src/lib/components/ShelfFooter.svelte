@@ -1,5 +1,6 @@
 <script>
 	import { ART } from '$lib/art.js';
+	import { formatMoney } from '$lib/money.js';
 
 	/**
 	 * The wood shelf that grounds a page: three pixel still lifes standing on
@@ -21,7 +22,7 @@
 	} = $props();
 
 	let hasBalance = $derived(typeof balanceDue === 'number' && Number.isFinite(balanceDue));
-	let amount = $derived(hasBalance ? `$${balanceDue.toFixed(2)}` : '');
+	let amount = $derived(hasBalance ? formatMoney(balanceDue) : '');
 	let hasPlankContent = $derived(hasBalance || !!note);
 </script>
 

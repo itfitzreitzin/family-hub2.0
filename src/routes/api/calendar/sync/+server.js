@@ -46,11 +46,14 @@ export async function POST({ request }) {
 		return json({ error: 'Unauthorized' }, { status: 401 });
 	}
 
-	// Get request body
+	// Get request body. timeZone is the household's (the browser's) IANA zone:
+	// all-day events and floating times are read in it, not the server's.
 	let calendarId;
+	let timeZone;
 	try {
 		const body = await request.json();
 		calendarId = body.calendarId;
+		timeZone = typeof body.timeZone === 'string' ? body.timeZone : undefined;
 	} catch {
 		return json({ error: 'Invalid request body' }, { status: 400 });
 	}
@@ -103,7 +106,8 @@ export async function POST({ request }) {
 		// Fetch and parse the iCal feed (recurrences expanded per-instance)
 		const events = await fetchAndParseICal(calendar.calendar_url, {
 			rangeStart: windowStart,
-			rangeEnd: windowEnd
+			rangeEnd: windowEnd,
+			timeZone
 		});
 
 		const relevantEvents = events.filter((e) => e.end > windowStart && e.start < windowEnd);

@@ -1,38 +1,27 @@
 <script>
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { toast } from '$lib/stores/toast.js';
 	import { supabase } from '$lib/supabase';
+	import { errorMessage } from '$lib/errors.js';
 	import Icon from '$lib/icons/Icon.svelte';
 	import MoonPhase from '$lib/components/MoonPhase.svelte';
 	import ThemeToggle from '$lib/components/ThemeToggle.svelte';
 
-	// The two roles, dressed as minor arcana.
-	const ROLES = [
-		{
-			value: 'family',
-			name: 'Family Member',
-			title: 'The Household',
-			desc: 'Keep the schedules, settle the accounts, mind the calendar.',
-			icon: 'cottage',
-			numeral: 'I'
-		},
-		{
-			value: 'nanny',
-			name: 'Nanny / Caregiver',
-			title: 'The Guardian',
-			desc: 'Track your hours, watch the little ones, collect your due.',
-			icon: 'sprout',
-			numeral: 'II'
-		}
-	];
+	/*
+	 * A new account doesn't choose its own role: an admin lets people in
+	 * (Admin → Waiting to be let in), and the database refuses a role set any
+	 * other way (supabase/household_access.sql). Until then this is where a
+	 * new account waits: leave a name so the admin knows who is knocking.
+	 */
 
+	/** @type {any} */
 	let user = null;
 	let fullName = '';
-	let role = '';
-	let hourlyRate = 20;
-	let venmoUsername = '';
+	let saved = false;
 	let loading = false;
+	let checking = false;
 
 	onMount(async () => {
 		const {
@@ -40,46 +29,68 @@
 		} = await supabase.auth.getUser();
 
 		if (!currentUser) {
-			goto('/');
+			goto(resolve('/'));
 			return;
 		}
 
 		user = currentUser;
 
-		// Pre-fill email as name suggestion
-		fullName = currentUser.email.split('@')[0];
-	});
+		const { data: profile } = await supabase
+			.from('profiles')
+			.select('role, full_name')
+			.eq('id', user.id)
+			.maybeSingle();
 
-	async function completeSetup() {
-		if (!role) {
-			toast.error('Please select your role');
+		if (profile?.role) {
+			goto(resolve('/dashboard'));
 			return;
 		}
 
-		if (!fullName) {
+		saved = !!profile?.full_name;
+		// Pre-fill email as name suggestion
+		fullName = profile?.full_name || currentUser.email.split('@')[0];
+	});
+
+	async function saveName() {
+		const name = fullName.trim();
+		if (!name) {
 			toast.error('Please enter your name');
 			return;
 		}
 
 		loading = true;
-
 		try {
-			const { error } = await supabase.from('profiles').upsert({
-				id: user.id,
-				role,
-				full_name: fullName,
-				hourly_rate: role === 'nanny' ? hourlyRate : null,
-				venmo_username: role === 'nanny' ? venmoUsername : null
-			});
-
+			const { error } = await supabase.from('profiles').upsert({ id: user.id, full_name: name });
 			if (error) throw error;
-
-			// Redirect to dashboard
-			goto('/dashboard');
+			saved = true;
 		} catch (err) {
-			toast.error('Error: ' + err.message);
+			toast.error('Error: ' + errorMessage(err));
+		} finally {
 			loading = false;
 		}
+	}
+
+	async function checkAgain() {
+		checking = true;
+		try {
+			const { data: profile } = await supabase
+				.from('profiles')
+				.select('role')
+				.eq('id', user.id)
+				.maybeSingle();
+			if (profile?.role) {
+				goto(resolve('/dashboard'));
+			} else {
+				toast.info('Not yet — ask an admin to let you in.');
+			}
+		} finally {
+			checking = false;
+		}
+	}
+
+	async function signOut() {
+		await supabase.auth.signOut();
+		goto(resolve('/'));
 	}
 </script>
 
@@ -91,64 +102,47 @@
 	<div class="arcanum">
 		<header class="crest">
 			<MoonPhase size={34} />
-			<h1>Choose your card</h1>
-			<p class="motto">Every hearth needs its keepers</p>
+			<h1>Almost in</h1>
+			<p class="motto">An admin lets new people in</p>
 		</header>
 
 		<div class="rule" aria-hidden="true"><Icon name="star" size={11} /></div>
 
-		<div class="role-selection">
-			{#each ROLES as option (option.value)}
-				<label class="role-card" class:selected={role === option.value}>
-					<input type="radio" bind:group={role} value={option.value} />
-					<span class="numeral" aria-hidden="true">{option.numeral}</span>
-					<span class="role-icon"><Icon name={option.icon} size={40} /></span>
-					<span class="role-body">
-						<span class="role-name">{option.name}</span>
-						<span class="role-title">{option.title}</span>
-						<span class="role-desc">{option.desc}</span>
-					</span>
-					<span class="tick" aria-hidden="true"><Icon name="check" size={14} /></span>
-				</label>
-			{/each}
-		</div>
+		{#if !saved}
+			<p class="waiting-note">
+				Leave your name so they know who's knocking. Once they've let you in, this opens the app.
+			</p>
 
-		{#if role}
 			<div class="details-form">
-				<div class="rule" aria-hidden="true"><Icon name="quill" size={11} /></div>
-
 				<div class="input-group">
 					<label for="name">Full name</label>
 					<input id="name" type="text" bind:value={fullName} placeholder="Your name" required />
 				</div>
 
-				{#if role === 'nanny'}
-					<div class="input-group">
-						<label for="rate">Hourly rate ($)</label>
-						<input
-							id="rate"
-							type="number"
-							bind:value={hourlyRate}
-							placeholder="20"
-							min="0"
-							step="0.50"
-						/>
-					</div>
-
-					<div class="input-group">
-						<label for="venmo">Venmo username <span class="optional">(optional)</span></label>
-						<input id="venmo" type="text" bind:value={venmoUsername} placeholder="@username" />
-					</div>
-				{/if}
-
-				<button class="btn btn-primary btn-large seal" on:click={completeSetup} disabled={loading}>
+				<button class="btn btn-primary btn-large seal" on:click={saveName} disabled={loading}>
 					{#if loading}
 						<span class="wisp" aria-hidden="true"></span>
-						<span>Setting the table…</span>
+						<span>Saving…</span>
 					{:else}
-						<Icon name="key" size={16} />
-						<span>Take your place</span>
+						<Icon name="door" size={16} />
+						<span>Knock</span>
 					{/if}
+				</button>
+			</div>
+		{:else}
+			<p class="waiting-note">
+				Thanks, <strong>{fullName}</strong>. Ask whoever runs Family Hub for your household to let
+				you in from the Admin page, then check again.
+			</p>
+
+			<div class="after-actions">
+				<button class="btn btn-primary" on:click={checkAgain} disabled={checking}>
+					<Icon name="key" size={16} />
+					{checking ? 'Checking…' : 'Check again'}
+				</button>
+				<button class="btn btn-secondary" on:click={signOut}>
+					<Icon name="door" size={16} />
+					Sign out
 				</button>
 			</div>
 		{/if}
@@ -236,122 +230,31 @@
 		color: var(--text-faint);
 	}
 
-	/* ── Role cards: two minor arcana to choose between ── */
-	.role-selection {
-		display: flex;
-		flex-direction: column;
-		gap: 0.75rem;
-	}
-
-	.role-card {
-		position: relative;
-		display: flex;
-		align-items: center;
-		gap: 1rem;
-		margin: 0;
-		padding: 1rem 1.1rem;
-		text-transform: none;
-		letter-spacing: normal;
-		font-size: 1rem;
-		font-weight: 400;
-		background: var(--surface-2);
-		border: 1px solid var(--border);
-		border-radius: var(--card-radius);
-		cursor: pointer;
-		transition: all var(--transition-normal);
-		--icon-accent: var(--text-faint);
-		color: var(--text-muted);
-	}
-
-	.role-card:hover {
-		border-color: var(--border-gilt);
-		transform: translateY(-2px);
-		--icon-accent: var(--accent);
-	}
-
-	.role-card.selected {
-		border-color: var(--accent);
-		background: var(--accent-tint);
-		box-shadow: var(--glow-gilt);
-		--icon-accent: var(--accent-bright);
-	}
-
-	.role-card input {
-		position: absolute;
-		opacity: 0;
-		width: 1px;
-		height: 1px;
-	}
-
-	.numeral {
-		position: absolute;
-		top: 0.45rem;
-		right: 0.65rem;
-		font-family: var(--font-display);
-		font-size: 0.72rem;
-		letter-spacing: 0.1em;
-		color: var(--border-gilt);
-	}
-
-	.role-icon {
-		display: grid;
-		place-items: center;
-		flex-shrink: 0;
-	}
-
-	.role-body {
-		display: flex;
-		flex-direction: column;
-		gap: 0.15rem;
-		min-width: 0;
-	}
-
-	.role-name {
-		font-family: var(--font-display);
-		font-size: 1.02rem;
-		font-weight: 600;
-		letter-spacing: 0.03em;
-		color: var(--text);
-	}
-
-	.role-title {
-		font-family: var(--font-body);
-		font-size: 0.68rem;
-		font-weight: 700;
-		letter-spacing: 0.13em;
-		text-transform: uppercase;
-		color: var(--accent);
-	}
-
-	.role-desc {
-		font-size: 0.88rem;
-		color: var(--text-faint);
-		line-height: 1.4;
-	}
-
-	.tick {
-		margin-left: auto;
-		flex-shrink: 0;
-		color: var(--accent-bright);
-		opacity: 0;
-		transform: scale(0.6);
-		transition: all var(--transition-normal);
-	}
-
-	.role-card.selected .tick {
-		opacity: 1;
-		transform: scale(1);
-	}
-
 	.details-form {
 		animation: rise 0.4s var(--ease-out-expo);
 	}
 
-	.optional {
-		text-transform: none;
-		letter-spacing: normal;
-		font-weight: 400;
-		opacity: 0.7;
+	.waiting-note {
+		margin: 0 0 1.1rem;
+		font-size: 0.98rem;
+		line-height: 1.55;
+		color: var(--text-muted);
+		text-align: center;
+	}
+
+	.waiting-note strong {
+		color: var(--text);
+	}
+
+	.after-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.6rem;
+		margin-top: 0.75rem;
+	}
+
+	.after-actions .btn {
+		flex: 1;
 	}
 
 	.seal {

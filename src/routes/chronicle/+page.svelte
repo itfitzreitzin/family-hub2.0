@@ -614,7 +614,9 @@
 							{t.label}
 						</button>
 					{/each}
-					{#if authors.length > 1}
+					<!-- Filtering narrows the feed to one hand, which would narrow the list
+					     to one and hide it — keep it up while a filter is set, to clear. -->
+					{#if authors.length > 1 || authorFilter}
 						<select
 							class="author-select"
 							bind:value={authorFilter}

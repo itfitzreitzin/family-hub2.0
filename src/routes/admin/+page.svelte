@@ -7,11 +7,16 @@
 	import Icon from '$lib/icons/Icon.svelte';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
+	import { formatDateShort } from '$lib/time.js';
+	import { errorMessage } from '$lib/errors.js';
 
 	let user = null;
 	let profile = null;
 	let loading = true;
 	let nannies = [];
+	/** Accounts that signed up and are waiting for an admin to give them a role. */
+	/** @type {any[]} */
+	let waiting = [];
 	let selectedNanny = null;
 	let showAddNanny = false;
 
@@ -50,7 +55,7 @@
 			return;
 		}
 
-		await loadNannies();
+		await Promise.all([loadNannies(), loadWaiting()]);
 		loading = false;
 	});
 
@@ -62,6 +67,47 @@
 			.order('full_name');
 
 		nannies = data || [];
+	}
+
+	async function loadWaiting() {
+		const { data } = await supabase
+			.from('profiles')
+			.select('id, full_name, created_at')
+			.is('role', null)
+			.order('created_at');
+
+		waiting = data || [];
+	}
+
+	/**
+	 * Only an admin can hand out a role (supabase/household_access.sql), and
+	 * it opens the household's schedule, care notes and pay — so ask first.
+	 * @param {any} person
+	 * @param {'family' | 'nanny'} role
+	 */
+	async function letIn(person, role) {
+		const as = role === 'family' ? 'a family member' : 'a nanny';
+		const confirmed = await confirmModal.show({
+			title: 'Let them in',
+			message: `Let ${person.full_name || 'this account'} in as ${as}? They'll see the household's schedule, care notes and pay records.`,
+			confirmText: 'Let in'
+		});
+		if (!confirmed) return;
+
+		try {
+			const { data, error } = await supabase
+				.from('profiles')
+				.update({ role })
+				.eq('id', person.id)
+				.select('id');
+			if (error) throw error;
+			if (!data || data.length === 0)
+				throw new Error('That account is gone, or already has a role.');
+			toast.success(`${person.full_name || 'They'} can come in now`);
+			await Promise.all([loadNannies(), loadWaiting()]);
+		} catch (err) {
+			toast.error('Error: ' + errorMessage(err));
+		}
 	}
 
 	function editNanny(nanny) {
@@ -185,17 +231,52 @@
 				<p class="lede">The Keys — everything the household can change.</p>
 			</div>
 			<button class="btn btn-primary" on:click={() => (showAddNanny = true)}>
-				<Icon name="plus" size={16} /> Add a keeper
+				<Icon name="plus" size={16} /> Add a nanny
 			</button>
 		</header>
 
+		{#if waiting.length > 0}
+			<div class="card arcana">
+				<h2>Waiting to be let in ({waiting.length})</h2>
+				<p class="lede">
+					New accounts can't choose their own role. Let in only people you know — anyone let in sees
+					the household.
+				</p>
+
+				<div class="nanny-grid">
+					{#each waiting as person (person.id)}
+						<article class="nanny-card">
+							<div class="nanny-top">
+								<span class="sigil" aria-hidden="true"><Icon name="door" size={24} /></span>
+								<div class="nanny-info">
+									<h3>{person.full_name || 'No name yet'}</h3>
+									{#if person.created_at}
+										<p class="venmo">Signed up {formatDateShort(person.created_at)}</p>
+									{/if}
+								</div>
+							</div>
+
+							<div class="nanny-actions">
+								<button class="btn-small" on:click={() => letIn(person, 'family')}>
+									<Icon name="cottage" size={16} /> Family
+								</button>
+								<button class="btn-small" on:click={() => letIn(person, 'nanny')}>
+									<Icon name="sprout" size={16} /> Nanny
+								</button>
+							</div>
+						</article>
+					{/each}
+				</div>
+			</div>
+		{/if}
+
 		<div class="card arcana">
-			<h2>Keepers ({nannies.length})</h2>
+			<h2>Nannies ({nannies.length})</h2>
 
 			{#if nannies.length === 0}
 				<EmptyState
 					icon="cauldron"
-					title="No keepers yet"
+					title="No nannies yet"
 					hint="Add someone and their hours, rate and payments all become manageable from here."
 				>
 					<button class="btn btn-primary" on:click={() => (showAddNanny = true)}>
@@ -239,7 +320,7 @@
 	{#if showAddNanny}
 		<div class="modal-overlay" on:click={cancelNannyForm} role="presentation">
 			<div class="modal-content" on:click|stopPropagation role="dialog" aria-modal="true">
-				<h2>{selectedNanny ? 'Edit keeper' : 'Add a keeper'}</h2>
+				<h2>{selectedNanny ? 'Edit nanny' : 'Add a nanny'}</h2>
 
 				<form on:submit|preventDefault={saveNanny}>
 					<div class="form-group">

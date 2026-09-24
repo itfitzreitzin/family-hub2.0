@@ -3,7 +3,13 @@
 	import { supabase } from '$lib/supabase';
 	import { toast } from '$lib/stores/toast.js';
 	import { errorMessage } from '$lib/errors.js';
-	import { localDateString, formatTime, formatDateWeekday, parseLocalDate } from '$lib/time.js';
+	import {
+		localDateString,
+		formatTime,
+		formatDateWeekday,
+		parseLocalDate,
+		normalizeDateValue
+	} from '$lib/time.js';
 	import {
 		momentKind,
 		momentSummary,
@@ -35,6 +41,9 @@
 	let morningNote = null;
 	/** @type {any} */
 	let seenReact = null;
+	/** Tomorrow's note, once it's evening and that's the one being written. */
+	/** @type {any} */
+	let nextNote = null;
 	/** @type {any} */
 	let wrapUp = null;
 	/** @type {any[]} */
@@ -58,7 +67,9 @@
 	// Morning-note modal
 	let showNoteModal = false;
 	let noteSaving = false;
-	let noteForm = { date: localDateString(), body: '' };
+	/** `id` set = amending that note; null = writing a new one. */
+	/** @type {{ id: any, date: string, body: string }} */
+	let noteForm = { id: null, date: localDateString(), body: '' };
 
 	onMount(() => {
 		init();
@@ -227,15 +238,21 @@
 	}
 
 	async function loadMorningNote() {
+		const today = localDateString();
+		const target = defaultMorningNoteDate(Date.now());
 		const { data, error } = await supabase
 			.from('chronicle_entries')
 			.select('*')
-			.eq('entry_date', localDateString())
-			.contains('tags', ['morning'])
-			.maybeSingle();
+			.in('entry_date', target === today ? [today] : [today, target])
+			.contains('tags', ['morning']);
 
 		if (error) throw error;
-		morningNote = data;
+		const notes = data || [];
+		morningNote = notes.find((n) => normalizeDateValue(n.entry_date) === today) || null;
+		nextNote =
+			target === today
+				? null
+				: notes.find((n) => normalizeDateValue(n.entry_date) === target) || null;
 
 		if (morningNote) {
 			const { data: reacts } = await supabase
@@ -255,13 +272,17 @@
 	$: canManage = profile?.role === 'family' || profile?.role === 'admin';
 	$: myHeart = heartReacts.find((r) => r.user_id === user?.id) || null;
 
+	// Before five the button tends this morning's note; after five it writes
+	// (or amends) tomorrow's — the habit is writing it the night before, and
+	// today's note has already been seen.
+	$: noteTarget = defaultMorningNoteDate(now);
+	$: eveningNote = noteTarget !== localDateString(new Date(now));
+
 	function openNoteModal() {
-		if (morningNote) {
-			noteForm = { date: morningNote.entry_date, body: morningNote.body };
-		} else {
-			// Writing after five in the evening usually means tomorrow's note.
-			noteForm = { date: defaultMorningNoteDate(now), body: '' };
-		}
+		const existing = eveningNote ? nextNote : morningNote;
+		noteForm = existing
+			? { id: existing.id, date: normalizeDateValue(existing.entry_date), body: existing.body }
+			: { id: null, date: noteTarget, body: '' };
 		showNoteModal = true;
 	}
 
@@ -281,11 +302,11 @@
 		noteSaving = true;
 
 		try {
-			if (morningNote && morningNote.entry_date === noteForm.date) {
+			if (noteForm.id) {
 				const { error } = await supabase
 					.from('chronicle_entries')
-					.update({ body })
-					.eq('id', morningNote.id);
+					.update({ body, entry_date: noteForm.date })
+					.eq('id', noteForm.id);
 
 				if (error) throw error;
 				toast.success('Morning note amended');
@@ -310,8 +331,20 @@
 			await loadMorningNote();
 		} catch (err) {
 			if (/** @type {any} */ (err).code === '23505') {
-				// Unique index one_morning_note_per_day
-				toast.error('That morning already has a note — amend it instead.');
+				// Unique index one_morning_note_per_day. Point the form at that
+				// note (keeping what was typed) so a second Pin amends it.
+				const { data: clash } = await supabase
+					.from('chronicle_entries')
+					.select('id')
+					.eq('entry_date', noteForm.date)
+					.contains('tags', ['morning'])
+					.maybeSingle();
+				if (clash) {
+					noteForm = { ...noteForm, id: clash.id };
+					toast.info('That morning already has a note — pin again to replace it with this.');
+				} else {
+					toast.error('That morning already has a note.');
+				}
 				loadMorningNote().catch(() => {});
 			} else {
 				toast.error('Error saving note: ' + errorMessage(err));
@@ -362,7 +395,11 @@
 			{#if canManage}
 				<button class="btn-small mn-write" on:click={openNoteModal}>
 					<Icon name="quill" size={13} />
-					{morningNote ? 'Amend' : 'Write'}
+					{#if eveningNote}
+						{nextNote ? "Amend tomorrow's" : "Write tomorrow's"}
+					{:else}
+						{morningNote ? 'Amend' : 'Write'}
+					{/if}
 				</button>
 			{/if}
 		</div>
@@ -374,6 +411,12 @@
 		{:else}
 			<p class="mn-empty">
 				Nothing pinned for this morning — a note here greets the shift and skips the text thread.
+			</p>
+		{/if}
+		{#if canManage && eveningNote}
+			<p class="mn-next">
+				<span class="mn-label">Tomorrow</span>
+				{nextNote ? nextNote.body : 'Not written yet.'}
 			</p>
 		{/if}
 	</div>
@@ -394,11 +437,7 @@
 					<div class="lf-row" class:flagged={m.kind === 'headsup'}>
 						<span class="lf-time">{formatTime(m.started_at)}</span>
 						<span class="lf-icon">
-							{#if mk.art}
-								<PixelArt src={mk.art} size={14} />
-							{:else}
-								<Icon name={mk.sprite || 'star'} size={14} />
-							{/if}
+							<Icon name={mk.glyph} size={14} />
 						</span>
 						<span class="lf-text">
 							{#if kids.length > 1 && momentKidsLabel(m, kidsById, kids.length)}
@@ -577,6 +616,19 @@
 		color: var(--text-faint);
 	}
 
+	.mn-next {
+		margin: 0.6rem 0 0;
+		padding-top: 0.5rem;
+		border-top: 1px solid var(--border-soft);
+		font-size: 0.88rem;
+		color: var(--text-muted);
+		overflow-wrap: anywhere;
+	}
+
+	.mn-next .mn-label {
+		margin-right: 0.4rem;
+	}
+
 	.mn-empty {
 		margin: 0.45rem 0 0;
 		font-size: 0.88rem;
@@ -585,11 +637,14 @@
 	}
 
 	/* ── Status + feed ────────────────────────────────────── */
+	/* A sentence, so the body face — Cinzel has no lowercase and turns a
+	   whole status line into shouting capitals. */
 	.status-line {
 		margin: 0 0 0.75rem;
-		font-family: var(--font-display);
-		font-size: 1rem;
-		line-height: 1.45;
+		font-family: var(--font-body);
+		font-size: 1.08rem;
+		font-weight: 500;
+		line-height: 1.5;
 		color: var(--text);
 	}
 

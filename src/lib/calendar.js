@@ -9,8 +9,10 @@ import {
 	localDateString,
 	parseLocalDate,
 	combineLocalDateTime,
-	normalizeDateValue
+	normalizeDateValue,
+	nextDay
 } from '$lib/time.js';
+import { formatMoney } from '$lib/money.js';
 
 /**
  * One unified calendar entry, whatever table it came from.
@@ -65,6 +67,13 @@ export function expandRecurringInstances(event, rangeStart, rangeEnd) {
 	const seriesStartDay = new Date(startDate);
 	seriesStartDay.setHours(0, 0, 0, 0);
 
+	// Biweekly counts whole weeks from the Sunday of the series' first week, as
+	// shiftTemplates.js does. Counting from the start *day* flipped parity
+	// mid-week: a Mon+Wed series begun on a Wednesday alternated days
+	// (Wed, Mon, Wed, Mon…) instead of weeks.
+	const seriesWeekStart = new Date(seriesStartDay);
+	seriesWeekStart.setDate(seriesWeekStart.getDate() - seriesWeekStart.getDay());
+
 	const cursor = new Date(rangeStart);
 	cursor.setHours(0, 0, 0, 0);
 
@@ -79,7 +88,7 @@ export function expandRecurringInstances(event, rangeStart, rangeEnd) {
 		// any series not created at exactly midnight. Math.round absorbs the ±1h
 		// a DST boundary adds to the day count.
 		const daysDiff = Math.round(
-			(cursor.getTime() - seriesStartDay.getTime()) / (24 * 60 * 60 * 1000)
+			(cursor.getTime() - seriesWeekStart.getTime()) / (24 * 60 * 60 * 1000)
 		);
 		const weeksDiff = Math.floor(daysDiff / 7);
 		if (event.recurring_pattern === 'biweekly' && weeksDiff % 2 !== 0) continue;
@@ -241,7 +250,7 @@ export function toCalendarItems({
 		const start = combineLocalDateTime(shift.date, shift.start_time.slice(0, 5));
 		let end = combineLocalDateTime(shift.date, shift.end_time.slice(0, 5));
 		// Overnight shift: end wall-clock before start means it crosses midnight
-		if (end <= start) end = new Date(end.getTime() + 24 * 60 * 60 * 1000);
+		if (end <= start) end = nextDay(end);
 
 		items.push({
 			id: `shift-${shift.id}`,
@@ -306,7 +315,7 @@ export function toCalendarItems({
 		items.push({
 			id: `payment-${payment.id}`,
 			kind: 'payment',
-			title: `Payment due $${Number(payment.amount || 0).toFixed(0)}`,
+			title: `Payment due ${formatMoney(payment.amount)}`,
 			start,
 			end,
 			allDay: true,

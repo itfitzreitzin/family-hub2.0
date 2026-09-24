@@ -35,6 +35,19 @@ export function combineLocalDateTime(dateStr, timeStr) {
 }
 
 /**
+ * The same wall-clock time one calendar day later — how an overnight end
+ * time rolls past midnight. Adding 24h of milliseconds lands an hour off on
+ * the nights the clocks change (10 PM–6 AM on Oct 31 came out as 5 AM, 8h).
+ * @param {Date} date
+ * @returns {Date}
+ */
+export function nextDay(date) {
+	const d = new Date(date);
+	d.setDate(d.getDate() + 1);
+	return d;
+}
+
+/**
  * Parse a timestamp or date-only string in LOCAL time. Bare 'YYYY-MM-DD'
  * strings otherwise parse as UTC midnight and display a day early.
  * @param {string | Date} value

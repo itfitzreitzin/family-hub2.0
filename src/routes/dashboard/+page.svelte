@@ -16,6 +16,7 @@
 		getMonthGridRange
 	} from '$lib/time.js';
 	import { formatMoney } from '$lib/money.js';
+	import { outstandingBalance, LEDGER_WEEKS } from '$lib/ledger.js';
 	import { errorMessage } from '$lib/errors.js';
 	import Icon from '$lib/icons/Icon.svelte';
 	import MoonPhase from '$lib/components/MoonPhase.svelte';
@@ -54,7 +55,12 @@
 	/** @type {{ startStr: string, endStr: string } | null} */
 	let monthRange = null;
 	/** @type {any[]} */
-	let unpaidPayments = [];
+	/** Completed entries and payment rows behind the owed balance (see outstandingBalance). */
+	/** @type {any[]} */
+	let owedEntries = [];
+	/** @type {any[]} */
+	let owedPayments = [];
+	let owedSince = '';
 	let now = Date.now();
 	let showAddNanny = false;
 	let selectedNanny = null;
@@ -279,7 +285,7 @@
 		if (weekError) throw weekError;
 		weekEntries = weekData || [];
 
-		await Promise.all([loadUpcomingShift(), loadMonthShifts(), loadUnpaidPayments()]);
+		await Promise.all([loadUpcomingShift(), loadMonthShifts(), loadOwed()]);
 	}
 
 	async function loadUpcomingShift() {
@@ -336,18 +342,28 @@
 		loadMonthShifts();
 	}
 
-	async function loadUnpaidPayments() {
+	// The owed balance reads the same window and rules as the Tracker's Purse:
+	// a week worked but never recorded is owed, not just rows marked unpaid.
+	async function loadOwed() {
 		try {
-			const { data, error } = await supabase
-				.from('payments')
-				.select('*')
-				.or('is_paid.is.null,is_paid.eq.false');
-
-			if (error) throw error;
-			unpaidPayments = data || [];
+			const since = getWeekBounds(-(LEDGER_WEEKS - 1)).start;
+			const [entriesRes, paymentsRes] = await Promise.all([
+				supabase
+					.from('time_entries')
+					.select('nanny_id, clock_in, hours')
+					.not('clock_out', 'is', null)
+					.gte('clock_in', since.toISOString()),
+				supabase.from('payments').select('*')
+			]);
+			if (entriesRes.error) throw entriesRes.error;
+			if (paymentsRes.error) throw paymentsRes.error;
+			owedEntries = entriesRes.data || [];
+			owedPayments = paymentsRes.data || [];
+			owedSince = localDateString(since);
 		} catch (err) {
-			console.warn('Unpaid payments load failed:', errorMessage(err));
-			unpaidPayments = [];
+			console.warn('Owed balance load failed:', errorMessage(err));
+			owedEntries = [];
+			owedPayments = [];
 		}
 	}
 
@@ -420,8 +436,14 @@
 		return sum + entryHours(e, now) * rate;
 	}, 0);
 
-	$: unpaidHours = unpaidPayments.reduce((sum, p) => sum + (parseFloat(p.hours) || 0), 0);
-	$: unpaidAmount = unpaidPayments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+	// Finished weeks only: the week in progress is already the "this week" tile.
+	$: owed = outstandingBalance(
+		owedEntries,
+		owedPayments,
+		(id) => nannies.find((n) => n.id === id)?.hourly_rate || 20,
+		owedSince,
+		localDateString(getWeekBounds(0).start)
+	);
 	$: isHousehold = profile?.role === 'family' || profile?.role === 'admin';
 
 	$: greeting = (() => {
@@ -589,9 +611,9 @@
 						/>
 					</div>
 
-					{#if unpaidPayments.length > 0}
+					{#if owed.amount >= 0.01}
 						<div class="approval-alert unpaid">
-							{formatMoney(unpaidAmount)} unpaid ({unpaidHours.toFixed(1)} hrs)
+							{formatMoney(owed.amount)} unpaid ({owed.hours.toFixed(1)} hrs)
 						</div>
 					{/if}
 
@@ -915,10 +937,10 @@
 		<!-- The shelf grounds the page. It carries the outstanding balance for
 		     the household view, and stands decorative for everyone else. -->
 		<ShelfFooter
-			balanceDue={isHousehold && unpaidPayments.length > 0 ? unpaidAmount : null}
+			balanceDue={isHousehold && owed.amount >= 0.01 ? owed.amount : null}
 			balanceLabel="Unpaid to date"
-			note={isHousehold && unpaidPayments.length > 0
-				? `${unpaidHours.toFixed(1)} hours across ${unpaidPayments.length} ${unpaidPayments.length === 1 ? 'entry' : 'entries'} still to settle.`
+			note={isHousehold && owed.amount >= 0.01
+				? `${owed.hours.toFixed(1)} hours across ${owed.weeks} past ${owed.weeks === 1 ? 'week' : 'weeks'} still to settle.`
 				: ''}
 			onBalanceClick={() => goto('/history')}
 		/>

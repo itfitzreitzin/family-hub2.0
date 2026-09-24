@@ -17,9 +17,10 @@
 		formatDate,
 		formatDateShort,
 		formatWeekDisplay,
-		parseLocalDate
+		parseLocalDate,
+		nextDay
 	} from '$lib/time.js';
-	import { buildWeekLedger } from '$lib/ledger.js';
+	import { buildWeekLedger, weekPayStatus, LEDGER_WEEKS } from '$lib/ledger.js';
 	import { formatMoney } from '$lib/money.js';
 	import { errorMessage } from '$lib/errors.js';
 	import {
@@ -71,7 +72,6 @@
 	let payments = [];
 	// Completed entries for the last LEDGER_WEEKS weeks, summed per week in
 	// the ledger so totals show whether or not a payment was recorded.
-	const LEDGER_WEEKS = 26;
 	/** @type {any[]} */
 	let ledgerEntries = [];
 	let ledgerSince = localDateString(getWeekBounds(-(LEDGER_WEEKS - 1)).start);
@@ -155,7 +155,18 @@
 				nannies = nanniesData || [];
 
 				if (nannies.length > 0) {
-					selectedNannyId = nannies[0].id;
+					// Open on whoever is on the clock. Alphabetical-first put a
+					// resting nanny's 00:00:00 and a Clock in button in front of a
+					// parent while someone else's shift was running.
+					const { data: openShift } = await supabase
+						.from('time_entries')
+						.select('nanny_id')
+						.is('clock_out', null)
+						.order('clock_in', { ascending: false })
+						.limit(1)
+						.maybeSingle();
+					const onClock = openShift?.nanny_id;
+					selectedNannyId = nannies.some((n) => n.id === onClock) ? onClock : nannies[0].id;
 				}
 			} else if (profile?.role === 'nanny') {
 				selectedNannyId = user.id;
@@ -256,12 +267,23 @@
 	}
 
 	async function handleNannyChange() {
+		// Drop the previous nanny's rows first. Until the new loads land, the
+		// pay buttons would otherwise record nanny A's hours under nanny B.
+		entries = [];
+		payments = [];
+		ledgerEntries = [];
+		currentEntry = null;
+		stopTimer();
 		try {
 			await Promise.all([checkCurrentEntry(), loadWeekData(), loadPayments(), loadLedger()]);
 		} catch (err) {
 			toast.error('Error loading data: ' + errorMessage(err));
 		}
 	}
+
+	// A shift ended elsewhere (another device, a resync, a nanny switch) takes
+	// its clock-out prompt with it, so it can't resurface over the next shift.
+	$: if (!currentEntry && showClockOutConfirm) showClockOutConfirm = false;
 
 	$: filteredEntries = entries.filter((e) => e.clock_out);
 	$: weekTotal = filteredEntries.reduce((sum, e) => sum + (parseFloat(e.hours) || 0), 0);
@@ -332,6 +354,11 @@
 			if (token !== weekLoadToken || nannyId !== selectedNannyId) return;
 
 			entries = data || [];
+		} catch (err) {
+			// Never leave last week's rows under this week's dates — the pay
+			// buttons would bill them against the wrong week.
+			if (token === weekLoadToken) entries = [];
+			throw err;
 		} finally {
 			if (token === weekLoadToken) weekLoading = false;
 		}
@@ -841,7 +868,7 @@
 	// reverting (with a toast) if the update fails.
 	/**
 	 * @param {string | number} paymentId
-	 * @param {{ is_paid: boolean, paid_date: string | null }} patch
+	 * @param {{ is_paid: boolean, paid_date: string | null, hours?: number, amount?: number }} patch
 	 */
 	async function setPaidState(paymentId, patch) {
 		if (paymentBusyId) return;
@@ -869,9 +896,39 @@
 		}
 	}
 
-	/** @param {string | number} paymentId */
-	function markPaid(paymentId) {
-		setPaidState(paymentId, { is_paid: true, paid_date: new Date().toISOString() });
+	/**
+	 * Ask before a one-tap payment, naming the money — and warn when the week
+	 * isn't over, since later hours will show as still owed.
+	 * @param {{ weekStart: string, weekEnd: string, hours: number, amount: number }} week
+	 * @param {number} [amount] what this tap records, when not the week's total
+	 */
+	function confirmWeekPaid(week, amount = week.amount) {
+		const open = week.weekEnd >= localDateString();
+		return confirmModal.show({
+			title: 'Mark week paid',
+			message:
+				`Record ${formatMoney(amount)} paid for ${formatDateShort(week.weekStart)} – ` +
+				`${formatDateShort(week.weekEnd)} (${week.hours.toFixed(2)} hours)?` +
+				(open ? ' This week isn’t over — hours logged later will show as still owed.' : ''),
+			confirmText: 'Mark paid'
+		});
+	}
+
+	/**
+	 * Mark a recorded week paid — or settle a short one. Writes the week's
+	 * figures as they stand now, so the record matches the total shown beside
+	 * the button rather than whatever was recorded before hours changed.
+	 * @param {{ weekStart: string, weekEnd: string, hours: number, amount: number, payment: any }} week
+	 */
+	async function markPaid(week) {
+		const { status, owed } = weekPayStatus(week);
+		if (!(await confirmWeekPaid(week, status === 'short' ? owed : week.amount))) return;
+		setPaidState(week.payment.id, {
+			is_paid: true,
+			paid_date: new Date().toISOString(),
+			hours: Math.round(week.hours * 100) / 100,
+			amount: Math.round(week.amount * 100) / 100
+		});
 	}
 
 	/** @param {string | number} paymentId */
@@ -884,9 +941,15 @@
 	/** @param {{ weekStart: string, weekEnd: string, hours: number, amount: number }} week */
 	async function recordWeekAsPaid(week) {
 		if (paymentBusyId) return;
+		if (!(await confirmWeekPaid(week))) return;
 		paymentBusyId = week.weekStart;
 
-		const paid = { is_paid: true, paid_date: new Date().toISOString() };
+		const paid = {
+			is_paid: true,
+			paid_date: new Date().toISOString(),
+			hours: Math.round(week.hours * 100) / 100,
+			amount: Math.round(week.amount * 100) / 100
+		};
 
 		try {
 			let { data, error } = await supabase
@@ -895,8 +958,6 @@
 					nanny_id: selectedNannyId,
 					week_start: week.weekStart,
 					week_end: week.weekEnd,
-					hours: Math.round(week.hours * 100) / 100,
-					amount: Math.round(week.amount * 100) / 100,
 					payment_method: 'Venmo',
 					...paid
 				})
@@ -994,7 +1055,7 @@
 			const { data: familyMembers, error } = await supabase
 				.from('profiles')
 				.select('*')
-				.eq('role', 'family')
+				.in('role', ['family', 'admin'])
 				.not('venmo_username', 'is', null)
 				.order('full_name');
 
@@ -1084,7 +1145,7 @@
 
 		// An end time before the start means the shift crossed midnight
 		if (clockOut.getTime() < clockIn.getTime()) {
-			clockOut = new Date(clockOut.getTime() + 24 * 60 * 60 * 1000);
+			clockOut = nextDay(clockOut);
 			overnight = true;
 		}
 
@@ -1461,7 +1522,7 @@
 							<button
 								class="btn btn-primary"
 								on:click={generateVenmoPayment}
-								disabled={generatingPayment}
+								disabled={generatingPayment || weekLoading}
 							>
 								<Icon name="coin" size={16} />
 								{generatingPayment
@@ -1476,7 +1537,7 @@
 							<button
 								class="btn btn-primary"
 								on:click={requestPayment}
-								disabled={generatingPayment}
+								disabled={generatingPayment || weekLoading}
 							>
 								<Icon name="coin" size={16} />
 								{generatingPayment ? 'Preparing…' : 'Request payment'}
@@ -1515,6 +1576,7 @@
 						<tbody>
 							{#each ledger as week (week.weekStart)}
 								{@const payment = week.payment}
+								{@const pay = weekPayStatus(week)}
 								<tr
 									class="ledger-row"
 									class:viewing={week.weekStart === viewedWeekKey}
@@ -1538,16 +1600,28 @@
 									<td>
 										<span
 											class="badge"
-											class:badge-live={payment?.is_paid}
-											class:badge-danger={!payment?.is_paid}
+											class:badge-live={pay.status === 'paid'}
+											class:badge-danger={pay.status !== 'paid'}
 										>
-											{payment?.is_paid ? 'Paid' : 'Unpaid'}
+											{pay.status === 'paid'
+												? 'Paid'
+												: pay.status === 'short'
+													? `Short ${formatMoney(pay.owed)}`
+													: 'Unpaid'}
 										</span>
 									</td>
 									<td>{payment?.paid_date ? formatDate(payment.paid_date) : '—'}</td>
 									{#if profile?.role === 'family' || profile?.role === 'admin'}
 										<td class="row-actions" on:click|stopPropagation>
-											{#if payment?.is_paid}
+											{#if pay.status === 'short'}
+												<button
+													class="btn-small growing"
+													on:click={() => markPaid(week)}
+													disabled={paymentBusyId === payment.id}
+												>
+													<Icon name="check" size={16} /> Settle
+												</button>
+											{:else if payment?.is_paid}
 												<button
 													class="btn-small"
 													on:click={() => markUnpaid(payment.id)}
@@ -1558,7 +1632,7 @@
 											{:else if payment}
 												<button
 													class="btn-small growing"
-													on:click={() => markPaid(payment.id)}
+													on:click={() => markPaid(week)}
 													disabled={paymentBusyId === payment.id}
 												>
 													<Icon name="check" size={16} /> Paid
@@ -1593,9 +1667,10 @@
 				<div class="mobile-only entry-list">
 					{#each ledger as week (week.weekStart)}
 						{@const payment = week.payment}
+						{@const pay = weekPayStatus(week)}
 						<div
 							class="entry-card"
-							class:settled={payment?.is_paid}
+							class:settled={pay.status === 'paid'}
 							class:viewing={week.weekStart === viewedWeekKey}
 						>
 							<button class="entry-top week-link" on:click={() => openWeek(week.weekStart)}>
@@ -1604,10 +1679,14 @@
 								</span>
 								<span
 									class="badge"
-									class:badge-live={payment?.is_paid}
-									class:badge-danger={!payment?.is_paid}
+									class:badge-live={pay.status === 'paid'}
+									class:badge-danger={pay.status !== 'paid'}
 								>
-									{payment?.is_paid ? 'Paid' : 'Unpaid'}
+									{pay.status === 'paid'
+										? 'Paid'
+										: pay.status === 'short'
+											? `Short ${formatMoney(pay.owed)}`
+											: 'Unpaid'}
 								</span>
 							</button>
 							<div class="entry-bottom">
@@ -1619,7 +1698,15 @@
 							{/if}
 							{#if profile?.role === 'family' || profile?.role === 'admin'}
 								<div class="entry-actions">
-									{#if payment?.is_paid}
+									{#if pay.status === 'short'}
+										<button
+											class="btn-small growing"
+											on:click={() => markPaid(week)}
+											disabled={paymentBusyId === payment.id}
+										>
+											<Icon name="check" size={16} /> Settle
+										</button>
+									{:else if payment?.is_paid}
 										<button
 											class="btn-small"
 											on:click={() => markUnpaid(payment.id)}
@@ -1630,7 +1717,7 @@
 									{:else if payment}
 										<button
 											class="btn-small growing"
-											on:click={() => markPaid(payment.id)}
+											on:click={() => markPaid(week)}
 											disabled={paymentBusyId === payment.id}
 										>
 											<Icon name="check" size={16} /> Mark paid

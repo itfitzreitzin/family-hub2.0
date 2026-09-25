@@ -3,20 +3,24 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { supabase } from '$lib/supabase';
-	import { toast } from '$lib/stores/toast.js';
+	import { toast, confirm as confirmModal, prompt as promptModal } from '$lib/stores/toast.js';
 	import { errorMessage } from '$lib/errors.js';
-	import { sinceLabel } from '$lib/groceries.js';
+	import { sinceLabel, groupBySection, cleanGroceryName, groceryKey } from '$lib/groceries.js';
 	import Icon from '$lib/icons/Icon.svelte';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
 	import GroceryAdd from '$lib/components/GroceryAdd.svelte';
 
 	/*
-	 * Home → Groceries: the list you carry into the store. Tap a thing to
-	 * cross it off — a quill inks a line through it and it drops into the
-	 * basket. Anyone can add (the nanny from Care → Today); each item says who
-	 * asked for it.
+	 * Home → Groceries: the lists you carry into the store — Groceries, and
+	 * whatever else the house adds (Costco, Target). Items group by store
+	 * section so the list follows the aisles. Tap a thing to cross it off — a
+	 * quill inks a line through it and it drops into the basket. Anyone can
+	 * add (the nanny from Care → Today); each item says who asked for it.
 	 */
+
+	/** Remembers which list was open, per device. */
+	const LIST_KEY = 'familyhub-grocery-list';
 
 	/** How far back the suggestions look. */
 	const HISTORY_ROWS = 400;
@@ -35,6 +39,10 @@
 	let rows = {};
 	/** @type {Record<string, string>} */
 	let namesById = {};
+	/** @type {any[]} */
+	let lists = [];
+	/** @type {number | null} */
+	let listId = null;
 	/** Ids mid-cross-out, so the quill can finish before they move. */
 	/** @type {number[]} */
 	let inking = [];
@@ -97,6 +105,9 @@
 					.on('postgres_changes', { event: '*', schema: 'public', table: 'grocery_items' }, () =>
 						scheduleResync()
 					)
+					.on('postgres_changes', { event: '*', schema: 'public', table: 'grocery_lists' }, () =>
+						scheduleResync()
+					)
 					.subscribe();
 			}
 			nowInterval = setInterval(() => (now = Date.now()), 60000);
@@ -108,7 +119,12 @@
 	}
 
 	async function load() {
-		const [openRes, recentRes] = await Promise.all([
+		const [listsRes, openRes, recentRes] = await Promise.all([
+			supabase
+				.from('grocery_lists')
+				.select('*')
+				.order('position', { ascending: true })
+				.order('created_at', { ascending: true }),
 			supabase.from('grocery_items').select('*').is('checked_at', null),
 			supabase
 				.from('grocery_items')
@@ -116,8 +132,20 @@
 				.order('added_at', { ascending: false })
 				.limit(HISTORY_ROWS)
 		]);
+		if (listsRes.error) throw listsRes.error;
 		if (openRes.error) throw openRes.error;
 		if (recentRes.error) throw recentRes.error;
+
+		lists = listsRes.data || [];
+		if (!lists.some((l) => l.id === listId)) {
+			let saved = null;
+			try {
+				saved = Number(localStorage.getItem(LIST_KEY));
+			} catch {
+				// Private browsing: start on the first list
+			}
+			listId = (lists.find((l) => l.id === saved) || lists[0])?.id ?? null;
+		}
 
 		/** @type {Record<number, any>} */
 		const next = {};
@@ -141,12 +169,83 @@
 	}
 
 	$: all = Object.values(rows);
-	$: openItems = all
+	$: currentList = lists.find((l) => l.id === listId) || null;
+	$: openCounts = all.reduce((acc, i) => {
+		if (!i.checked_at) acc[i.list_id] = (acc[i.list_id] || 0) + 1;
+		return acc;
+	}, /** @type {Record<number, number>} */ ({}));
+	$: here = all.filter((i) => i.list_id === listId);
+	$: openItems = here
 		.filter((i) => !i.checked_at || inking.includes(i.id))
 		.sort((a, b) => String(a.added_at).localeCompare(String(b.added_at)));
-	$: basket = all
+	$: sections = groupBySection(openItems);
+	$: basket = here
 		.filter((i) => i.checked_at && !i.cleared_at && !inking.includes(i.id))
 		.sort((a, b) => String(b.checked_at).localeCompare(String(a.checked_at)));
+
+	/** @param {number} id */
+	function openList(id) {
+		listId = id;
+		try {
+			localStorage.setItem(LIST_KEY, String(id));
+		} catch {
+			// Not remembered; harmless
+		}
+	}
+
+	async function newList() {
+		const raw = await promptModal.show({
+			title: 'A new list',
+			message: 'What is it for? A store, or a kind of trip — Costco, Target, the pharmacy.',
+			placeholder: 'Costco'
+		});
+		const name = cleanGroceryName(raw || '');
+		if (!name) return;
+		const clash = lists.find((l) => groceryKey(l.name) === groceryKey(name));
+		if (clash) {
+			openList(clash.id);
+			return;
+		}
+		try {
+			const { data, error } = await supabase
+				.from('grocery_lists')
+				.insert({
+					name,
+					position: Math.max(0, ...lists.map((l) => l.position || 0)) + 1,
+					created_by: user.id
+				})
+				.select()
+				.single();
+			if (error) throw error;
+			lists = [...lists, data];
+			openList(data.id);
+		} catch (err) {
+			toast.error('Error making the list: ' + errorMessage(err));
+		}
+	}
+
+	async function deleteList() {
+		if (!currentList || lists.length < 2) return;
+		const ok = await confirmModal.show({
+			title: 'Delete this list',
+			message: `Delete the ${currentList.name} list, and everything on it and its history?`,
+			confirmText: 'Delete',
+			danger: true
+		});
+		if (!ok) return;
+		const gone = currentList;
+		try {
+			const { error } = await supabase.from('grocery_lists').delete().eq('id', gone.id);
+			if (error) throw error;
+			lists = lists.filter((l) => l.id !== gone.id);
+			const rest = { ...rows };
+			for (const i of all) if (i.list_id === gone.id) delete rest[i.id];
+			rows = rest;
+			openList(lists[0].id);
+		} catch (err) {
+			toast.error('Error deleting the list: ' + errorMessage(err));
+		}
+	}
 
 	/** @param {string | null | undefined} id */
 	function firstName(id) {
@@ -268,89 +367,136 @@
 			</div>
 		</div>
 
-		<section class="card arcana">
-			<GroceryAdd {user} items={all} onadded={put} collapsible />
-		</section>
+		<!-- ── Which list ─────────────────────────────────── -->
+		<div class="list-tabs" role="tablist" aria-label="Lists">
+			{#each lists as list (list.id)}
+				<button
+					role="tab"
+					class="list-tab"
+					class:active={list.id === listId}
+					aria-selected={list.id === listId}
+					on:click={() => openList(list.id)}
+				>
+					{list.name}
+					{#if openCounts[list.id]}<span class="list-count">{openCounts[list.id]}</span>{/if}
+				</button>
+			{/each}
+			<button class="list-tab new" on:click={newList} aria-label="New list">
+				<Icon name="plus" size={13} /> List
+			</button>
+		</div>
 
-		<section class="card arcana">
-			<div class="card-header">
-				<h2>The List</h2>
-				<span class="rune-label">{openItems.length || 'nothing yet'}</span>
-			</div>
-
-			{#if openItems.length === 0}
+		{#if !currentList}
+			<div class="card arcana">
 				<EmptyState
 					icon="cauldron"
-					title="The larder is full"
-					hint="Nothing on the list. Add something above, or the nanny can from Care."
+					title="No lists yet"
+					hint="Run supabase/grocery_items.sql in Supabase — it makes the first one."
 				/>
-			{:else}
-				<ul class="g-list">
-					{#each openItems as item (item.id)}
-						<li class="g-item" class:inking={inking.includes(item.id)}>
-							<button
-								class="g-tap"
-								on:click={() => checkOff(item)}
-								aria-label="Cross off {item.name}"
-							>
-								<span class="g-box" aria-hidden="true"><Icon name="check" size={14} /></span>
-								<span class="g-text">
-									<span class="g-name">
-										{item.name}
-										<!-- The quill: a stand-in for a sprite sheet later. -->
-										<span class="g-ink" aria-hidden="true">
-											<span class="g-quill"><Icon name="quill" size={18} /></span>
+			</div>
+		{:else}
+			<section class="card arcana">
+				<GroceryAdd
+					{user}
+					items={all}
+					{listId}
+					listName={currentList.name}
+					onadded={put}
+					collapsible
+				/>
+			</section>
+
+			<section class="card arcana">
+				<div class="card-header">
+					<h2>{currentList.name}</h2>
+					<span class="rune-label">{openItems.length || 'nothing yet'}</span>
+				</div>
+
+				{#if openItems.length === 0}
+					<EmptyState
+						icon="cauldron"
+						title="The larder is full"
+						hint="Nothing on the list. Add something above, or the nanny can from Care."
+					/>
+				{:else}
+					{#each sections as group (group.section)}
+						<h3 class="g-section">{group.section}</h3>
+						<ul class="g-list">
+							{#each group.items as item (item.id)}
+								<li class="g-item" class:inking={inking.includes(item.id)}>
+									<button
+										class="g-tap"
+										on:click={() => checkOff(item)}
+										aria-label="Cross off {item.name}"
+									>
+										<span class="g-box" aria-hidden="true"><Icon name="check" size={14} /></span>
+										<span class="g-text">
+											<span class="g-name">
+												{item.name}
+												<!-- The quill: a stand-in for a sprite sheet later. -->
+												<span class="g-ink" aria-hidden="true">
+													<span class="g-quill"><Icon name="quill" size={18} /></span>
+												</span>
+											</span>
+											{#if item.note}<span class="g-note">{item.note}</span>{/if}
+											<span class="g-by">
+												{firstName(item.added_by)} · {sinceLabel(item.added_at, now)}
+											</span>
+										</span>
+									</button>
+									<button
+										class="icon-btn g-remove"
+										on:click={() => removeItem(item)}
+										aria-label="Remove {item.name} from the list"
+									>
+										<Icon name="close" size={14} />
+									</button>
+								</li>
+							{/each}
+						</ul>
+					{/each}
+				{/if}
+			</section>
+
+			{#if basket.length > 0}
+				<section class="card arcana basket">
+					<div class="card-header">
+						<h2>In the Basket</h2>
+						<button class="btn btn-secondary btn-small" on:click={clearBasket} disabled={clearing}>
+							<Icon name="sprout" size={14} />
+							{clearing ? 'Clearing…' : 'Clear the basket'}
+						</button>
+					</div>
+					<p class="basket-hint">Tap one to put it back on the list.</p>
+					<ul class="g-list">
+						{#each basket as item (item.id)}
+							<li class="g-item done">
+								<button
+									class="g-tap"
+									on:click={() => putBack(item)}
+									aria-label="Put {item.name} back"
+								>
+									<span class="g-box" aria-hidden="true"><Icon name="check" size={14} /></span>
+									<span class="g-text">
+										<span class="g-name">{item.name}</span>
+										<span class="g-by">
+											got by {firstName(item.checked_by)} · {sinceLabel(item.checked_at, now)}
 										</span>
 									</span>
-									{#if item.note}<span class="g-note">{item.note}</span>{/if}
-									<span class="g-by">
-										{firstName(item.added_by)} · {sinceLabel(item.added_at, now)}
-									</span>
-								</span>
-							</button>
-							<button
-								class="icon-btn g-remove"
-								on:click={() => removeItem(item)}
-								aria-label="Remove {item.name} from the list"
-							>
-								<Icon name="close" size={14} />
-							</button>
-						</li>
-					{/each}
-				</ul>
+								</button>
+							</li>
+						{/each}
+					</ul>
+				</section>
 			{/if}
-		</section>
 
-		{#if basket.length > 0}
-			<section class="card arcana basket">
-				<div class="card-header">
-					<h2>In the Basket</h2>
-					<button class="btn btn-secondary btn-small" on:click={clearBasket} disabled={clearing}>
-						<Icon name="sprout" size={14} />
-						{clearing ? 'Clearing…' : 'Clear the basket'}
+			{#if lists.length > 1}
+				<div class="list-foot">
+					<button class="btn-small list-delete" on:click={deleteList}>
+						<Icon name="urn" size={13} /> Delete the {currentList.name} list
 					</button>
 				</div>
-				<p class="basket-hint">Tap one to put it back on the list.</p>
-				<ul class="g-list">
-					{#each basket as item (item.id)}
-						<li class="g-item done">
-							<button
-								class="g-tap"
-								on:click={() => putBack(item)}
-								aria-label="Put {item.name} back"
-							>
-								<span class="g-box" aria-hidden="true"><Icon name="check" size={14} /></span>
-								<span class="g-text">
-									<span class="g-name">{item.name}</span>
-									<span class="g-by">
-										got by {firstName(item.checked_by)} · {sinceLabel(item.checked_at, now)}
-									</span>
-								</span>
-							</button>
-						</li>
-					{/each}
-				</ul>
-			</section>
+			{/if}
 		{/if}
 	{/if}
 </div>
@@ -364,6 +510,87 @@
 		color: var(--text-faint);
 		font-size: 0.95rem;
 		margin-top: 0.2rem;
+	}
+
+	/* ── Lists ────────────────────────────────────────────── */
+	.list-tabs {
+		display: flex;
+		gap: 0.4rem;
+		margin-bottom: var(--section-gap);
+		overflow-x: auto;
+		scrollbar-width: none;
+	}
+
+	.list-tab {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		flex-shrink: 0;
+		min-height: 40px;
+		padding: 0.35rem 0.95rem;
+		background: var(--surface-2);
+		border: 1px solid var(--border);
+		border-radius: 999px;
+		color: var(--text-muted);
+		font-family: var(--font-display);
+		font-size: 0.88rem;
+		font-weight: 600;
+		letter-spacing: 0.03em;
+		cursor: pointer;
+		transition: all var(--transition-fast);
+		--icon-accent: var(--accent);
+	}
+
+	.list-tab.active {
+		color: var(--accent-bright);
+		border-color: var(--border-gilt);
+		background: var(--accent-dim);
+	}
+
+	.list-tab.new {
+		border-style: dashed;
+		color: var(--text-faint);
+	}
+
+	.list-count {
+		min-width: 1.3rem;
+		padding: 0 0.35rem;
+		border-radius: 999px;
+		background: var(--accent);
+		color: var(--text-on-accent);
+		font-family: var(--font-body);
+		font-size: 0.72rem;
+		font-weight: 700;
+		text-align: center;
+	}
+
+	.list-foot {
+		display: flex;
+		justify-content: center;
+	}
+
+	.list-delete {
+		color: var(--text-faint);
+	}
+
+	.list-delete:hover {
+		color: var(--danger);
+		border-color: var(--danger);
+	}
+
+	/* ── Store sections ───────────────────────────────────── */
+	.g-section {
+		margin: 1rem 0 0.1rem;
+		font-family: var(--font-body);
+		font-size: 0.7rem;
+		font-weight: 700;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
+		color: var(--accent);
+	}
+
+	.g-section:first-of-type {
+		margin-top: 0;
 	}
 
 	.g-list {

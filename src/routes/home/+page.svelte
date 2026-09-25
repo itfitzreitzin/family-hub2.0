@@ -62,6 +62,8 @@
 	/** What's on the grocery list now; null until it loads (or if the table isn't there yet). */
 	/** @type {any[] | null} */
 	let groceries = null;
+	/** @type {any[]} */
+	let groceryLists = [];
 	let now = Date.now();
 
 	/** @type {ReturnType<typeof supabase.channel> | null} */
@@ -209,13 +211,22 @@
 
 	async function loadGroceries() {
 		try {
-			const { data, error } = await supabase
-				.from('grocery_items')
-				.select('id, name')
-				.is('checked_at', null)
-				.order('added_at', { ascending: true });
-			if (error) throw error;
-			groceries = data || [];
+			const [listsRes, itemsRes] = await Promise.all([
+				supabase
+					.from('grocery_lists')
+					.select('id, name')
+					.order('position', { ascending: true })
+					.order('created_at', { ascending: true }),
+				supabase
+					.from('grocery_items')
+					.select('id, name, list_id')
+					.is('checked_at', null)
+					.order('added_at', { ascending: true })
+			]);
+			if (listsRes.error) throw listsRes.error;
+			if (itemsRes.error) throw itemsRes.error;
+			groceryLists = listsRes.data || [];
+			groceries = itemsRes.data || [];
 		} catch (err) {
 			// Before supabase/grocery_items.sql has run, the card just stays away.
 			console.warn('Grocery list load failed:', errorMessage(err));
@@ -426,6 +437,13 @@
 						<h2>Groceries</h2>
 						<span class="grocery-count">{groceries.length}</span>
 					</div>
+					{#if groceryLists.length > 1}
+						<p class="grocery-lists">
+							{groceryLists
+								.map((l) => `${l.name} ${groceries?.filter((g) => g.list_id === l.id).length || 0}`)
+								.join(' · ')}
+						</p>
+					{/if}
 					{#if groceries.length === 0}
 						<p class="grocery-empty">Nothing on the list — the larder is full.</p>
 					{:else}
@@ -807,6 +825,14 @@
 		height: 6px;
 		border-radius: 50%;
 		background: var(--accent);
+	}
+
+	.grocery-lists {
+		margin: -0.35rem 0 0.7rem;
+		font-size: 0.78rem;
+		font-weight: 700;
+		letter-spacing: 0.06em;
+		color: var(--text-faint);
 	}
 
 	.grocery-empty,

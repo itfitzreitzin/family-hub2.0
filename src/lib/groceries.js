@@ -103,3 +103,199 @@ export function sinceLabel(iso, nowMs) {
 	if (hours < 48) return 'yesterday';
 	return then.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 }
+
+/**
+ * Store sections, in the order a walk through the store meets them. The
+ * list groups by these so it follows the aisles.
+ */
+export const GROCERY_SECTIONS = [
+	'Produce',
+	'Meat & Fish',
+	'Dairy & Eggs',
+	'Bakery',
+	'Pantry',
+	'Frozen',
+	'Drinks',
+	'Baby',
+	'Household',
+	'Other'
+];
+
+// Checked in this order, first match wins: the specific before the general
+// ("ice cream" is frozen, not dairy; "peanut butter" is pantry; "orange
+// juice" is a drink, not produce).
+/** @type {[string, string[]][]} */
+const SECTION_WORDS = [
+	['Frozen', ['frozen', 'ice cream', 'popsicle', 'ice pop']],
+	['Baby', ['diaper', 'wipes', 'formula', 'baby', 'pouches', 'teether']],
+	[
+		'Household',
+		[
+			'paper towel',
+			'toilet paper',
+			'tissue',
+			'napkin',
+			'soap',
+			'detergent',
+			'dishwasher',
+			'trash bag',
+			'garbage bag',
+			'sponge',
+			'foil',
+			'plastic wrap',
+			'ziploc',
+			'cleaner',
+			'bleach',
+			'shampoo',
+			'conditioner',
+			'toothpaste',
+			'toothbrush',
+			'deodorant',
+			'batteries',
+			'light bulb'
+		]
+	],
+	['Drinks', ['juice', 'water', 'soda', 'seltzer', 'sparkling', 'beer', 'wine', 'kombucha']],
+	[
+		'Pantry',
+		['peanut butter', 'almond butter', 'olive oil', 'tomato sauce', 'canned', 'broth', 'stock']
+	],
+	[
+		'Meat & Fish',
+		[
+			'beef',
+			'chicken',
+			'pork',
+			'turkey',
+			'bacon',
+			'sausage',
+			'salmon',
+			'fish',
+			'shrimp',
+			'steak',
+			'ham',
+			'lamb',
+			'meat',
+			'hot dog'
+		]
+	],
+	[
+		'Produce',
+		[
+			'eggplant',
+			'kale',
+			'greens',
+			'lettuce',
+			'spinach',
+			'arugula',
+			'onion',
+			'garlic',
+			'banana',
+			'apple',
+			'berries',
+			'berry',
+			'avocado',
+			'tomato',
+			'potato',
+			'carrot',
+			'pepper',
+			'lemon',
+			'lime',
+			'orange',
+			'grape',
+			'cucumber',
+			'broccoli',
+			'cauliflower',
+			'celery',
+			'cilantro',
+			'basil',
+			'parsley',
+			'mushroom',
+			'zucchini',
+			'squash',
+			'pear',
+			'peach',
+			'plum',
+			'melon',
+			'ginger',
+			'fruit',
+			'veggie',
+			'vegetable'
+		]
+	],
+	[
+		'Dairy & Eggs',
+		['milk', 'egg', 'cheese', 'yogurt', 'yoghurt', 'butter', 'cream', 'kefir', 'cottage']
+	],
+	['Bakery', ['bread', 'bagel', 'tortilla', 'bun', 'roll', 'muffin', 'croissant', 'pita']],
+	[
+		'Pantry',
+		[
+			'rice',
+			'pasta',
+			'noodle',
+			'cereal',
+			'oat',
+			'flour',
+			'sugar',
+			'oil',
+			'sauce',
+			'beans',
+			'soup',
+			'coffee',
+			'tea',
+			'jam',
+			'honey',
+			'syrup',
+			'snack',
+			'cracker',
+			'chips',
+			'nuts',
+			'spice',
+			'salt',
+			'vinegar',
+			'granola',
+			'bar'
+		]
+	]
+];
+
+/**
+ * Which store section a thing belongs in, guessed from its name.
+ * @param {string} name
+ * @returns {string} one of GROCERY_SECTIONS
+ */
+export function sectionFor(name) {
+	// Words match at the start of a word, so "graham" isn't ham and "steak"
+	// isn't tea — but "eggs" is egg and "oats" is oat.
+	const words = groceryKey(name)
+		.split(/[^a-z]+/)
+		.filter(Boolean);
+	const text = ' ' + words.join(' ');
+	for (const [section, cues] of SECTION_WORDS) {
+		if (cues.some((cue) => text.includes(' ' + cue))) return section;
+	}
+	return 'Other';
+}
+
+/**
+ * Items grouped by store section, sections in walking order, empty ones
+ * left out.
+ * @template {{ name: string }} T
+ * @param {T[]} items
+ * @returns {{ section: string, items: T[] }[]}
+ */
+export function groupBySection(items) {
+	/** @type {Map<string, T[]>} */
+	const bySection = new Map();
+	for (const item of items) {
+		const section = sectionFor(item.name);
+		const list = bySection.get(section);
+		if (list) list.push(item);
+		else bySection.set(section, [item]);
+	}
+	return GROCERY_SECTIONS.filter((s) => bySection.has(s)).map((section) => ({
+		section,
+		items: /** @type {T[]} */ (bySection.get(section))
+	}));
+}

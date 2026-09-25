@@ -17,6 +17,10 @@
 	 * teach the suggestions. */
 	/** @type {any[]} */
 	export let items = [];
+	/** The list new items go on, and its name for the confirmations. */
+	/** @type {number | null} */
+	export let listId = null;
+	export let listName = 'Groceries';
 	/** Called with the inserted row. */
 	/** @type {(row: any) => void} */
 	export let onadded = () => {};
@@ -31,17 +35,17 @@
 	let showNote = false;
 	let saving = false;
 
-	$: open = items.filter((i) => !i.checked_at);
+	$: open = items.filter((i) => !i.checked_at && i.list_id === listId);
 	$: chips = grocerySuggestions(items, open);
 
 	/** @param {string} raw @param {string} [rawNote] */
 	async function add(raw, rawNote = '') {
 		const clean = cleanGroceryName(raw);
-		if (!clean || saving) return;
+		if (!clean || saving || listId === null) return;
 
 		const already = open.find((i) => groceryKey(i.name) === groceryKey(clean));
 		if (already) {
-			toast.info(`${already.name} is already on the list`);
+			toast.info(`${already.name} is already on the ${listName} list`);
 			return;
 		}
 
@@ -49,7 +53,12 @@
 		try {
 			const { data, error } = await supabase
 				.from('grocery_items')
-				.insert({ name: clean, note: rawNote.trim() || null, added_by: user.id })
+				.insert({
+					list_id: listId,
+					name: clean,
+					note: rawNote.trim() || null,
+					added_by: user.id
+				})
 				.select()
 				.single();
 
@@ -58,11 +67,11 @@
 			note = '';
 			showNote = false;
 			onadded(data);
-			toast.success(`${clean} is on the list`);
+			toast.success(`${clean} is on the ${listName} list`);
 		} catch (err) {
 			if (/** @type {any} */ (err).code === '23505') {
 				// one_open_grocery_per_name: someone else already put it down
-				toast.info(`${clean} is already on the list`);
+				toast.info(`${clean} is already on the ${listName} list`);
 			} else {
 				toast.error('Error adding: ' + errorMessage(err));
 			}

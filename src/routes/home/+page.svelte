@@ -59,6 +59,9 @@
 	/** @type {any[]} */
 	let owedPayments = [];
 	let owedSince = '';
+	/** What's on the grocery list now; null until it loads (or if the table isn't there yet). */
+	/** @type {any[] | null} */
+	let groceries = null;
 	let now = Date.now();
 
 	/** @type {ReturnType<typeof supabase.channel> | null} */
@@ -181,7 +184,7 @@
 		if (weekError) throw weekError;
 		weekEntries = weekData || [];
 
-		await Promise.all([loadMonthShifts(), loadOwed()]);
+		await Promise.all([loadMonthShifts(), loadOwed(), loadGroceries()]);
 	}
 
 	async function loadMonthShifts() {
@@ -201,6 +204,22 @@
 		} catch (err) {
 			console.warn('Month shifts load failed:', errorMessage(err));
 			monthShiftDates = [];
+		}
+	}
+
+	async function loadGroceries() {
+		try {
+			const { data, error } = await supabase
+				.from('grocery_items')
+				.select('id, name')
+				.is('checked_at', null)
+				.order('added_at', { ascending: true });
+			if (error) throw error;
+			groceries = data || [];
+		} catch (err) {
+			// Before supabase/grocery_items.sql has run, the card just stays away.
+			console.warn('Grocery list load failed:', errorMessage(err));
+			groceries = null;
 		}
 	}
 
@@ -240,6 +259,9 @@
 		homeChannel = supabase
 			.channel('home-shifts')
 			.on('postgres_changes', { event: '*', schema: 'public', table: 'time_entries' }, () => {
+				scheduleReload();
+			})
+			.on('postgres_changes', { event: '*', schema: 'public', table: 'grocery_items' }, () => {
 				scheduleReload();
 			})
 			.subscribe();
@@ -379,7 +401,7 @@
 			</section>
 
 			<!-- ── The month ────────────────────────────── -->
-			<section class="tcard calendar-card">
+			<section class="tcard calendar-card" class:wide={!groceries}>
 				<div class="tcard-header">
 					<PixelArt src={ART.navCalendar} size={24} />
 					<h2>This Month</h2>
@@ -395,6 +417,32 @@
 					draggable="false"
 				/>
 			</section>
+
+			<!-- ── The grocery list ─────────────────────── -->
+			{#if groceries}
+				<section class="tcard grocery-card">
+					<div class="tcard-header">
+						<PixelArt src={ART.iconCauldron} size={24} />
+						<h2>Groceries</h2>
+						<span class="grocery-count">{groceries.length}</span>
+					</div>
+					{#if groceries.length === 0}
+						<p class="grocery-empty">Nothing on the list — the larder is full.</p>
+					{:else}
+						<ul class="grocery-peek">
+							{#each groceries.slice(0, 6) as item (item.id)}
+								<li>{item.name}</li>
+							{/each}
+						</ul>
+						{#if groceries.length > 6}
+							<p class="grocery-more">+ {groceries.length - 6} more</p>
+						{/if}
+					{/if}
+					<a href={resolve('/home/groceries')} class="tcard-action accent">
+						<Icon name="check" size={12} /> Open the list
+					</a>
+				</section>
+			{/if}
 		</div>
 
 		<!-- The shelf grounds the page, and carries the outstanding balance. -->
@@ -436,7 +484,14 @@
 		grid-row: 1;
 	}
 	.calendar-card {
+		grid-column: 1 / 3;
+		grid-row: 2;
+	}
+	.calendar-card.wide {
 		grid-column: 1 / 4;
+	}
+	.grocery-card {
+		grid-column: 3;
 		grid-row: 2;
 	}
 
@@ -456,9 +511,14 @@
 			grid-column: 2;
 			grid-row: 2;
 		}
-		.calendar-card {
+		.grocery-card {
 			grid-column: 1 / 3;
 			grid-row: 3;
+		}
+		.calendar-card,
+		.calendar-card.wide {
+			grid-column: 1 / 3;
+			grid-row: 4;
 		}
 	}
 
@@ -470,6 +530,7 @@
 		.hero-card,
 		.glance-slot,
 		.approval-card,
+		.grocery-card,
 		.calendar-card {
 			grid-column: 1 !important;
 			grid-row: auto !important;
@@ -704,6 +765,56 @@
 		background: var(--danger-dim);
 		color: var(--danger);
 		border: 1px solid rgba(224, 102, 78, 0.2);
+	}
+
+	/* ═══════════════════════════════════════════════════════
+	   GROCERY CARD
+	   ═══════════════════════════════════════════════════════ */
+
+	.grocery-count {
+		min-width: 1.6rem;
+		padding: 0.1rem 0.5rem;
+		border-radius: 999px;
+		background: var(--accent-dim);
+		color: var(--accent-bright);
+		font-size: 0.8rem;
+		font-weight: 700;
+		text-align: center;
+	}
+
+	.grocery-peek {
+		display: flex;
+		flex-direction: column;
+		gap: 0.35rem;
+		margin: 0 0 0.85rem;
+		padding: 0;
+		list-style: none;
+	}
+
+	.grocery-peek li {
+		padding-left: 1rem;
+		position: relative;
+		font-size: 0.95rem;
+		color: var(--text);
+	}
+
+	.grocery-peek li::before {
+		content: '';
+		position: absolute;
+		left: 0.2rem;
+		top: 0.55em;
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: var(--accent);
+	}
+
+	.grocery-empty,
+	.grocery-more {
+		margin: 0 0 0.85rem;
+		font-size: 0.88rem;
+		font-style: italic;
+		color: var(--text-faint);
 	}
 
 	/* ═══════════════════════════════════════════════════════

@@ -87,7 +87,7 @@ nanny on the clock at any moment** (enforced in app logic and by a DB index).
 
 | Section | Tabs | Who |
 |---|---|---|
-| Home `/home` | — | parents (the nanny is sent to Care) |
+| Home `/home` | Hearth · Groceries `/home/groceries` | parents (the nanny is sent to Care) |
 | Care `/care` | Today · Journal `/care/journal` · Care Sheet `/care/sheet` · Hours & Pay `/care/hours` | everyone |
 | Settings `/settings` | You · Household `/settings/household` · Accounts `/settings/accounts` | everyone; Accounts is parents only |
 
@@ -119,6 +119,25 @@ addresses (`/dashboard`, `/tracker`, `/history`, `/chronicle`, `/family`,
   refresh-on-tab-focus. The nanny visiting `/home` is sent on to Care.
 - Deliberately thin for now: the grocery list, chores, the family calendar and
   Home Assistant tiles land here next (see "Where it may go").
+
+### Home → Groceries (`/home/groceries`) — the grocery list
+- One shared list you carry into the store. Tap a row to cross it off: a gilt
+  quill inks a line through it (a stand-in for a sprite animation later) and it
+  drops into **In the Basket**, where a tap puts it back and **Clear the basket**
+  sweeps it away. Every item says who asked for it and when; parents can remove
+  a mistake.
+- **Quick add:** chips for what the house buys most often (learned from the
+  list's own history), then the staples — milk, eggs, ground beef, chicken,
+  greens, kale, onions, diapers, wipes, paper towels, toilet paper… — minus
+  anything already on the list. The same thing can't be on the list twice
+  (DB-enforced, case-insensitive).
+- **The nanny adds, doesn't browse:** a "Running Low?" card on Care → Today
+  puts things on the list; RLS shows the nanny only what they added (waiting,
+  or "got it" once bought) and lets them take back their own addition.
+- Home's Hearth shows a grocery card with the first few items. Realtime on
+  `grocery_items` keeps two phones in step. Nothing is deleted on the way
+  through (checked and cleared are timestamps), so the history is there for
+  price tracking later.
 
 ### Care → Today (`/care`) — the day's care, as it happens
 The nanny's landing page, and the parents' when the kids are the business at hand.
@@ -298,6 +317,7 @@ shared family calendar is planned to replace it (see "Where it may go").
 | `chronicle_entries` | The journal's written layer: author, entry_date, body, tags text[], kid_ids uuid[], shift_id, household_only, photo_url | Added by `chronicle_entries.sql`; partial unique: **one 'morning'-tagged note per day**; RLS hides household_only rows from the nanny |
 | `chronicle_reacts` | One-tap acknowledgements: (entry_id, user_id, kind 'seen'/'heart') | Same file; each person writes only their own rows — how the nanny stamps Seen without edit rights |
 | `care_sheet` | The sitter's reference: contacts jsonb, pickups jsonb, house_notes, updated_at/by | Added by `care_sheet.sql`; a `one boolean` latch enforces the singleton; also adds `allergies` + `dosing` to family_members |
+| `grocery_items` | The grocery list: name, note, added_by/at, checked_by/at, cleared_at | Added by `grocery_items.sql`; partial unique: **one open item per name** (case-insensitive); RLS: parents everything, the nanny adds and sees only their own |
 | `availability`, `schedule_blocks` | Defined in `supabase/schedule.sql` | **Legacy — no longer referenced by code** |
 
 Security: RLS on all tables, set by `supabase/household_access.sql` — reading
@@ -388,6 +408,12 @@ system, documented in the README and enforced by semantic tokens.
   table.
 - `adapter-auto` with no pinned deploy target in-repo.
 
+*Recent (2026-09-25, the grocery list)*
+- Shipped: Home → Groceries with quick-add chips, the quill cross-off, the
+  basket, and who-asked-for-it bylines; the nanny's "Running Low?" card on Care.
+- Migration to run once in Supabase: `supabase/grocery_items.sql` (it also adds
+  the table to the realtime publication).
+
 *Recent (2026-09-24, the Home/Care restructure)*
 - Shipped: three sections (Home · Care · Settings) with tabs, one nav rendered
   from the root layout; landing by role; redirects from every retired address.
@@ -437,7 +463,7 @@ system, documented in the README and enforced by semantic tokens.
 Skylight-style kitchen display without buying a Skylight), with Care as one
 section of it:
 1. **Restructure — done.** Home · Care · Settings (see "The map").
-2. **Home basics:** a shared grocery list and chores (stored in Supabase, so the
+2. **Home basics:** a shared grocery list (**shipped** — `/home/groceries`) and chores (stored in Supabase, so the
    list works at the store), and a shared family calendar that reads the
    family's Google calendars through their private iCal links — the existing
    parser. Moving off Google gradually: Family Hub owns lists and chores from

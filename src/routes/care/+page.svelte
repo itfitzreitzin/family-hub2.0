@@ -11,6 +11,7 @@
 	import MorningNote from '$lib/components/MorningNote.svelte';
 	import WrapUpCard from '$lib/components/WrapUpCard.svelte';
 	import CareCockpit from '$lib/components/CareCockpit.svelte';
+	import GroceryDrop from '$lib/components/GroceryDrop.svelte';
 
 	/*
 	 * Care → Today: the nanny's landing page, and the parents' when the kids
@@ -94,6 +95,10 @@
 		<MorningNote {user} {profile} />
 		<WrapUpCard {user} {profile} activeShift={shift} />
 		<CareCockpit {shift} {user} {profile} />
+		<!-- Parents keep the list on Home; the nanny adds to it from here. -->
+		{#if profile?.role === 'nanny'}
+			<GroceryDrop {user} />
+		{/if}
 	{/if}
 </div>
 

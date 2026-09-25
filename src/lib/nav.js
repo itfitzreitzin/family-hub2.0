@@ -14,7 +14,17 @@ import { ART } from '$lib/art.js';
 
 /** @type {NavSection[]} */
 export const SECTIONS = [
-	{ key: 'home', href: '/home', label: 'Home', art: ART.navHome, roles: ['family', 'admin'] },
+	{
+		key: 'home',
+		href: '/home',
+		label: 'Home',
+		art: ART.navHome,
+		roles: ['family', 'admin'],
+		tabs: [
+			{ href: '/home', label: 'Hearth' },
+			{ href: '/home/groceries', label: 'Groceries' }
+		]
+	},
 	{
 		key: 'care',
 		href: '/care',

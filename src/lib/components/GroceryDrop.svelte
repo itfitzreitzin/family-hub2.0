@@ -116,7 +116,9 @@
 		<ul class="mine">
 			{#each waiting as item (item.id)}
 				<li>
-					<span class="mine-name">{item.name}</span>
+					<span class="mine-name"
+						>{#if item.quantity}{item.quantity}&nbsp;{/if}{item.name}</span
+					>
 					<span class="mine-state"
 						>on {lists.length > 1 ? listNames[item.list_id] || 'the list' : 'the list'}</span
 					>
@@ -131,7 +133,9 @@
 			{/each}
 			{#each bought as item (item.id)}
 				<li class="got">
-					<span class="mine-name">{item.name}</span>
+					<span class="mine-name"
+						>{#if item.quantity}{item.quantity}&nbsp;{/if}{item.name}</span
+					>
 					<span class="mine-state"><Icon name="check" size={12} /> got it</span>
 				</li>
 			{/each}

@@ -1,5 +1,6 @@
 <script>
 	import { onMount, onDestroy } from 'svelte';
+	import { slide } from 'svelte/transition';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { supabase } from '$lib/supabase';
@@ -10,13 +11,17 @@
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
 	import GroceryAdd from '$lib/components/GroceryAdd.svelte';
+	import RecipeSheet from '$lib/components/RecipeSheet.svelte';
 
 	/*
 	 * Home → Groceries: the lists you carry into the store — Groceries, and
 	 * whatever else the house adds (Costco, Target). Items group by store
 	 * section so the list follows the aisles. Tap a thing to cross it off — a
-	 * quill inks a line through it and it drops into the basket. Anyone can
-	 * add (the nanny from Care → Today); each item says who asked for it.
+	 * quill inks a line through it, and it waits there with an Undo until
+	 * you've stopped tapping for a few seconds, then drops into the basket.
+	 * Removing a thing and clearing the basket wait the same way. Anyone can
+	 * add (the nanny from Care → Today); each item says who asked for it. A
+	 * recipe, or a list pasted from anywhere, comes in through Recipes.
 	 */
 
 	/** Remembers which list was open, per device. */
@@ -24,8 +29,8 @@
 
 	/** How far back the suggestions look. */
 	const HISTORY_ROWS = 400;
-	/** How long the quill takes to cross something out. */
-	const INK_MS = 650;
+	/** How long a change waits in place, Undo showing, after the last tap. */
+	const SETTLE_MS = 5000;
 
 	/** @type {any} */
 	let user = null;
@@ -43,24 +48,44 @@
 	let lists = [];
 	/** @type {number | null} */
 	let listId = null;
-	/** Ids mid-cross-out, so the quill can finish before they move. */
-	/** @type {number[]} */
-	let inking = [];
+	/** Changes waiting in place with their Undo: item id → what happened. */
+	/** @type {Record<number, 'check' | 'remove'>} */
+	let pending = {};
+	/** The basket just emptied, while its Undo lasts. */
+	/** @type {{ ids: number[], stamp: string } | null} */
+	let cleared = null;
+	/** Bumped whenever the wait starts over, so every fuse starts over too. */
+	let round = 0;
 	let clearing = false;
+	let showRecipes = false;
+	/** What the last tap did, for screen readers. */
+	let announcement = '';
+	/** Rows slide in and out; not with reduced motion. */
+	let slideMs = 220;
 	let now = Date.now();
+
+	/** Each item's writes go out one after another, so an Undo never
+	 * overtakes the tap it undoes. */
+	/** @type {Record<number, Promise<void>>} */
+	const writes = {};
 
 	/** @type {ReturnType<typeof supabase.channel> | null} */
 	let channel = null;
 	/** @type {ReturnType<typeof setTimeout> | null} */
 	let resyncTimer = null;
+	/** @type {ReturnType<typeof setTimeout> | null} */
+	let settleTimer = null;
 	/** @type {ReturnType<typeof setInterval> | null} */
 	let nowInterval = null;
 
 	onMount(() => {
+		if (reducedMotion()) slideMs = 0;
 		init();
 	});
 
 	onDestroy(() => {
+		// Leaving settles what's still waiting: removed things get removed.
+		settle();
 		if (channel) supabase.removeChannel(channel);
 		if (resyncTimer) clearTimeout(resyncTimer);
 		if (nowInterval) clearInterval(nowInterval);
@@ -150,8 +175,11 @@
 		/** @type {Record<number, any>} */
 		const next = {};
 		for (const r of [...(recentRes.data || []), ...(openRes.data || [])]) next[r.id] = r;
-		// A cross-out still inking keeps its local state until the quill lands.
-		for (const id of inking) if (rows[id]) next[id] = rows[id];
+		// Something still waiting keeps its local state until it settles.
+		for (const key of Object.keys(pending)) {
+			const id = Number(key);
+			if (rows[id]) next[id] = rows[id];
+		}
 		rows = next;
 	}
 
@@ -168,23 +196,32 @@
 		rows = { ...rows, [row.id]: row };
 	}
 
+	/** Rows the recipe sheet put on the list. @param {any[]} added */
+	function putAll(added) {
+		const next = { ...rows };
+		for (const row of added) next[row.id] = row;
+		rows = next;
+	}
+
 	$: all = Object.values(rows);
 	$: currentList = lists.find((l) => l.id === listId) || null;
 	$: openCounts = all.reduce((acc, i) => {
-		if (!i.checked_at) acc[i.list_id] = (acc[i.list_id] || 0) + 1;
+		if (!i.checked_at && !pending[i.id]) acc[i.list_id] = (acc[i.list_id] || 0) + 1;
 		return acc;
 	}, /** @type {Record<number, number>} */ ({}));
 	$: here = all.filter((i) => i.list_id === listId);
 	$: openItems = here
-		.filter((i) => !i.checked_at || inking.includes(i.id))
+		.filter((i) => !i.checked_at || pending[i.id])
 		.sort((a, b) => String(a.added_at).localeCompare(String(b.added_at)));
+	$: toBuy = openItems.filter((i) => !pending[i.id]).length;
 	$: sections = groupBySection(openItems);
 	$: basket = here
-		.filter((i) => i.checked_at && !i.cleared_at && !inking.includes(i.id))
+		.filter((i) => i.checked_at && !i.cleared_at && !pending[i.id])
 		.sort((a, b) => String(b.checked_at).localeCompare(String(a.checked_at)));
 
 	/** @param {number} id */
 	function openList(id) {
+		settle();
 		listId = id;
 		try {
 			localStorage.setItem(LIST_KEY, String(id));
@@ -256,74 +293,160 @@
 		return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 	}
 
-	// Cross it off: the quill inks through the name, then it drops into the
-	// basket. The write goes out at once; the move waits for the ink.
 	/** @param {any} item */
-	async function checkOff(item) {
-		if (inking.includes(item.id)) return;
-		inking = [...inking, item.id];
+	function label(item) {
+		return item.quantity ? `${item.quantity} ${item.name}` : item.name;
+	}
+
+	/**
+	 * Send a write for one item once any earlier write for it has landed.
+	 * @param {number} id
+	 * @param {() => Promise<void>} run handles its own errors
+	 */
+	function write(id, run) {
+		const next = (writes[id] || Promise.resolve())
+			.then(run)
+			.catch((err) => console.warn('Grocery write failed:', errorMessage(err)));
+		writes[id] = next;
+		next.then(() => {
+			if (writes[id] === next) delete writes[id];
+		});
+	}
+
+	// Every tap starts the wait over, so nothing moves while you're still
+	// tapping — the list never shifts under a thumb mid-aisle.
+	function restartSettle() {
+		if (settleTimer) clearTimeout(settleTimer);
+		round += 1;
+		settleTimer = setTimeout(settle, SETTLE_MS);
+	}
+
+	// The wait is over: crossed-off things drop into the basket (their write
+	// went out with the tap), removed things are deleted now, and the cleared
+	// basket's Undo goes.
+	function settle() {
+		if (settleTimer) clearTimeout(settleTimer);
+		settleTimer = null;
+		const removed = Object.keys(pending)
+			.map(Number)
+			.filter((id) => pending[id] === 'remove');
+		pending = {};
+		cleared = null;
+		for (const id of removed) deleteNow(id);
+	}
+
+	/** @param {number} id */
+	function unpend(id) {
+		const rest = { ...pending };
+		delete rest[id];
+		pending = rest;
+	}
+
+	// Cross it off: the quill inks through the name, and it waits there with
+	// an Undo. The write goes out at once, so the other phone knows.
+	/** @param {any} item */
+	function checkOff(item) {
 		const stamp = { checked_at: new Date().toISOString(), checked_by: user.id };
 		put({ ...item, ...stamp });
-
-		const settle = new Promise((r) => setTimeout(r, reducedMotion() ? 0 : INK_MS));
-		try {
-			const { data, error } = await supabase
-				.from('grocery_items')
-				.update(stamp)
-				.eq('id', item.id)
-				.select()
-				.single();
-			if (error) throw error;
-			await settle;
-			put(data);
-		} catch (err) {
-			await settle;
-			put(item);
-			toast.error('Error crossing it off: ' + errorMessage(err));
-		} finally {
-			inking = inking.filter((id) => id !== item.id);
-		}
-	}
-
-	/** @param {any} item */
-	async function putBack(item) {
-		const previous = item;
-		put({ ...item, checked_at: null, checked_by: null });
-		try {
-			const { data, error } = await supabase
-				.from('grocery_items')
-				.update({ checked_at: null, checked_by: null })
-				.eq('id', item.id)
-				.select()
-				.single();
-			if (error) throw error;
-			put(data);
-		} catch (err) {
-			put(previous);
-			if (/** @type {any} */ (err).code === '23505') {
-				toast.info(`${item.name} is already back on the list`);
-			} else {
-				toast.error('Error putting it back: ' + errorMessage(err));
+		pending = { ...pending, [item.id]: 'check' };
+		announcement = `Crossed off ${label(item)}`;
+		restartSettle();
+		write(item.id, async () => {
+			try {
+				const { data, error } = await supabase
+					.from('grocery_items')
+					.update(stamp)
+					.eq('id', item.id)
+					.select()
+					.single();
+				if (error) throw error;
+				// An Undo that landed meanwhile wins.
+				if (rows[item.id]?.checked_at === stamp.checked_at) put(data);
+			} catch (err) {
+				if (rows[item.id]?.checked_at === stamp.checked_at) {
+					unpend(item.id);
+					put(item);
+				}
+				toast.error('Error crossing it off: ' + errorMessage(err));
 			}
-		}
+		});
+	}
+
+	/** Back on the list: an Undo, or a tap in the basket. @param {any} item */
+	function uncheck(item) {
+		unpend(item.id);
+		put({ ...item, checked_at: null, checked_by: null });
+		announcement = `${label(item)} is back on the list`;
+		write(item.id, async () => {
+			try {
+				const { data, error } = await supabase
+					.from('grocery_items')
+					.update({ checked_at: null, checked_by: null })
+					.eq('id', item.id)
+					.select()
+					.single();
+				if (error) throw error;
+				if (!rows[item.id]?.checked_at) put(data);
+			} catch (err) {
+				if (!rows[item.id]?.checked_at) put(item);
+				if (/** @type {any} */ (err).code === '23505') {
+					toast.info(`${item.name} is already back on the list`);
+				} else {
+					toast.error('Error putting it back: ' + errorMessage(err));
+				}
+			}
+		});
 	}
 
 	/** @param {any} item */
-	async function removeItem(item) {
-		const previous = rows;
-		const rest = { ...rows };
-		delete rest[item.id];
-		rows = rest;
-		try {
-			const { error } = await supabase.from('grocery_items').delete().eq('id', item.id);
-			if (error) throw error;
-		} catch (err) {
-			rows = previous;
-			toast.error('Error removing: ' + errorMessage(err));
-		}
+	function undoCheck(item) {
+		uncheck(item);
+		restartSettle();
 	}
 
-	// Empty the basket. The rows stay as history for the suggestions.
+	// A mistake comes off the same way: it waits, removed, with an Undo, and is
+	// only deleted once the wait is over.
+	/** @param {any} item */
+	function removeItem(item) {
+		pending = { ...pending, [item.id]: 'remove' };
+		announcement = `Removed ${label(item)}`;
+		restartSettle();
+	}
+
+	/** @param {any} item */
+	function undoRemove(item) {
+		unpend(item.id);
+		announcement = `${label(item)} is back on the list`;
+		restartSettle();
+	}
+
+	/** @param {number} id */
+	function deleteNow(id) {
+		const item = rows[id];
+		if (!item) return;
+		const rest = { ...rows };
+		delete rest[id];
+		rows = rest;
+		write(id, async () => {
+			try {
+				const { error } = await supabase.from('grocery_items').delete().eq('id', id);
+				if (error) throw error;
+			} catch (err) {
+				put(item);
+				toast.error('Error removing: ' + errorMessage(err));
+			}
+		});
+	}
+
+	/** @param {number[]} ids @param {string | null} stamp */
+	function markCleared(ids, stamp) {
+		const next = { ...rows };
+		for (const id of ids) if (next[id]) next[id] = { ...next[id], cleared_at: stamp };
+		rows = next;
+	}
+
+	// Empty the basket. The rows stay as history for the suggestions, and an
+	// Undo stands in for the basket until the wait is over.
 	async function clearBasket() {
 		if (clearing || basket.length === 0) return;
 		clearing = true;
@@ -335,18 +458,37 @@
 				.update({ cleared_at: stamp })
 				.in('id', ids);
 			if (error) throw error;
-			const next = { ...rows };
-			for (const id of ids) next[id] = { ...next[id], cleared_at: stamp };
-			rows = next;
+			markCleared(ids, stamp);
+			cleared = { ids, stamp };
+			announcement = `Cleared ${ids.length} from the basket`;
+			restartSettle();
 		} catch (err) {
 			toast.error('Error clearing the basket: ' + errorMessage(err));
 		} finally {
 			clearing = false;
 		}
 	}
+
+	async function undoClear() {
+		if (!cleared) return;
+		const { ids, stamp } = cleared;
+		cleared = null;
+		markCleared(ids, null);
+		announcement = 'The basket is back';
+		try {
+			const { error } = await supabase
+				.from('grocery_items')
+				.update({ cleared_at: null })
+				.in('id', ids);
+			if (error) throw error;
+		} catch (err) {
+			markCleared(ids, stamp);
+			toast.error('Error bringing the basket back: ' + errorMessage(err));
+		}
+	}
 </script>
 
-<svelte:window on:focus={() => !initializing && scheduleResync()} />
+<svelte:window on:focus={() => !initializing && scheduleResync()} on:pagehide={settle} />
 
 <div class="container">
 	{#if initializing}
@@ -360,11 +502,16 @@
 			</EmptyState>
 		</div>
 	{:else}
-		<div class="page-head">
+		<div class="page-head grocery-head">
 			<div>
 				<h1>Groceries</h1>
 				<p class="lede">What the house needs — tap it off at the store.</p>
 			</div>
+			{#if currentList}
+				<button class="btn btn-secondary recipes-open" on:click={() => (showRecipes = true)}>
+					<Icon name="grimoire" size={16} /> Recipes
+				</button>
+			{/if}
 		</div>
 
 		<!-- ── Which list ─────────────────────────────────── -->
@@ -402,6 +549,7 @@
 					{listId}
 					listName={currentList.name}
 					onadded={put}
+					canUpdate
 					collapsible
 				/>
 			</section>
@@ -409,7 +557,9 @@
 			<section class="card arcana">
 				<div class="card-header">
 					<h2>{currentList.name}</h2>
-					<span class="rune-label">{openItems.length || 'nothing yet'}</span>
+					<span class="rune-label">
+						{toBuy || (openItems.length ? 'all crossed off' : 'nothing yet')}
+					</span>
 				</div>
 
 				{#if openItems.length === 0}
@@ -419,74 +569,153 @@
 						hint="Nothing on the list. Add something above, or the nanny can from Care."
 					/>
 				{:else}
-					{#each sections as group (group.section)}
-						<h3 class="g-section">{group.section}</h3>
+					<!-- Keyed on the list, so switching lists swaps them without sliding. -->
+					{#key listId}
+						{#each sections as group (group.section)}
+							<div class="g-group" transition:slide={{ duration: slideMs }}>
+								<h3 class="g-section">{group.section}</h3>
+								<ul class="g-list">
+									{#each group.items as item (item.id)}
+										{@const what = pending[item.id]}
+										<li
+											class="g-item"
+											class:inking={what === 'check'}
+											class:removed={what === 'remove'}
+											transition:slide={{ duration: slideMs }}
+										>
+											{#if what === 'remove'}
+												<span class="g-tap">
+													<span class="g-box" aria-hidden="true"
+														><Icon name="close" size={14} /></span
+													>
+													<span class="g-text">
+														<span class="g-name">
+															{#if item.quantity}<span class="g-qty">{item.quantity}&nbsp;</span
+																>{/if}{item.name}
+														</span>
+														<span class="g-by">removed</span>
+													</span>
+												</span>
+											{:else}
+												<button
+													class="g-tap"
+													on:click={() => (what ? undoCheck(item) : checkOff(item))}
+													aria-label={what
+														? `Undo crossing off ${label(item)}`
+														: `Cross off ${label(item)}`}
+												>
+													<span class="g-box" aria-hidden="true"
+														><Icon name="check" size={14} /></span
+													>
+													<span class="g-text">
+														<span class="g-name">
+															{#if item.quantity}<span class="g-qty">{item.quantity}&nbsp;</span
+																>{/if}{item.name}
+															<!-- The quill: a stand-in for a sprite sheet later. -->
+															<span class="g-ink" aria-hidden="true">
+																<span class="g-quill"><Icon name="quill" size={18} /></span>
+															</span>
+														</span>
+														{#if item.note}<span class="g-note">{item.note}</span>{/if}
+														<span class="g-by">
+															{#if what}
+																crossed off
+															{:else}
+																{firstName(item.added_by)} · {sinceLabel(item.added_at, now)}
+															{/if}
+														</span>
+													</span>
+												</button>
+											{/if}
+											{#if what}
+												<button
+													class="g-undo"
+													on:click={() => (what === 'remove' ? undoRemove(item) : undoCheck(item))}
+													aria-label="Undo — {label(item)} back on the list"
+												>
+													<Icon name="undo" size={14} /> Undo
+												</button>
+												<!-- Burns down to when it moves; any tap relights it. -->
+												{#key round}
+													<span
+														class="g-fuse"
+														aria-hidden="true"
+														style="animation-duration: {SETTLE_MS}ms"
+													></span>
+												{/key}
+											{:else}
+												<button
+													class="icon-btn g-remove"
+													on:click={() => removeItem(item)}
+													aria-label="Remove {label(item)} from the list"
+												>
+													<Icon name="close" size={14} />
+												</button>
+											{/if}
+										</li>
+									{/each}
+								</ul>
+							</div>
+						{/each}
+					{/key}
+				{/if}
+			</section>
+
+			{#if basket.length > 0 || cleared}
+				<section class="card arcana basket">
+					<div class="card-header">
+						<h2>In the Basket</h2>
+						{#if basket.length > 0}
+							<button
+								class="btn btn-secondary btn-small"
+								on:click={clearBasket}
+								disabled={clearing}
+							>
+								<Icon name="sprout" size={14} />
+								{clearing ? 'Clearing…' : 'Clear the basket'}
+							</button>
+						{/if}
+					</div>
+					{#if cleared}
+						<div class="g-cleared">
+							<span>
+								Cleared {cleared.ids.length}
+								{cleared.ids.length === 1 ? 'thing' : 'things'} from the basket.
+							</span>
+							<button class="g-undo" on:click={undoClear}>
+								<Icon name="undo" size={14} /> Undo
+							</button>
+							{#key round}
+								<span class="g-fuse" aria-hidden="true" style="animation-duration: {SETTLE_MS}ms"
+								></span>
+							{/key}
+						</div>
+					{/if}
+					{#if basket.length > 0}
+						<p class="basket-hint">Tap one to put it back on the list.</p>
 						<ul class="g-list">
-							{#each group.items as item (item.id)}
-								<li class="g-item" class:inking={inking.includes(item.id)}>
+							{#each basket as item (item.id)}
+								<li class="g-item done" transition:slide={{ duration: slideMs }}>
 									<button
 										class="g-tap"
-										on:click={() => checkOff(item)}
-										aria-label="Cross off {item.name}"
+										on:click={() => uncheck(item)}
+										aria-label="Put {label(item)} back"
 									>
 										<span class="g-box" aria-hidden="true"><Icon name="check" size={14} /></span>
 										<span class="g-text">
 											<span class="g-name">
-												{item.name}
-												<!-- The quill: a stand-in for a sprite sheet later. -->
-												<span class="g-ink" aria-hidden="true">
-													<span class="g-quill"><Icon name="quill" size={18} /></span>
-												</span>
+												{#if item.quantity}<span class="g-qty">{item.quantity}&nbsp;</span
+													>{/if}{item.name}
 											</span>
-											{#if item.note}<span class="g-note">{item.note}</span>{/if}
 											<span class="g-by">
-												{firstName(item.added_by)} · {sinceLabel(item.added_at, now)}
+												got by {firstName(item.checked_by)} · {sinceLabel(item.checked_at, now)}
 											</span>
 										</span>
-									</button>
-									<button
-										class="icon-btn g-remove"
-										on:click={() => removeItem(item)}
-										aria-label="Remove {item.name} from the list"
-									>
-										<Icon name="close" size={14} />
 									</button>
 								</li>
 							{/each}
 						</ul>
-					{/each}
-				{/if}
-			</section>
-
-			{#if basket.length > 0}
-				<section class="card arcana basket">
-					<div class="card-header">
-						<h2>In the Basket</h2>
-						<button class="btn btn-secondary btn-small" on:click={clearBasket} disabled={clearing}>
-							<Icon name="sprout" size={14} />
-							{clearing ? 'Clearing…' : 'Clear the basket'}
-						</button>
-					</div>
-					<p class="basket-hint">Tap one to put it back on the list.</p>
-					<ul class="g-list">
-						{#each basket as item (item.id)}
-							<li class="g-item done">
-								<button
-									class="g-tap"
-									on:click={() => putBack(item)}
-									aria-label="Put {item.name} back"
-								>
-									<span class="g-box" aria-hidden="true"><Icon name="check" size={14} /></span>
-									<span class="g-text">
-										<span class="g-name">{item.name}</span>
-										<span class="g-by">
-											got by {firstName(item.checked_by)} · {sinceLabel(item.checked_at, now)}
-										</span>
-									</span>
-								</button>
-							</li>
-						{/each}
-					</ul>
+					{/if}
 				</section>
 			{/if}
 
@@ -497,8 +726,21 @@
 					</button>
 				</div>
 			{/if}
+
+			{#if showRecipes}
+				<RecipeSheet
+					{user}
+					items={all}
+					{listId}
+					listName={currentList.name}
+					onadded={putAll}
+					onclose={() => (showRecipes = false)}
+				/>
+			{/if}
 		{/if}
 	{/if}
+
+	<p class="visually-hidden" aria-live="polite">{announcement}</p>
 </div>
 
 <style>
@@ -510,6 +752,17 @@
 		color: var(--text-faint);
 		font-size: 0.95rem;
 		margin-top: 0.2rem;
+	}
+
+	/* Recipes sits beside the title, so the list keeps a phone's first screen. */
+	.grocery-head {
+		flex-wrap: nowrap;
+		align-items: flex-start;
+	}
+
+	.recipes-open {
+		flex-shrink: 0;
+		padding: 0.55rem 1rem;
 	}
 
 	/* ── Lists ────────────────────────────────────────────── */
@@ -589,7 +842,7 @@
 		color: var(--accent);
 	}
 
-	.g-section:first-of-type {
+	.card-header + .g-group .g-section {
 		margin-top: 0;
 	}
 
@@ -602,6 +855,7 @@
 	}
 
 	.g-item {
+		position: relative;
 		display: flex;
 		align-items: center;
 		gap: 0.4rem;
@@ -660,6 +914,14 @@
 		font-weight: 600;
 		color: var(--text);
 		overflow-wrap: anywhere;
+		transition: color var(--transition-normal);
+	}
+
+	/* How many, ahead of the name: "2 lb Ground beef". */
+	.g-qty {
+		color: var(--accent-bright);
+		font-weight: 700;
+		font-variant-numeric: lining-nums tabular-nums;
 	}
 
 	.g-note {
@@ -681,6 +943,92 @@
 		opacity: 1;
 		color: var(--danger);
 		border-color: var(--danger);
+	}
+
+	/* ── Waiting, with an Undo ─────────────────────────────── */
+	.g-undo {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		flex-shrink: 0;
+		min-height: 40px;
+		padding: 0.3rem 0.85rem;
+		background: var(--accent-dim);
+		border: 1px solid var(--border-gilt);
+		border-radius: 999px;
+		color: var(--accent-bright);
+		font-family: var(--font-body);
+		font-size: 0.88rem;
+		font-weight: 700;
+		cursor: pointer;
+		--icon-accent: currentColor;
+		animation: undo-in 0.25s var(--ease-out-expo);
+	}
+
+	.g-undo:hover {
+		background: var(--accent-tint);
+		border-color: var(--accent);
+	}
+
+	@keyframes undo-in {
+		from {
+			opacity: 0;
+			transform: scale(0.9);
+		}
+	}
+
+	/* The fuse along the row's foot: burns down to when it moves. */
+	.g-fuse {
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: -1px;
+		height: 2px;
+		border-radius: 2px;
+		background: linear-gradient(90deg, var(--accent), var(--accent-bright));
+		transform-origin: left center;
+		animation-name: fuse;
+		animation-timing-function: linear;
+		animation-fill-mode: forwards;
+		pointer-events: none;
+	}
+
+	@keyframes fuse {
+		from {
+			transform: scaleX(1);
+		}
+		to {
+			transform: scaleX(0);
+		}
+	}
+
+	.g-item.inking .g-name {
+		color: var(--text-muted);
+	}
+
+	.g-item.removed .g-tap {
+		cursor: default;
+	}
+
+	.g-item.removed .g-box {
+		border-color: var(--danger);
+		color: var(--danger);
+		--icon-accent: var(--danger);
+	}
+
+	.g-item.removed .g-name {
+		color: var(--text-faint);
+		text-decoration: line-through;
+		text-decoration-color: var(--danger);
+		text-decoration-thickness: 2px;
+	}
+
+	.g-item.removed .g-qty {
+		color: inherit;
+	}
+
+	.g-item.removed .g-by {
+		color: var(--danger);
 	}
 
 	/* ── The quill's cross-out ─────────────────────────────── */
@@ -765,6 +1113,18 @@
 		color: var(--text-faint);
 	}
 
+	.g-cleared {
+		position: relative;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		margin-bottom: 0.75rem;
+		padding: 0.35rem 0 0.6rem;
+		color: var(--text-muted);
+		font-size: 0.92rem;
+	}
+
 	.g-item.done .g-tap {
 		min-height: 50px;
 	}
@@ -783,10 +1143,25 @@
 		text-decoration-thickness: 2px;
 	}
 
+	.g-item.done .g-qty {
+		color: inherit;
+	}
+
 	@media (prefers-reduced-motion: reduce) {
-		.g-item.inking .g-ink::before,
-		.g-item.inking .g-quill {
+		.g-item.inking .g-quill,
+		.g-undo {
 			animation: none;
+		}
+
+		/* The line is there at once, not drawn. */
+		.g-item.inking .g-ink::before {
+			animation: none;
+			transform: scaleX(1);
+		}
+
+		/* Still waits; just doesn't burn down on screen. */
+		.g-fuse {
+			display: none;
 		}
 	}
 </style>

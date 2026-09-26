@@ -49,6 +49,20 @@ export function cleanGroceryName(name) {
 }
 
 /**
+ * A row for a database without the quantity column (before
+ * supabase/grocery_recipes.sql has run): the amount rides in the note, so
+ * "2 lb" still reaches the shopper.
+ * @template {{ quantity?: string | null, note?: string | null }} T
+ * @param {T} row
+ * @returns {Omit<T, 'quantity' | 'note'> & { note: string | null }}
+ */
+export function foldQuantity(row) {
+	const { quantity, note, ...rest } = row;
+	const folded = [quantity, note].filter(Boolean).join(' · ').slice(0, 200);
+	return { ...rest, note: folded || null };
+}
+
+/**
  * Quick-add chips: what the house buys most often, then the staples, minus
  * anything already on the list.
  * @param {{ name: string }[]} history past items (checked or not), any order

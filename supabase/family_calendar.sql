@@ -139,17 +139,22 @@ create policy manual_busy_times_write on public.manual_busy_times for all
 -- Both run with the definer's rights, so they can read past the rules
 -- above, and return only what each calendar's nanny_sees allows. Only
 -- parents' calendars are shared this way, and only to household members.
+--
+-- What they return takes each column's type from its table (%type): the
+-- live tables' ids are uuid, while calendar_tables.sql in this repo says
+-- bigint. Both are dropped first, so a re-run can change what they return.
 
 -- The calendars shared with the nanny, so their page can tell "free all
 -- day" from "not shared", and how fresh the picture is. No names, no
 -- addresses.
-create or replace function public.household_shared_calendars()
+drop function if exists public.household_shared_calendars();
+create function public.household_shared_calendars()
 returns table (
-  calendar_id bigint,
-  owner_id uuid,
+  calendar_id public.parent_calendars.id%type,
+  owner_id public.parent_calendars.user_id%type,
   is_family boolean,
   nanny_sees text,
-  last_synced timestamp with time zone
+  last_synced public.parent_calendars.last_synced%type
 )
 language sql
 stable
@@ -167,20 +172,19 @@ $$;
 -- Their events overlapping [range_start, range_end). A calendar shared as
 -- 'busy' gives only its busy events' times; one shared as 'details' gives
 -- every event with its title, and whether Google counts it as busy.
--- (Dropped first so a re-run can change what it returns.)
 drop function if exists public.household_busy(timestamp with time zone, timestamp with time zone);
 create function public.household_busy(
   range_start timestamp with time zone,
   range_end timestamp with time zone
 )
 returns table (
-  event_id bigint,
-  calendar_id bigint,
-  owner_id uuid,
+  event_id public.calendar_events.id%type,
+  calendar_id public.parent_calendars.id%type,
+  owner_id public.parent_calendars.user_id%type,
   is_family boolean,
-  title text,
-  starts_at timestamp with time zone,
-  ends_at timestamp with time zone,
+  title public.calendar_events.title%type,
+  starts_at public.calendar_events.start_time%type,
+  ends_at public.calendar_events.end_time%type,
   all_day boolean,
   is_busy boolean
 )

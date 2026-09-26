@@ -12,11 +12,13 @@
 	import WrapUpCard from '$lib/components/WrapUpCard.svelte';
 	import CareCockpit from '$lib/components/CareCockpit.svelte';
 	import GroceryDrop from '$lib/components/GroceryDrop.svelte';
+	import ParentsDay from '$lib/components/ParentsDay.svelte';
 
 	/*
 	 * Care → Today: the nanny's landing page, and the parents' when the kids
-	 * are the business at hand. The clock up top, the morning note under it,
-	 * then the Care Day — open whether or not anyone is on the clock.
+	 * are the business at hand. The clock up top, the morning note under it
+	 * (and, for the nanny, when the parents are busy), then the Care Day —
+	 * open whether or not anyone is on the clock.
 	 */
 
 	/** @type {any} */
@@ -93,6 +95,10 @@
 
 		<ShiftClock {user} {profile} bind:shift />
 		<MorningNote {user} {profile} />
+		<!-- The parents' busy times, as they chose to share them; they have Home. -->
+		{#if profile?.role === 'nanny'}
+			<ParentsDay />
+		{/if}
 		<WrapUpCard {user} {profile} activeShift={shift} />
 		<CareCockpit {shift} {user} {profile} />
 		<!-- Parents keep the list on Home; the nanny adds to it from here. -->

@@ -26,7 +26,7 @@ import { isIP } from 'node:net';
  * @param {number} [options.maxInstancesPerEvent] Runaway-RRULE guard (default 1000)
  * @param {string} [options.timeZone] IANA zone for all-day dates and floating times
  *   (the household's). Without it they fall back to the server's zone.
- * @returns {Array<{uid: string, summary: string, start: Date, end: Date, isBusy: boolean}>}
+ * @returns {Array<{uid: string, summary: string, start: Date, end: Date, isBusy: boolean, allDay: boolean}>}
  */
 export function parseICal(icalText, options = {}) {
 	const now = new Date();
@@ -35,7 +35,7 @@ export function parseICal(icalText, options = {}) {
 	const maxInstances = options.maxInstancesPerEvent || 1000;
 	const zone = validZone(options.timeZone);
 
-	/** @type {Array<{uid: string, summary: string, start: Date, end: Date, isBusy: boolean}>} */
+	/** @type {Array<{uid: string, summary: string, start: Date, end: Date, isBusy: boolean, allDay: boolean}>} */
 	const events = [];
 
 	const jcal = ICAL.parse(icalText);
@@ -94,7 +94,9 @@ export function parseICal(icalText, options = {}) {
 				summary: event.summary || 'Busy',
 				start,
 				end,
-				isBusy
+				isBusy,
+				// A DATE (not DATE-TIME) start: birthdays, holidays, "no school"
+				allDay: !!event.startDate.isDate
 			});
 			continue;
 		}
@@ -129,7 +131,8 @@ export function parseICal(icalText, options = {}) {
 				summary: details.item?.summary || event.summary || 'Busy',
 				start,
 				end,
-				isBusy
+				isBusy,
+				allDay: !!details.startDate.isDate
 			});
 			produced++;
 		}
@@ -286,7 +289,7 @@ export async function publicFeedUrl(raw) {
  * Fetch and parse an iCal feed from a URL.
  * @param {string} url The iCal feed URL
  * @param {Object} [options] Passed through to parseICal
- * @returns {Promise<Array<{uid: string, summary: string, start: Date, end: Date, isBusy: boolean}>>}
+ * @returns {Promise<Array<{uid: string, summary: string, start: Date, end: Date, isBusy: boolean, allDay: boolean}>>}
  */
 export async function fetchAndParseICal(url, options = {}) {
 	const signal = AbortSignal.timeout(FETCH_TIMEOUT_MS);

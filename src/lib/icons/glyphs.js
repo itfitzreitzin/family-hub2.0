@@ -28,7 +28,9 @@ export const GLYPHS = {
 	'chevron-right': { line: ['M9 5l7 7-7 7'] },
 	plus: { line: ['M12 5v14', 'M5 12h14'] },
 	close: { line: ['M6 6l12 12', 'M18 6L6 18'] },
+	minus: { line: ['M5 12h14'] },
 	check: { line: ['M4.5 12.5l5 5L19.5 7'] },
+	undo: { line: ['M9 5.5L4.5 10 9 14.5', 'M4.5 10H14a5 5 0 0 1 0 10h-3.5'] },
 	menu: { line: ['M4 7h16', 'M4 12h16', 'M4 17h16'] },
 	download: { line: ['M12 4v11', 'M7 10.5l5 5 5-5', 'M5 20h14'] },
 	warning: {

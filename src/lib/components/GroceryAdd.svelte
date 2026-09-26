@@ -1,14 +1,18 @@
 <script>
 	import { supabase } from '$lib/supabase';
 	import { toast } from '$lib/stores/toast.js';
-	import { errorMessage } from '$lib/errors.js';
-	import { cleanGroceryName, groceryKey, grocerySuggestions } from '$lib/groceries.js';
+	import { errorMessage, isMissingSchema } from '$lib/errors.js';
+	import { cleanGroceryName, grocerySuggestions, foldQuantity } from '$lib/groceries.js';
+	import { splitAmount, ingredientKey } from '$lib/ingredients.js';
 	import Icon from '$lib/icons/Icon.svelte';
 
 	/*
 	 * Putting something on the grocery list: type it, or tap a quick-add chip
 	 * (what the house buys most, then the staples). Shared by the list itself
 	 * and the nanny's "Running low?" card on Care → Today.
+	 *
+	 * An amount comes out of what's typed — "2 milk", "ground beef 2 lb",
+	 * "milk x2" — so there's no second field to fill in.
 	 */
 
 	/** @type {any} */
@@ -21,9 +25,12 @@
 	/** @type {number | null} */
 	export let listId = null;
 	export let listName = 'Groceries';
-	/** Called with the inserted row. */
+	/** Called with the inserted (or re-counted) row. */
 	/** @type {(row: any) => void} */
 	export let onadded = () => {};
+	/** Typing "3 milk" when Milk is already on the list changes how many —
+	 * for parents; the database only lets them change a row. */
+	export let canUpdate = false;
 	/** Tuck the quick-add chips behind a toggle — on the list page, so the
 	 * list itself stays on a phone's first screen at the store. */
 	export let collapsible = false;
@@ -40,34 +47,49 @@
 
 	/** @param {string} raw @param {string} [rawNote] */
 	async function add(raw, rawNote = '') {
-		const clean = cleanGroceryName(raw);
-		if (!clean || saving || listId === null) return;
+		if (saving || listId === null) return;
+		const { name: typed, quantity } = splitAmount(raw);
+		const clean = cleanGroceryName(typed);
+		if (!clean) return;
+		const label = quantity ? `${clean} (${quantity})` : clean;
 
-		const already = open.find((i) => groceryKey(i.name) === groceryKey(clean));
+		// "onion" finds Onions: one thing, however it's typed
+		const already = open.find((i) => ingredientKey(i.name) === ingredientKey(clean));
 		if (already) {
-			toast.info(`${already.name} is already on the ${listName} list`);
+			if (canUpdate && quantity && quantity !== already.quantity) {
+				await recount(already, quantity);
+			} else {
+				toast.info(`${already.name} is already on the ${listName} list`);
+			}
 			return;
 		}
 
 		saving = true;
 		try {
-			const { data, error } = await supabase
-				.from('grocery_items')
-				.insert({
-					list_id: listId,
-					name: clean,
-					note: rawNote.trim() || null,
-					added_by: user.id
-				})
-				.select()
-				.single();
+			const row = {
+				list_id: listId,
+				name: clean,
+				note: rawNote.trim() || null,
+				added_by: user.id,
+				// Left out when there's no amount, so plain adds work on a
+				// database that hasn't run grocery_recipes.sql yet.
+				...(quantity ? { quantity } : {})
+			};
+			let { data, error } = await supabase.from('grocery_items').insert(row).select().single();
+			if (error && quantity && isMissingSchema(error)) {
+				({ data, error } = await supabase
+					.from('grocery_items')
+					.insert(foldQuantity(row))
+					.select()
+					.single());
+			}
 
 			if (error) throw error;
 			name = '';
 			note = '';
 			showNote = false;
 			onadded(data);
-			toast.success(`${clean} is on the ${listName} list`);
+			toast.success(`${label} is on the ${listName} list`);
 		} catch (err) {
 			if (/** @type {any} */ (err).code === '23505') {
 				// one_open_grocery_per_name: someone else already put it down
@@ -75,6 +97,35 @@
 			} else {
 				toast.error('Error adding: ' + errorMessage(err));
 			}
+		} finally {
+			saving = false;
+		}
+	}
+
+	/**
+	 * A new amount for something already on the list.
+	 * @param {any} item
+	 * @param {string} quantity
+	 */
+	async function recount(item, quantity) {
+		saving = true;
+		try {
+			const { data, error } = await supabase
+				.from('grocery_items')
+				.update({ quantity })
+				.eq('id', item.id)
+				.select()
+				.single();
+			if (error) throw error;
+			name = '';
+			onadded(data);
+			toast.success(`${item.name}: now ${quantity}`);
+		} catch (err) {
+			toast.error(
+				isMissingSchema(err)
+					? 'Amounts need supabase/grocery_recipes.sql run in Supabase first'
+					: 'Error changing the amount: ' + errorMessage(err)
+			);
 		} finally {
 			saving = false;
 		}
@@ -88,7 +139,7 @@
 			id="g-name"
 			type="text"
 			bind:value={name}
-			placeholder="Add something — milk, wipes…"
+			placeholder="Add something — 2 milk, wipes…"
 			autocomplete="off"
 			maxlength="80"
 		/>
@@ -104,7 +155,7 @@
 			class="g-note"
 			type="text"
 			bind:value={note}
-			placeholder="A note for the shopper — brand, size, how many"
+			placeholder="A note for the shopper — brand, size"
 			maxlength="200"
 		/>
 	{/if}

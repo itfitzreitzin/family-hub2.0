@@ -87,7 +87,7 @@ nanny on the clock at any moment** (enforced in app logic and by a DB index).
 
 | Section | Tabs | Who |
 |---|---|---|
-| Home `/home` | — | parents (the nanny is sent to Care) |
+| Home `/home` | Hearth · Groceries `/home/groceries` | parents (the nanny is sent to Care) |
 | Care `/care` | Today · Journal `/care/journal` · Care Sheet `/care/sheet` · Hours & Pay `/care/hours` | everyone |
 | Settings `/settings` | You · Household `/settings/household` · Accounts `/settings/accounts` | everyone; Accounts is parents only |
 
@@ -119,6 +119,32 @@ addresses (`/dashboard`, `/tracker`, `/history`, `/chronicle`, `/family`,
   refresh-on-tab-focus. The nanny visiting `/home` is sent on to Care.
 - Deliberately thin for now: the grocery list, chores, the family calendar and
   Home Assistant tiles land here next (see "Where it may go").
+
+### Home → Groceries (`/home/groceries`) — the grocery lists
+- **Lists:** "Groceries" to start; parents add more (Costco, Target, the
+  pharmacy) from the "+ List" tab and can delete any but the last. Each device
+  remembers which list was open.
+- **Aisle sections:** items group by store section — Produce, Meat & Fish,
+  Dairy & Eggs, Bakery, Pantry, Frozen, Drinks, Baby, Household, Other — in
+  walking order, guessed from the name (`sectionFor` in `src/lib/groceries.js`,
+  word-start keyword matching; no manual override yet).
+- Tap a row to cross it off: a gilt
+  quill inks a line through it (a stand-in for a sprite animation later) and it
+  drops into **In the Basket**, where a tap puts it back and **Clear the basket**
+  sweeps it away. Every item says who asked for it and when; parents can remove
+  a mistake.
+- **Quick add:** chips for what the house buys most often (learned from the
+  list's own history), then the staples — milk, eggs, ground beef, chicken,
+  greens, kale, onions, diapers, wipes, paper towels, toilet paper… — minus
+  anything already on the list. The same thing can't be on a list twice
+  (DB-enforced, case-insensitive, per list).
+- **The nanny adds, doesn't browse:** a "Running Low?" card on Care → Today
+  puts things on a list (they pick which when there's more than one); RLS shows the nanny only what they added (waiting,
+  or "got it" once bought) and lets them take back their own addition.
+- Home's Hearth shows a grocery card with the first few items. Realtime on
+  `grocery_items` keeps two phones in step. Nothing is deleted on the way
+  through (checked and cleared are timestamps), so the history is there for
+  price tracking later.
 
 ### Care → Today (`/care`) — the day's care, as it happens
 The nanny's landing page, and the parents' when the kids are the business at hand.
@@ -298,6 +324,8 @@ shared family calendar is planned to replace it (see "Where it may go").
 | `chronicle_entries` | The journal's written layer: author, entry_date, body, tags text[], kid_ids uuid[], shift_id, household_only, photo_url | Added by `chronicle_entries.sql`; partial unique: **one 'morning'-tagged note per day**; RLS hides household_only rows from the nanny |
 | `chronicle_reacts` | One-tap acknowledgements: (entry_id, user_id, kind 'seen'/'heart') | Same file; each person writes only their own rows — how the nanny stamps Seen without edit rights |
 | `care_sheet` | The sitter's reference: contacts jsonb, pickups jsonb, house_notes, updated_at/by | Added by `care_sheet.sql`; a `one boolean` latch enforces the singleton; also adds `allergies` + `dosing` to family_members |
+| `grocery_lists` | The lists: name, position, created_by | Added by `grocery_items.sql` (seeds "Groceries"); unique name; everyone reads, parents write |
+| `grocery_items` | Things to buy: list_id, name, note, added_by/at, checked_by/at, cleared_at | Same file; partial unique: **one open item per name per list** (case-insensitive); RLS: parents everything, the nanny adds and sees only their own; deleting a list deletes its items |
 | `availability`, `schedule_blocks` | Defined in `supabase/schedule.sql` | **Legacy — no longer referenced by code** |
 
 Security: RLS on all tables, set by `supabase/household_access.sql` — reading
@@ -388,6 +416,13 @@ system, documented in the README and enforced by semantic tokens.
   table.
 - `adapter-auto` with no pinned deploy target in-repo.
 
+*Recent (2026-09-25, the grocery list)*
+- Shipped: Home → Groceries with multiple lists, aisle sections, quick-add
+  chips, the quill cross-off, the basket, and who-asked-for-it bylines; the
+  nanny's "Running Low?" card on Care.
+- Migration to run once in Supabase: `supabase/grocery_items.sql` (it also adds
+  the table to the realtime publication).
+
 *Recent (2026-09-24, the Home/Care restructure)*
 - Shipped: three sections (Home · Care · Settings) with tabs, one nav rendered
   from the root layout; landing by role; redirects from every retired address.
@@ -437,7 +472,7 @@ system, documented in the README and enforced by semantic tokens.
 Skylight-style kitchen display without buying a Skylight), with Care as one
 section of it:
 1. **Restructure — done.** Home · Care · Settings (see "The map").
-2. **Home basics:** a shared grocery list and chores (stored in Supabase, so the
+2. **Home basics:** a shared grocery list (**shipped** — `/home/groceries`) and chores (stored in Supabase, so the
    list works at the store), and a shared family calendar that reads the
    family's Google calendars through their private iCal links — the existing
    parser. Moving off Google gradually: Family Hub owns lists and chores from
@@ -456,6 +491,18 @@ section of it:
 
 What the nanny sees of Home (TV controls while clocked in, the grocery list) is
 open; the bridge makes it a permission rule, not a rebuild.
+
+**Grocery list, next ideas** (sections and multiple lists shipped; use it a
+week or two and let what's annoying pick the next one):
+- Smarter quick add: "you usually buy milk every 5 days — it's been 6."
+- Prices: enter what you paid when crossing off, then spending over time. The
+  history is already there (bought items keep their timestamps).
+- Receipt photos that fill in the prices.
+- Offline at the store, so a weak signal doesn't matter.
+- Moving an item to a different aisle section when the guess is wrong.
+- The 8-bit look: an Aseprite quill animation and itch.io characters in the
+  slot where the gilt quill placeholder is now (`.g-quill` on the list page).
+- Multi-family: everything assumes one household today.
 
 Signals already in the repo: the nav art fronts real pages (nav-home → Home,
 nav-care → Care) and the thermometer/droplet/cauldron/clipboard icons serve the

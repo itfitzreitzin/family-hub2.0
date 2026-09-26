@@ -5,7 +5,7 @@ project: family-hub2.0
 repo: itfitzreitzin/family-hub2.0
 status: active, in production use by one household
 started: 2025-10-03
-last-major-update: 2026-09-24
+last-major-update: 2026-09-26
 doc-date: 2026-09-24
 stack: [SvelteKit 2, Svelte 5, Vite 7, Supabase, ical.js]
 tags: [family-hub, nanny, time-tracking, childcare, household, home-hub, side-project]
@@ -128,11 +128,28 @@ addresses (`/dashboard`, `/tracker`, `/history`, `/chronicle`, `/family`,
   Dairy & Eggs, Bakery, Pantry, Frozen, Drinks, Baby, Household, Other — in
   walking order, guessed from the name (`sectionFor` in `src/lib/groceries.js`,
   word-start keyword matching; no manual override yet).
-- Tap a row to cross it off: a gilt
-  quill inks a line through it (a stand-in for a sprite animation later) and it
-  drops into **In the Basket**, where a tap puts it back and **Clear the basket**
-  sweeps it away. Every item says who asked for it and when; parents can remove
-  a mistake.
+- Tap a row to cross it off: a gilt quill inks a line through it (a stand-in
+  for a sprite animation later) and it **waits in place with an Undo** — a
+  gilt fuse along the row burns down — until nobody has tapped for 5 seconds,
+  then drops into **In the Basket**. Every tap restarts the wait, so rows never
+  shift under a thumb mid-aisle; tapping the crossed row again also undoes. The
+  write goes out on the tap (the other phone sees it at once); the wait is only
+  on screen. In the basket a tap puts it back, and **Clear the basket** sweeps
+  it away with the same Undo. Every item says who asked for it and when;
+  parents can remove a mistake — removal waits with an Undo too, and the row
+  is only deleted once the wait is over (or on leaving the page).
+- **Amounts:** typed with the thing, no second field — "2 milk", "ground beef
+  2 lb", "milk x2", "1 (15 oz) can black beans" — and shown in gilt ahead of
+  the name. Typing "3 milk" when Milk is already on the list changes the amount
+  (parents). Read by `splitAmount` in `src/lib/ingredients.js`; "2% milk" and
+  "diapers size 4" stay names.
+- **Recipes** (`RecipeSheet.svelte`, from the Recipes button): paste a recipe,
+  a recipe site's ingredients or a ChatGPT list; it's read into things to buy,
+  grouped by aisle, with what's already on the list marked and water, salt and
+  pepper pre-marked "have it". Tap off what's in the house (the
+  Worcestershire), then **Add N** — each row notes "for Chili". A recipe that
+  says how many it serves can be scaled. Named ones can be kept in the recipe
+  book, which lists the most recently cooked first; next time it's one tap.
 - **Quick add:** chips for what the house buys most often (learned from the
   list's own history), then the staples — milk, eggs, ground beef, chicken,
   greens, kale, onions, diapers, wipes, paper towels, toilet paper… — minus
@@ -325,7 +342,8 @@ shared family calendar is planned to replace it (see "Where it may go").
 | `chronicle_reacts` | One-tap acknowledgements: (entry_id, user_id, kind 'seen'/'heart') | Same file; each person writes only their own rows — how the nanny stamps Seen without edit rights |
 | `care_sheet` | The sitter's reference: contacts jsonb, pickups jsonb, house_notes, updated_at/by | Added by `care_sheet.sql`; a `one boolean` latch enforces the singleton; also adds `allergies` + `dosing` to family_members |
 | `grocery_lists` | The lists: name, position, created_by | Added by `grocery_items.sql` (seeds "Groceries"); unique name; everyone reads, parents write |
-| `grocery_items` | Things to buy: list_id, name, note, added_by/at, checked_by/at, cleared_at | Same file; partial unique: **one open item per name per list** (case-insensitive); RLS: parents everything, the nanny adds and sees only their own; deleting a list deletes its items |
+| `grocery_items` | Things to buy: list_id, name, quantity, note, added_by/at, checked_by/at, cleared_at | Same file; partial unique: **one open item per name per list** (case-insensitive); RLS: parents everything, the nanny adds and sees only their own; deleting a list deletes its items. `quantity` (text: "2", "2 lb") added by `grocery_recipes.sql` |
+| `recipes` | The recipe book: name, servings, body (the recipe as written, read into groceries each time it's used), created_by, updated_at, last_used_at | Added by `grocery_recipes.sql`; unique name (case-insensitive); parents only |
 | `availability`, `schedule_blocks` | Defined in `supabase/schedule.sql` | **Legacy — no longer referenced by code** |
 
 Security: RLS on all tables, set by `supabase/household_access.sql` — reading
@@ -416,6 +434,16 @@ system, documented in the README and enforced by semantic tokens.
   table.
 - `adapter-auto` with no pinned deploy target in-repo.
 
+*Recent (2026-09-26, grocery list feedback from the first shop)*
+- Shipped: crossed-off items wait in place with an Undo before dropping into
+  the basket (removing and clearing the basket too); amounts typed with the
+  item; groceries from a pasted recipe or list, tapping off what's in the
+  house; a simple recipe book.
+- Migration to run once in Supabase: `supabase/grocery_recipes.sql` (adds
+  `grocery_items.quantity` and the `recipes` table). Until it runs, the list
+  keeps working — amounts ride in the note — and the recipe sheet reads a
+  paste but can't keep it.
+
 *Recent (2026-09-25, the grocery list)*
 - Shipped: Home → Groceries with multiple lists, aisle sections, quick-add
   chips, the quill cross-off, the basket, and who-asked-for-it bylines; the
@@ -492,10 +520,16 @@ section of it:
 What the nanny sees of Home (TV controls while clocked in, the grocery list) is
 open; the bridge makes it a permission rule, not a rebuild.
 
-**Grocery list, next ideas** (sections and multiple lists shipped; use it a
-week or two and let what's annoying pick the next one):
-- Recipe book (requested 2026-09-26): save recipes with servings and ingredient
-  quantities, then add their ingredients to a grocery list.
+**Grocery list, next ideas** (sections, multiple lists, undo, amounts and the
+recipe book shipped; use it a week or two and let what's annoying pick the next
+one):
+- Recipe links: paste a recipe site's URL and read its ingredients from the
+  page's schema.org Recipe data. Needs a server endpoint that fetches outside
+  pages — the calendar sync's public-address guard is the pattern to reuse.
+- A pantry that remembers: "you said you had Worcestershire last time" —
+  pre-mark it in the recipe sheet. Needs somewhere shared to keep it (a small
+  table), since both parents plan.
+- Editing an item's amount or note in place, not only by retyping it.
 - Smarter quick add: "you usually buy milk every 5 days — it's been 6."
 - Prices: enter what you paid when crossing off, then spending over time. The
   history is already there (bought items keep their timestamps).
@@ -507,8 +541,24 @@ week or two and let what's annoying pick the next one):
 - Multi-family: everything assumes one household today.
 
 **Architecture follow-up (2026-09-26):** Nick wants to discuss the architecture
-alongside the latest implementation and this plan. Recipe storage, ingredient
-quantities, and the connection to grocery lists are open design questions.
+alongside the latest implementation and this plan. The first cut made these
+calls, all cheap to change:
+- *Recipe storage:* a `recipes` row keeps the recipe **as written** (`body`
+  text), not parsed ingredient rows. The reader (`src/lib/ingredients.js`)
+  runs each time a recipe is used, so improving it improves every saved
+  recipe, and editing is a plain textarea. The cost: no per-ingredient data in
+  the database ("recipes with chicken" is a text search). Parsed ingredient
+  rows, or a self-hosted recipe manager (e.g. Mealie on the Mac mini) feeding
+  the list, are the alternatives.
+- *Quantities:* one free-text `quantity` column ("2", "2 lb", "1 (15 oz)
+  can"), read out of what's typed. Amounts only add up when the measures match
+  (1 lb + 1/2 lb); otherwise they're shown side by side ("1 cup + 2 tbsp").
+- *Recipes → the list:* grocery rows don't point back at recipes; the note
+  says "for Chili". A `recipe_id` (or a join table, since two recipes can want
+  the same onion) is the step up if the list ever needs to know more.
+- *Reading recipes:* plain rules, no AI and no network. Turning "tacos for 6"
+  into a list would take a Claude API call from a server endpoint — a new
+  outside dependency and an API key, so a decision to make together.
 
 Signals already in the repo: the nav art fronts real pages (nav-home → Home,
 nav-care → Care) and the thermometer/droplet/cauldron/clipboard icons serve the
@@ -563,6 +613,8 @@ the other unbuilt bullet from the screens list.
   Home, `/tracker` → Care, `/history` → Hours & Pay, `/chronicle` → Journal,
   `/family` → Household, `/admin` → Accounts.
 - **Key files:** `src/lib/nav.js` (the section/tab map, landing by role) ·
+  `src/lib/groceries.js` (aisles, quick add) · `src/lib/ingredients.js`
+  (amounts and pasted recipes) · `RecipeSheet.svelte` ·
   `src/lib/components/ShiftClock.svelte` · `CareCockpit.svelte` (the Care Day) ·
   `MorningNote.svelte` · `WrapUpCard.svelte` · `CareGlance.svelte` (Home's Right
   now) · `src/lib/time.js` (local-time policy, week bounds) ·

@@ -217,9 +217,11 @@
 					.select('id, name')
 					.order('position', { ascending: true })
 					.order('created_at', { ascending: true }),
+				// '*' rather than naming quantity, so the card still loads on a
+				// database that hasn't run grocery_recipes.sql yet.
 				supabase
 					.from('grocery_items')
-					.select('id, name, list_id')
+					.select('*')
 					.is('checked_at', null)
 					.order('added_at', { ascending: true })
 			]);
@@ -449,7 +451,10 @@
 					{:else}
 						<ul class="grocery-peek">
 							{#each groceries.slice(0, 6) as item (item.id)}
-								<li>{item.name}</li>
+								<li>
+									{#if item.quantity}<span class="grocery-qty">{item.quantity}&nbsp;</span
+										>{/if}{item.name}
+								</li>
 							{/each}
 						</ul>
 						{#if groceries.length > 6}
@@ -814,6 +819,12 @@
 		position: relative;
 		font-size: 0.95rem;
 		color: var(--text);
+	}
+
+	.grocery-qty {
+		color: var(--accent-bright);
+		font-weight: 700;
+		font-variant-numeric: lining-nums tabular-nums;
 	}
 
 	.grocery-peek li::before {

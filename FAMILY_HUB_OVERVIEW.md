@@ -494,6 +494,8 @@ open; the bridge makes it a permission rule, not a rebuild.
 
 **Grocery list, next ideas** (sections and multiple lists shipped; use it a
 week or two and let what's annoying pick the next one):
+- Recipe book (requested 2026-09-26): save recipes with servings and ingredient
+  quantities, then add their ingredients to a grocery list.
 - Smarter quick add: "you usually buy milk every 5 days — it's been 6."
 - Prices: enter what you paid when crossing off, then spending over time. The
   history is already there (bought items keep their timestamps).
@@ -503,6 +505,10 @@ week or two and let what's annoying pick the next one):
 - The 8-bit look: an Aseprite quill animation and itch.io characters in the
   slot where the gilt quill placeholder is now (`.g-quill` on the list page).
 - Multi-family: everything assumes one household today.
+
+**Architecture follow-up (2026-09-26):** Nick wants to discuss the architecture
+alongside the latest implementation and this plan. Recipe storage, ingredient
+quantities, and the connection to grocery lists are open design questions.
 
 Signals already in the repo: the nav art fronts real pages (nav-home → Home,
 nav-care → Care) and the thermometer/droplet/cauldron/clipboard icons serve the

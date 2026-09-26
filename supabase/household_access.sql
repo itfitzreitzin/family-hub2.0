@@ -16,6 +16,8 @@
 --     the setup screen until an admin lets them in from Settings → Accounts.
 --   • Household-only journal entries are hidden from the nanny even when she
 --     wrote them, and so are the hearts on them.
+--   • The nanny reads only their own calendars and busy times; what they see
+--     of the parents' comes through family_calendar.sql's functions.
 --   • Everything else keeps the permissions the app already relies on: the
 --     nanny clocks herself in and out and logs her own moments; parents run
 --     the schedule, the pay and the Care Sheet.
@@ -255,10 +257,16 @@ begin
   end if;
 
   -- Calendars and busy time. Each person keeps their own; parents can manage
-  -- anyone's (the calendar manager edits a partner's or the nanny's).
+  -- anyone's (the calendar manager edits a partner's or the nanny's). The
+  -- nanny reads only their own: what they see of the parents' calendars
+  -- comes through family_calendar.sql's household_busy(), which follows
+  -- each calendar's nanny_sees setting.
   if pg_temp.reset_policies('parent_calendars') then
     create policy parent_calendars_select on public.parent_calendars for select
-      using ((select public.is_household_member()));
+      using (
+        (select public.is_household_parent())
+        or (user_id = auth.uid() and (select public.is_household_member()))
+      );
     create policy parent_calendars_write on public.parent_calendars for all
       using (
         (user_id = auth.uid() and (select public.is_household_member()))
@@ -272,21 +280,35 @@ begin
 
   if pg_temp.reset_policies('calendar_events') then
     create policy calendar_events_select on public.calendar_events for select
-      using ((select public.is_household_member()));
+      using (
+        (select public.is_household_parent())
+        or (user_id = auth.uid() and (select public.is_household_member()))
+      );
+    -- The nanny files events only under their own calendars.
     create policy calendar_events_write on public.calendar_events for all
       using (
         (user_id = auth.uid() and (select public.is_household_member()))
         or (select public.is_household_parent())
       )
       with check (
-        (user_id = auth.uid() and (select public.is_household_member()))
-        or (select public.is_household_parent())
+        (select public.is_household_parent())
+        or (
+          user_id = auth.uid()
+          and (select public.is_household_member())
+          and exists (
+            select 1 from public.parent_calendars c
+            where c.id = calendar_events.calendar_id and c.user_id = auth.uid()
+          )
+        )
       );
   end if;
 
   if pg_temp.reset_policies('manual_busy_times') then
     create policy manual_busy_times_select on public.manual_busy_times for select
-      using ((select public.is_household_member()));
+      using (
+        (select public.is_household_parent())
+        or (user_id = auth.uid() and (select public.is_household_member()))
+      );
     create policy manual_busy_times_write on public.manual_busy_times for all
       using (
         (user_id = auth.uid() and (select public.is_household_member()))

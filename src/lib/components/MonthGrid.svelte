@@ -1,10 +1,17 @@
 <script>
 	import { createEventDispatcher } from 'svelte';
 	import { formatDateWeekday, parseLocalDate, formatTime } from '$lib/time.js';
+	import { pillTime } from '$lib/familyCalendar.js';
+
+	/**
+	 * The schedule page's items, or the family calendar's (colored by their
+	 * own calendar).
+	 * @typedef {import('$lib/calendar.js').CalendarItem | import('$lib/familyCalendar.js').FamilyItem} GridItem
+	 */
 
 	/** @type {{ day: number, current: boolean, dateStr: string, isToday: boolean }[][]} */
 	export let weeks = [];
-	/** @type {Record<string, import('$lib/calendar.js').CalendarItem[]>} */
+	/** @type {Record<string, GridItem[]>} */
 	export let itemsByDay = {};
 	/** @type {string | null} */
 	export let selectedDateStr = null;
@@ -20,13 +27,19 @@
 		dispatch('selectday', { dateStr });
 	}
 
-	/** @param {import('$lib/calendar.js').CalendarItem} item */
+	/** @param {GridItem} item */
 	function pillText(item) {
 		if (item.kind === 'shift') {
 			const repeatMark = item.raw?.template_id ? ' ↻' : '';
 			return `${formatTime(item.start).replace(' ', '').toLowerCase()} ${item.title}${repeatMark}`;
 		}
+		if (item.kind === 'event' && !item.allDay) return `${pillTime(item.start)} ${item.title}`;
 		return item.title;
+	}
+
+	/** @param {GridItem} item */
+	function pillColor(item) {
+		return item.kind === 'event' ? item.color : null;
 	}
 
 	/** @param {string} dateStr */
@@ -63,7 +76,9 @@
 					<span class="cell-num" aria-hidden="true">{cell.day}</span>
 					<span class="cell-pills" aria-hidden="true">
 						{#each items.slice(0, maxPills) as item (item.id + ':' + cell.dateStr)}
-							<span class="pill pill-{item.kind}">{pillText(item)}</span>
+							<span class="pill pill-{item.kind}" style:--cal={pillColor(item)}
+								>{pillText(item)}</span
+							>
 						{/each}
 						{#if items.length > maxPills}
 							<span class="pill-more">+{items.length - maxPills} more</span>
@@ -225,6 +240,20 @@
 		border-left-color: var(--accent);
 	}
 
+	/* The family calendar: each event in its own calendar's color. The text
+	   stays the theme's, so a pale calendar color never goes unreadable. */
+	.pill-event {
+		background: color-mix(in srgb, var(--cal, var(--arcane)) 20%, transparent);
+		color: var(--text);
+		border-left-color: var(--cal, var(--arcane));
+	}
+
+	.pill-birthday {
+		background: var(--accent-dim);
+		color: var(--accent-bright);
+		border-left-color: var(--accent);
+	}
+
 	.pill-more {
 		padding: 1px 5px;
 		font-family: var(--font-body);
@@ -258,6 +287,12 @@
 			background: var(--danger);
 		}
 		.pill-payment {
+			background: var(--accent);
+		}
+		.pill-event {
+			background: var(--cal, var(--arcane));
+		}
+		.pill-birthday {
 			background: var(--accent);
 		}
 

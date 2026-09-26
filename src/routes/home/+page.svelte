@@ -3,12 +3,7 @@
 	import { supabase } from '$lib/supabase';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import {
-		getWeekBounds,
-		localDateString,
-		normalizeDateValue,
-		getMonthGridRange
-	} from '$lib/time.js';
+	import { getWeekBounds, localDateString } from '$lib/time.js';
 	import { formatMoney } from '$lib/money.js';
 	import { outstandingBalance, LEDGER_WEEKS } from '$lib/ledger.js';
 	import { errorMessage } from '$lib/errors.js';
@@ -16,17 +11,16 @@
 	import MoonPhase from '$lib/components/MoonPhase.svelte';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
-	import MiniCalendar from '$lib/components/MiniCalendar.svelte';
 	import ShelfFooter from '$lib/components/ShelfFooter.svelte';
 	import PixelArt from '$lib/components/PixelArt.svelte';
 	import CareGlance from '$lib/components/CareGlance.svelte';
+	import FamilyToday from '$lib/components/FamilyToday.svelte';
 	import { ART } from '$lib/art.js';
 
 	/*
-	 * Home: the household's page. For now the hearth, a window onto Care, the
-	 * week's money and the month; the grocery list, chores and the family
-	 * calendar land here next. The nanny's landing page is Care, so /home
-	 * sends them there.
+	 * Home: the household's page — the hearth, today on the family calendar,
+	 * a window onto Care, the week's money and the grocery list; chores land
+	 * here next. The nanny's landing page is Care, so /home sends them there.
 	 */
 
 	/** @type {Record<string, string>} */
@@ -49,10 +43,6 @@
 	let activeShifts = [];
 	/** @type {any[]} */
 	let weekEntries = [];
-	/** @type {string[]} */
-	let monthShiftDates = [];
-	/** @type {{ startStr: string, endStr: string } | null} */
-	let monthRange = null;
 	/** Completed entries and payment rows behind the owed balance (see outstandingBalance). */
 	/** @type {any[]} */
 	let owedEntries = [];
@@ -186,27 +176,7 @@
 		if (weekError) throw weekError;
 		weekEntries = weekData || [];
 
-		await Promise.all([loadMonthShifts(), loadOwed(), loadGroceries()]);
-	}
-
-	async function loadMonthShifts() {
-		if (!monthRange) {
-			const d = new Date();
-			monthRange = getMonthGridRange(d.getFullYear(), d.getMonth());
-		}
-		try {
-			const { data, error } = await supabase
-				.from('schedules')
-				.select('date')
-				.gte('date', monthRange.startStr)
-				.lte('date', monthRange.endStr);
-
-			if (error) throw error;
-			monthShiftDates = (data || []).map((s) => normalizeDateValue(s.date));
-		} catch (err) {
-			console.warn('Month shifts load failed:', errorMessage(err));
-			monthShiftDates = [];
-		}
+		await Promise.all([loadOwed(), loadGroceries()]);
 	}
 
 	async function loadGroceries() {
@@ -232,12 +202,6 @@
 			console.warn('Grocery list load failed:', errorMessage(err));
 			groceries = null;
 		}
-	}
-
-	/** @param {CustomEvent<{ year: number, month: number, startStr: string, endStr: string }>} event */
-	function handleMonthChange(event) {
-		monthRange = event.detail;
-		loadMonthShifts();
 	}
 
 	// The owed balance reads the same window and rules as the Purse on
@@ -362,13 +326,18 @@
 				</div>
 			</section>
 
+			<!-- ── Today, on the family calendar ──────────── -->
+			<div class="today-slot">
+				<FamilyToday />
+			</div>
+
 			<!-- ── Right now: a window onto Care ─────────── -->
 			<div class="glance-slot">
 				<CareGlance />
 			</div>
 
 			<!-- ── Hours / Payment Summary ──────────────── -->
-			<section class="tcard approval-card">
+			<section class="tcard approval-card" class:wide={!groceries}>
 				<div class="tcard-header">
 					<PixelArt src={ART.iconClock} size={24} />
 					<h2>Hours &amp; Pay</h2>
@@ -409,24 +378,6 @@
 				<a href={resolve('/care/hours')} class="tcard-action accent">
 					<Icon name="coin" size={12} /> Hours &amp; Pay
 				</a>
-			</section>
-
-			<!-- ── The month ────────────────────────────── -->
-			<section class="tcard calendar-card" class:wide={!groceries}>
-				<div class="tcard-header">
-					<PixelArt src={ART.navCalendar} size={24} />
-					<h2>This Month</h2>
-				</div>
-				<MiniCalendar shiftDates={monthShiftDates} on:monthchange={handleMonthChange} />
-				<!-- The cat and its books keep watch from the corner, beside the legend. -->
-				<img
-					class="calendar-still"
-					src={ART.stillBooksCat}
-					alt=""
-					aria-hidden="true"
-					loading="lazy"
-					draggable="false"
-				/>
 			</section>
 
 			<!-- ── The grocery list ─────────────────────── -->
@@ -487,26 +438,31 @@
 		margin-bottom: var(--section-gap);
 	}
 
+	/* The day's calendar takes the hearth's row; Care, the money and the
+	   list share the row beneath. */
 	.hero-card {
 		grid-column: 1;
 		grid-row: 1;
 	}
-	.glance-slot {
-		grid-column: 2;
+	.today-slot {
+		grid-column: 2 / 4;
 		grid-row: 1;
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
+	}
+	.glance-slot {
+		grid-column: 1;
+		grid-row: 2;
 		display: flex;
 		flex-direction: column;
 	}
 	.approval-card {
-		grid-column: 3;
-		grid-row: 1;
-	}
-	.calendar-card {
-		grid-column: 1 / 3;
+		grid-column: 2;
 		grid-row: 2;
 	}
-	.calendar-card.wide {
-		grid-column: 1 / 4;
+	.approval-card.wide {
+		grid-column: 2 / 4;
 	}
 	.grocery-card {
 		grid-column: 3;
@@ -521,20 +477,20 @@
 		.hero-card {
 			grid-column: 1 / 3;
 		}
+		.today-slot {
+			grid-column: 1 / 3;
+			grid-row: 2;
+		}
 		.glance-slot {
 			grid-column: 1;
-			grid-row: 2;
-		}
-		.approval-card {
-			grid-column: 2;
-			grid-row: 2;
-		}
-		.grocery-card {
-			grid-column: 1 / 3;
 			grid-row: 3;
 		}
-		.calendar-card,
-		.calendar-card.wide {
+		.approval-card,
+		.approval-card.wide {
+			grid-column: 2;
+			grid-row: 3;
+		}
+		.grocery-card {
 			grid-column: 1 / 3;
 			grid-row: 4;
 		}
@@ -546,10 +502,10 @@
 		}
 
 		.hero-card,
+		.today-slot,
 		.glance-slot,
 		.approval-card,
-		.grocery-card,
-		.calendar-card {
+		.grocery-card {
 			grid-column: 1 !important;
 			grid-row: auto !important;
 		}
@@ -664,7 +620,11 @@
 	   square crop wastes the card's height on empty night sky. */
 	.hero-scene {
 		margin: 0.85rem calc(-1 * var(--card-padding, 1.25rem)) 0.9rem;
-		height: 152px;
+		/* Grows with a long day beside it on the Today card, rather than
+		   leaving the card's foot empty. */
+		flex: 1 1 152px;
+		min-height: 152px;
+		max-height: 420px;
 		overflow: hidden;
 		border-block: 1px solid var(--border-gilt);
 		background: var(--bg-deep);
@@ -841,34 +801,6 @@
 		font-size: 0.88rem;
 		font-style: italic;
 		color: var(--text-faint);
-	}
-
-	/* ═══════════════════════════════════════════════════════
-	   CALENDAR CARD
-	   ═══════════════════════════════════════════════════════ */
-
-	.calendar-card {
-		min-height: 280px;
-		position: relative;
-	}
-
-	/* Sits in the corner beside the legend row, which is left-aligned and
-	   leaves this spot empty. The card clips overflow, so it stays inside. */
-	.calendar-still {
-		position: absolute;
-		right: 14px;
-		bottom: 10px;
-		height: 52px;
-		width: auto;
-		pointer-events: none;
-		user-select: none;
-		-webkit-user-drag: none;
-	}
-
-	@media (max-width: 720px) {
-		.calendar-still {
-			display: none;
-		}
 	}
 
 	/* ═══════════════════════════════════════════════════════

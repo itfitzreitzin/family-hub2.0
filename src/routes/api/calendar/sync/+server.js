@@ -21,6 +21,32 @@ async function updateCalendarSyncState(supabase, calendarId, fields) {
 }
 
 /**
+ * @param {any} supabase
+ * @param {Record<string, any>[]} rows
+ * @param {boolean} withAllDay
+ */
+function upsertEvents(supabase, rows, withAllDay) {
+	const payload = withAllDay
+		? rows
+		: rows.map((row) => {
+				const copy = { ...row };
+				delete copy.all_day;
+				return copy;
+			});
+	return supabase.from('calendar_events').upsert(payload, { onConflict: 'calendar_id,event_id' });
+}
+
+/**
+ * Whether a database error is about a missing column (a migration not yet run).
+ * @param {any} error
+ * @param {string} column
+ */
+function mentionsColumn(error, column) {
+	const text = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`;
+	return error?.code === '42703' || error?.code === 'PGRST204' || text.includes(column);
+}
+
+/**
  * POST /api/calendar/sync
  * Syncs a single calendar by fetching its iCal feed and upserting events.
  *
@@ -75,7 +101,9 @@ export async function POST({ request }) {
 	// Household model: you can sync your own calendars; family/admin can sync
 	// anyone's (they manage partner and nanny calendars from the schedule page).
 	// Mirrors the RLS modify policy — needed here because the service role key
-	// bypasses RLS.
+	// bypasses RLS. The nanny may also refresh a parent's calendar that's
+	// shared with them (nanny_sees), so their busy/free view isn't stale:
+	// a refresh reads nothing back, it only brings the feed up to date.
 	if (calendar.user_id !== user.id) {
 		const { data: requesterProfile } = await supabase
 			.from('profiles')
@@ -83,7 +111,11 @@ export async function POST({ request }) {
 			.eq('id', user.id)
 			.maybeSingle();
 
-		if (!['family', 'admin'].includes(requesterProfile?.role)) {
+		const role = requesterProfile?.role;
+		const isParent = role === 'family' || role === 'admin';
+		const sharedWithNanny =
+			role === 'nanny' && (calendar.nanny_sees === 'busy' || calendar.nanny_sees === 'details');
+		if (!isParent && !sharedWithNanny) {
 			return json({ error: 'Not allowed to sync this calendar' }, { status: 403 });
 		}
 	}
@@ -117,6 +149,9 @@ export async function POST({ request }) {
 		let synced = 0;
 		let errors = 0;
 		const CHUNK = 200;
+		// all_day arrives with family_calendar.sql; until that has run, save
+		// without it rather than failing the whole sync.
+		let withAllDay = true;
 
 		for (let i = 0; i < relevantEvents.length; i += CHUNK) {
 			const chunk = relevantEvents.slice(i, i + CHUNK).map((event) => ({
@@ -126,12 +161,15 @@ export async function POST({ request }) {
 				title: event.summary || 'Busy',
 				start_time: event.start.toISOString(),
 				end_time: event.end.toISOString(),
-				is_busy: event.isBusy
+				is_busy: event.isBusy,
+				all_day: event.allDay
 			}));
 
-			const { error: upsertError } = await supabase
-				.from('calendar_events')
-				.upsert(chunk, { onConflict: 'calendar_id,event_id' });
+			let { error: upsertError } = await upsertEvents(supabase, chunk, withAllDay);
+			if (upsertError && withAllDay && mentionsColumn(upsertError, 'all_day')) {
+				withAllDay = false;
+				({ error: upsertError } = await upsertEvents(supabase, chunk, false));
+			}
 
 			if (upsertError) {
 				errors += chunk.length;

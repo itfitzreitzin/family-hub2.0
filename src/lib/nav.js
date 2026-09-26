@@ -22,6 +22,7 @@ export const SECTIONS = [
 		roles: ['family', 'admin'],
 		tabs: [
 			{ href: '/home', label: 'Hearth' },
+			{ href: '/home/calendar', label: 'Calendar' },
 			{ href: '/home/groceries', label: 'Groceries' }
 		]
 	},

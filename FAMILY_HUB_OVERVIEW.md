@@ -5,16 +5,16 @@ project: family-hub2.0
 repo: itfitzreitzin/family-hub2.0
 status: active, in production use by one household
 started: 2025-10-03
-last-major-update: 2026-09-24
-doc-date: 2026-09-24
+last-major-update: 2026-09-26
+doc-date: 2026-09-26
 stack: [SvelteKit 2, Svelte 5, Vite 7, Supabase, ical.js]
 tags: [family-hub, nanny, time-tracking, childcare, household, home-hub, side-project]
 ---
 
 # Family Hub — What It Is, What We've Built, Where It's Going
 
-> AI-readable reference. Facts below are verified against the codebase as of 2026-09-24
-> (the Home/Care restructure). The final section ("Where it may go") is forward-looking:
+> AI-readable reference. Facts below are verified against the codebase as of 2026-09-26
+> (the family calendar). The final section ("Where it may go") is forward-looking:
 > the agreed plan plus speculation, not shipped functionality.
 
 ## TL;DR
@@ -22,9 +22,9 @@ tags: [family-hub, nanny, time-tracking, childcare, household, home-hub, side-pr
 Family Hub is a private web app for running one household: Nick, Rhea, and their
 daughter Indigo. It started as the childcare operation — the parents and their nanny
 track hours worked, settle weekly pay over Venmo, and log Indigo's day — and in Sept
-2026 it was reorganized into two halves: **Home**, the household's page (the seed for
-a grocery list, chores, a shared calendar and Home Assistant), and **Care**, everything
-about Indigo and the nanny. It replaces the usual mess of texted hours, mental math,
+2026 it was reorganized into two halves: **Home**, the household's page (the family
+calendar and the grocery lists so far; chores and Home Assistant next), and **Care**,
+everything about Indigo and the nanny. It replaces the usual mess of texted hours, mental math,
 and "how was the nap?" with a single source of truth that all three roles log into.
 
 It is deliberately small and personal — one family, one timezone, ~two runtime
@@ -63,6 +63,11 @@ realtime multi-device sync, row-level security, and a fully bespoke design syste
   any hour (not just during a shift). Home became the parents' landing page and
   the place the household-running features land next. The shift-planning
   calendar, which the family never used, left the nav.
+- **Sept 2026 — the grocery lists and the family calendar.** Home got its first
+  two features: shared grocery lists, and the calendar back as the family's own —
+  each parent's Google calendar and the family's shared one, today's events on the
+  front page and the month on a Calendar tab. The nanny sees when the parents are
+  busy, not what they're doing, unless a calendar is shared in full.
 
 The build itself is a human+AI collaboration: ~70 commits on main split almost evenly
 between Nick (34) and Claude (36), across ~27 merged PRs whose branch names
@@ -77,7 +82,7 @@ that produced them.
 |---|---|---|
 | `admin` | The Keeper | Everything family can, plus letting new accounts in (Settings → Accounts) and role changes |
 | `family` | The Household | Home; clock the nanny in/out; log the Care Day; write the morning note; record and send payments; manage nannies' accounts, the roster and the Care Sheet |
-| `nanny` | The Guardian | Care only (plus own Settings): clock own shifts in/out, log the Care Day, stamp the morning note Seen, see own hours, request payment via Venmo |
+| `nanny` | The Guardian | Care only (plus own Settings): clock own shifts in/out, log the Care Day, stamp the morning note Seen, see when the parents are busy (as they share it), see own hours, request payment via Venmo |
 
 Assumptions baked in (fine for now, listed under "gaps" below): one household, one
 timezone, a **two-parent** model ("You" / "Partner" in the calendar), and **only one
@@ -87,7 +92,7 @@ nanny on the clock at any moment** (enforced in app logic and by a DB index).
 
 | Section | Tabs | Who |
 |---|---|---|
-| Home `/home` | Hearth · Groceries `/home/groceries` | parents (the nanny is sent to Care) |
+| Home `/home` | Hearth · Calendar `/home/calendar` · Groceries `/home/groceries` | parents (the nanny is sent to Care) |
 | Care `/care` | Today · Journal `/care/journal` · Care Sheet `/care/sheet` · Hours & Pay `/care/hours` | everyone |
 | Settings `/settings` | You · Household `/settings/household` · Accounts `/settings/accounts` | everyone; Accounts is parents only |
 
@@ -109,16 +114,22 @@ addresses (`/dashboard`, `/tracker`, `/history`, `/chronicle`, `/family`,
 
 ### Home (`/home`) — the household's page
 - The parents' landing page: greeting hero with the family pixel painting and
-  moon phase; a **Right now** card (`CareGlance.svelte`) — who's on the clock and
+  moon phase (the painting grows to fill the card beside a long day); the
+  **Today** card (`FamilyToday.svelte`) beside it — the family calendar's day:
+  birthdays and all-day events as chips, then each event with its time, whose it
+  is ("Nick", "Rhea", "Family") and its calendar's color, finished ones dimmed and
+  the one under way marked **Now**; then tomorrow and the next two weeks' "coming
+  up". Below: a **Right now** card (`CareGlance.svelte`) — who's on the clock and
   since when, Indigo's day as one status line ("Indigo napping since 1:10 · mac &
   cheese, ate well · 2 potty stars"), and whether the morning note has been seen;
   an **Hours & Pay** card (live "shift in progress" alert, hours today, $ this
-  week, unpaid balance); the month calendar; and the painted shelf, which doubles
+  week, unpaid balance); the grocery card; and the painted shelf, which doubles
   as the unpaid-balance tile.
 - Live via realtime on `time_entries` and `care_moments`, a 30s poll, and
-  refresh-on-tab-focus. The nanny visiting `/home` is sent on to Care.
-- Deliberately thin for now: the grocery list, chores, the family calendar and
-  Home Assistant tiles land here next (see "Where it may go").
+  refresh-on-tab-focus; the Today card re-reads every 5 minutes and quietly
+  re-syncs any calendar older than 30 minutes. The nanny visiting `/home` is sent
+  on to Care.
+- Chores and Home Assistant tiles land here next (see "Where it may go").
 
 ### Home → Groceries (`/home/groceries`) — the grocery lists
 - **Lists:** "Groceries" to start; parents add more (Costco, Target, the
@@ -146,6 +157,28 @@ addresses (`/dashboard`, `/tracker`, `/history`, `/chronicle`, `/family`,
   through (checked and cleared are timestamps), so the history is there for
   price tracking later.
 
+### Home → Calendar (`/home/calendar`) — the family calendar
+
+- **The month:** each parent's own Google calendar and the family's shared one,
+  in their own colors, with birthdays from the household roster ("Indigo turns 3";
+  a parent's is just "Nick's birthday"). Tap a day for its running order; "On
+  Home" lists the calendars feeding it and how fresh they are.
+- **Calendars** (the settings sheet, `FamilyCalendars.svelte`): connect a
+  calendar by its private iCal address (Google's "Secret address in iCal format";
+  Outlook and iCloud publish links work too), saying whose it is — Nick's,
+  Rhea's, or the family's. Per calendar: **Show on Home**, and **what the nanny
+  sees** — *Nothing*, *Busy times* (when that parent is busy, never what; the
+  default for a parent's own) or *Everything* (the events by name). The family's
+  calendar is Nothing or Everything, and never makes a parent look busy. Sync now,
+  edit (a new address re-syncs), remove. Connecting an address that's already
+  there (say, from the old planner) takes that row over rather than doubling it.
+- Read-only: events are added in Google and show up on the next sync (on
+  opening Home, the Calendar tab or Care, when older than 30 minutes; "Sync now"
+  any time). Home's "Connect a calendar" opens straight onto the form
+  (`?connect=1`).
+- All-day events are flagged by the sync (`calendar_events.all_day`); rows
+  synced before that are recognized by running midnight to midnight.
+
 ### Care → Today (`/care`) — the day's care, as it happens
 The nanny's landing page, and the parents' when the kids are the business at hand.
 Top to bottom:
@@ -163,6 +196,13 @@ Top to bottom:
 - **The morning note** (`MorningNote.svelte`): parents write/amend one note per
   morning (DB-enforced; after 5pm the button writes tomorrow's). It pins here
   until the nanny taps **Seen ✓**; the receipt (time) shows back to the parents.
+- **When the parents are busy** (`ParentsDay.svelte`, the nanny only): "Nick &
+  Rhea today" — each parent's status now ("Busy until 2:00 PM", "Free until
+  3:00 PM"), a strip of the day's busy time with a now marker, and the times
+  listed — by name only for a calendar shared in full (and an event Google marks
+  free lists but never counts as busy). A family calendar shared in full adds
+  "On the family calendar". It comes only through `household_busy()`, never
+  the calendars themselves, and isn't there until a parent shares one.
 - **The day's wrap-up** (`WrapUpCard.svelte`): once the shift closes, today's
   wrap-up shows with a one-tap ♥ for the parents (no comment threads by design).
 - **The Care Day** (`CareCockpit.svelte`): kid-face scope chips (when there's
@@ -201,8 +241,8 @@ Top to bottom:
 
 ### Calendar (`/schedule`) — the shift-planning grid (out of the nav)
 Since Sept 2026 this page isn't in the nav — the family never used it — but it
-still works at `/schedule` and still feeds the month calendar's shift dots. A
-shared family calendar is planned to replace it (see "Where it may go").
+still works at `/schedule`. The family calendar (Home → Calendar) took its
+place; Home's month card and its shift dots went with it.
 
 - **Month view** (desktop default): six-week grid with up to 3 event pills per day
   + side panel showing the selected day, the next 5 upcoming items, and a legend.
@@ -315,8 +355,8 @@ shared family calendar is planned to replace it (see "Where it may go").
 | `time_entries` | Worked shifts: nanny_id, clock_in, clock_out, hours, notes | Partial unique index: **one open shift per nanny** |
 | `payments` | Weekly pay records: week_start/end, hours, amount, is_paid, paid_date, method | Unique **(nanny_id, week_start)**; week_end = start + 6 |
 | `schedules` | Planned shifts: nanny_id, date, start/end time, notes, created_by | The live planning table |
-| `parent_calendars` | Connected calendar sources: type (google/outlook/ical/manual), feed URL, color, sync_enabled, last_synced, sync_error | sync_error added by `calendar_sync_state.sql` |
-| `calendar_events` | Synced busy events | Unique (calendar_id, event_id) for re-sync dedup; also holds one-off manual busy entries |
+| `parent_calendars` | Connected calendar sources: type (google/outlook/ical/manual), feed URL, color, sync_enabled, last_synced, sync_error, show_on_home, is_family, nanny_sees ('nothing'/'busy'/'details') | sync_error added by `calendar_sync_state.sql`; the last three by `family_calendar.sql` (old rows start hidden from Home, shown to the nanny as nothing) |
+| `calendar_events` | Synced events: title, start/end, is_busy (Google's busy/free), all_day | Unique (calendar_id, event_id) for re-sync dedup; also holds one-off manual busy entries; all_day added by `family_calendar.sql` |
 | `manual_busy_times` | Recurring manual busy time: pattern weekly/biweekly(/monthly unused), weekday list, until | Expanded client-side |
 | `shift_templates` | Repeating shift series: days[], pattern, times, starts_on, until, generated_until | Added by `shift_templates.sql`; materializes into `schedules` (rows carry nullable `template_id`) |
 | `family_members` | The household roster: name, kind (parent/child/pet), birthdate, avatar_url, profile_id (nullable FK), current_focus, species, routines, notes | Added by `family_members.sql`; uuid ids (care tables reference `kid_ids uuid[]`); partial unique: **one member per profile** |
@@ -332,7 +372,13 @@ Security: RLS on all tables, set by `supabase/household_access.sql` — reading
 or writing anything needs a role (family, admin or nanny), so an account
 without one sees nothing; writes also require ownership or family/admin; and a
 trigger lets only an admin give out or change a role (parents may create a
-nanny's profile). Realtime publication on
+nanny's profile). Calendars are tighter (`supabase/family_calendar.sql`): the
+nanny reads only their own calendars, events and busy times — not the parents'
+secret feed addresses or event names — and can file events only under their own
+calendars. What they see of the parents comes from two security-definer
+functions that follow each calendar's `nanny_sees`: `household_shared_calendars()`
+(which calendars, and how fresh) and `household_busy(from, to)` (times, with
+titles only for calendars shared in full). Realtime publication on
 `time_entries` and `payments`. Two SQL "fix" scripts in `supabase/` document
 production incidents (duplicate open shifts; duplicate weekly payments) and the
 constraints that now prevent them.
@@ -391,9 +437,13 @@ system, documented in the README and enforced by semantic tokens.
 *Product*
 - Payment status is binary (unpaid/paid) — a nanny's "Request payment" leaves no
   DB trace; there's no "requested" state or notification.
-- No server-side sync cron — auto-sync runs when someone opens the schedule
-  page, so feeds still stale out if nobody visits. No OAuth (secret ICS URLs
-  only).
+- No server-side sync cron — feeds re-sync (when older than 30 minutes) while
+  someone has Home, Home → Calendar or the nanny's Care → Today open, so they
+  still stale out if nobody opens the app. The nanny's page can refresh a
+  parent's shared calendar only where the server has `SUPABASE_SERVICE_ROLE_KEY`
+  (with the caller's token alone, RLS keeps a parent's calendar out of reach).
+  No OAuth (secret ICS URLs only).
+- The family calendar is read-only: events are added in Google, not in the app.
 - Monthly recurrence is deliberately unsupported (busy times and shift
   templates are weekly/biweekly).
 - Repeating-shift series can be ended but not edited-forward (change a series =
@@ -406,8 +456,8 @@ system, documented in the README and enforced by semantic tokens.
 - No push/email notifications of any kind.
 
 *Technical debt & security notes (private-household threat model)*
-- RLS reads are household-wide by design, so the "only busy/free is shared"
-  copy overpromises: synced event titles are stored and visible.
+- Parents see each other's calendars in full (one household, by design); only
+  the nanny's view is limited.
 - Delete/toggle in the calendar manager surface zero-row RLS refusals loudly
   now — if those toasts appear in production, the live RLS policies need
   reconciling with the repo's SQL files.
@@ -415,6 +465,22 @@ system, documented in the README and enforced by semantic tokens.
 - Legacy artifacts: `availability`/`schedule_blocks` SQL vs. the live `schedules`
   table.
 - `adapter-auto` with no pinned deploy target in-repo.
+
+*Recent (2026-09-26, the family calendar)*
+- Shipped: Home → Calendar (the month, with the settings sheet: connect a
+  calendar, whose it is, show on Home, what the nanny sees); the Today card on
+  Home in place of the month card; birthdays from the roster; the nanny's
+  "when the parents are busy" card on Care → Today.
+- Sync: records all-day events; the nanny may refresh a parent's calendar that's
+  shared with them.
+- Security: the nanny no longer reads the parents' calendars, secret feed
+  addresses, events or busy times (the old schedule page only hid them), and
+  can't file events under someone else's calendar.
+- Removed: `MiniCalendar.svelte` (Home's month card, which showed only the unused
+  planner's shift dots).
+- Migration to run once in Supabase, after `household_access.sql`:
+  `supabase/family_calendar.sql`. Then Home → Calendar → Calendars → Connect a
+  calendar, once per Google calendar.
 
 *Recent (2026-09-25, the grocery list)*
 - Shipped: Home → Groceries with multiple lists, aisle sections, quick-add
@@ -475,9 +541,10 @@ section of it:
 2. **Home basics:** a shared grocery list (**shipped** — `/home/groceries`) and chores (stored in Supabase, so the
    list works at the store), and a shared family calendar that reads the
    family's Google calendars through their private iCal links — the existing
-   parser. Moving off Google gradually: Family Hub owns lists and chores from
-   day one; the calendar feed can later point at a self-hosted CalDAV (or any
-   other provider) without app changes.
+   parser (**shipped** — the Today card on Home and `/home/calendar`). Moving off
+   Google gradually: Family Hub owns lists and chores from day one; the calendar
+   feed can later point at a self-hosted CalDAV (or any other provider) without
+   app changes. Chores are what's left of this step.
 3. **Home Assistant** on the Mac mini (Home Assistant OS in a UTM virtual
    machine, with the Tailscale add-on).
 4. **A bridge** on the Mac mini that mirrors a short list of devices (thermostat,
@@ -490,7 +557,17 @@ section of it:
    browser, before deciding whether to buy a display.
 
 What the nanny sees of Home (TV controls while clocked in, the grocery list) is
-open; the bridge makes it a permission rule, not a rebuild.
+open; the bridge makes it a permission rule, not a rebuild. Of the calendar, the
+nanny already sees what each parent chooses per calendar (nothing, busy times,
+or everything) on Care → Today.
+
+**Family calendar, next ideas:**
+- Adding events from the app (a Family Hub events table, or the CalDAV move
+  above) — today they're added in Google.
+- A server-side sync on a schedule, so the calendar is fresh when no one has
+  the app open.
+- The kitchen display's day view: the Today card, full-screen.
+- Tagging events with kids ("Indigo: swim"), so Care can show the kids' plans.
 
 **Grocery list, next ideas** (sections and multiple lists shipped; use it a
 week or two and let what's annoying pick the next one):
@@ -550,13 +627,18 @@ the other unbuilt bullet from the screens list.
 
 ## Quick reference (for retrieval)
 
-- **Routes:** `/` (login) · `/setup` · `/home` (parents) · `/care` (Today) ·
+- **Routes:** `/` (login) · `/setup` · `/home` (parents) · `/home/calendar` ·
+  `/home/groceries` · `/care` (Today) ·
   `/care/journal` · `/care/sheet` · `/care/hours` · `/settings` ·
   `/settings/household` · `/settings/accounts` (parents) · `/schedule` (out of
   the nav) · `POST /api/calendar/sync`. Retired, redirecting: `/dashboard` →
   Home, `/tracker` → Care, `/history` → Hours & Pay, `/chronicle` → Journal,
   `/family` → Household, `/admin` → Accounts.
 - **Key files:** `src/lib/nav.js` (the section/tab map, landing by role) ·
+  `src/lib/familyCalendar.js` (the family calendar: items, birthdays, agenda,
+  the nanny's busy view, quiet sync) · `FamilyToday.svelte` (Home's Today) ·
+  `FamilyCalendars.svelte` (calendar settings) · `ParentsDay.svelte` (the
+  nanny's view of the parents' day) ·
   `src/lib/components/ShiftClock.svelte` · `CareCockpit.svelte` (the Care Day) ·
   `MorningNote.svelte` · `WrapUpCard.svelte` · `CareGlance.svelte` (Home's Right
   now) · `src/lib/time.js` (local-time policy, week bounds) ·

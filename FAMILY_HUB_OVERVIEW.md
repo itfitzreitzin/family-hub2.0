@@ -14,7 +14,7 @@ tags: [family-hub, nanny, time-tracking, childcare, household, home-hub, side-pr
 # Family Hub — What It Is, What We've Built, Where It's Going
 
 > AI-readable reference. Facts below are verified against the codebase as of 2026-10-02
-> (chores). The final section ("Where it may go") is forward-looking:
+> (chores, recipe links). The final section ("Where it may go") is forward-looking:
 > the agreed plan plus speculation, not shipped functionality.
 
 ## TL;DR
@@ -545,6 +545,16 @@ system, documented in the README and enforced by semantic tokens.
   table.
 - `adapter-auto` with no pinned deploy target in-repo.
 
+*Recent (2026-10-02, recipe links)*
+- Shipped: a recipe's link pasted into Recipes is read from the page's recipe
+  data; the reader also learned "800g / 28 oz can", "1/3 cup plus 2 tbsp",
+  "2 cups minus 2 tbsp", recipe-plugin brackets ("(, minced)") and long notes in
+  brackets; spices, pastes and sauces go to Pantry, not Produce.
+- The calendar sync's fetch guard moved to `src/lib/server/publicFetch.js`;
+  its size error now reads "Calendar feed is too large to read" (was "…to
+  sync"), and its other messages are unchanged.
+- No migrations.
+
 *Recent (2026-10-02, chores)*
 - Shipped: Home → Chores (one-offs, schedules, every-so-often chores; whose,
   streaks, who did what; starter chips), Home's chores card with a column a
@@ -570,16 +580,6 @@ system, documented in the README and enforced by semantic tokens.
 - Migration to run once in Supabase, after `household_access.sql`:
   `supabase/family_calendar.sql`. Then Home → Calendar → Calendars → Connect a
   calendar, once per Google calendar.
-
-*Recent (2026-10-02, recipe links)*
-- Shipped: a recipe's link pasted into Recipes is read from the page's recipe
-  data; the reader also learned "800g / 28 oz can", "1/3 cup plus 2 tbsp",
-  "2 cups minus 2 tbsp", recipe-plugin brackets ("(, minced)") and long notes in
-  brackets; spices, pastes and sauces go to Pantry, not Produce.
-- The calendar sync's fetch guard moved to `src/lib/server/publicFetch.js`;
-  its size error now reads "Calendar feed is too large to read" (was "…to
-  sync"), and its other messages are unchanged.
-- No migrations.
 
 *Recent (2026-09-26, grocery list feedback from the first shop)*
 - Shipped: crossed-off items wait in place with an Undo before dropping into

@@ -137,7 +137,8 @@ export const GROCERY_SECTIONS = [
 
 // Checked in this order, first match wins: the specific before the general
 // ("ice cream" is frozen, not dairy; "peanut butter" is pantry; "orange
-// juice" is a drink, not produce).
+// juice" is a drink, not produce; garlic powder, tomato paste and fish sauce
+// are jars on a shelf, not produce or the fish counter).
 /** @type {[string, string[]][]} */
 const SECTION_WORDS = [
 	['Frozen', ['frozen', 'ice cream', 'popsicle', 'ice pop']],
@@ -172,7 +173,31 @@ const SECTION_WORDS = [
 	['Drinks', ['juice', 'water', 'soda', 'seltzer', 'sparkling', 'beer', 'wine', 'kombucha']],
 	[
 		'Pantry',
-		['peanut butter', 'almond butter', 'olive oil', 'tomato sauce', 'canned', 'broth', 'stock']
+		[
+			'peanut butter',
+			'almond butter',
+			'olive oil',
+			'tomato sauce',
+			'canned',
+			'broth',
+			'stock',
+			'bouillon',
+			'crushed tomato',
+			'diced tomato',
+			'paste',
+			'powder',
+			'sauce',
+			'dried',
+			'flakes',
+			'extract',
+			'seasoning',
+			'cayenne',
+			'paprika',
+			'cumin',
+			'black pepper',
+			'peppercorn',
+			'ground ginger'
+		]
 	],
 	[
 		'Meat & Fish',

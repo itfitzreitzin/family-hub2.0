@@ -244,6 +244,7 @@ const LEAD_WORD = new RegExp(
 );
 const UNIT_START = new RegExp(`^(${UNIT})\\.?(?![a-z])`, 'i');
 const SIZE_START = new RegExp(`^(${SIZE})(?![a-z])`, 'i');
+const SLASH_SIZE = new RegExp(`^\\/\\s*(${RANGE}\\s*(?:${UNIT})?\\.?)(?![a-z])`, 'i');
 const AMOUNT_ONLY = new RegExp(
 	`^(?:about\\s+|approx\\.?\\s+|approximately\\s+|~\\s*)?${RANGE}(?:\\s*-?\\s*(?:${UNIT})\\.?)?$`,
 	'i'
@@ -316,10 +317,36 @@ function leadingAmount(text) {
 	const unitWord = unit ? unit[1].toLowerCase().replace(/\s+/g, ' ') : '';
 	if (take(unit)) parts.push(unitWord);
 
-	// "2 cans (15 oz)" — or straight after the unit; "2 cups/250g" too
-	const size2 = /^\(([^()]{1,30})\)/.exec(rest) || /^\/\s*([^\s,]{1,12})/.exec(rest);
+	// "2 cans (15 oz)" — or straight after the unit; "2 cups/250g" and
+	// "800g / 28 oz" too
+	const size2 = /^\(([^()]{1,30})\)/.exec(rest) || SLASH_SIZE.exec(rest);
 	if (unit && size2 && AMOUNT_ONLY.test(size2[1].trim()) && take(size2)) {
 		parts.push(`(${size2[1].trim()})`);
+		// "800g / 28 oz can crushed tomatoes": the can is the amount too
+		const box = UNIT_START.exec(rest);
+		const boxKey = box ? SPELLINGS.get(box[1].toLowerCase())?.key : null;
+		if (box && boxKey && CONTAINERS.has(boxKey) && take(box)) parts.push(box[1].toLowerCase());
+	}
+
+	// "2 cups minus 2 tbsp cake flour": to buy, it's the 2 cups
+	const minus = unit ? /^(?:minus|less)\s+/i.exec(rest) : null;
+	if (minus) {
+		const less = leadingAmount(rest.slice(minus[0].length));
+		if (less?.quantity && /[a-z]/i.test(less.quantity))
+			return { name: less.name, quantity: parts.join(' ') };
+	}
+
+	// "1/3 cup plus 2 tbsp soy sauce": two amounts of one thing
+	const plus = unit ? /^(?:plus|\+)\s+/i.exec(rest) : null;
+	if (plus) {
+		const more = leadingAmount(rest.slice(plus[0].length));
+		if (more?.quantity && /[a-z]/i.test(more.quantity)) {
+			const first = parts.join(' ');
+			const sum = combineQuantities(first, more.quantity) || first;
+			// Thirds and quarters that add up to 7/12 read better side by side.
+			const quantity = /\d\.\d/.test(sum) ? `${first} + ${more.quantity}` : sum;
+			return { name: more.name, quantity };
+		}
 	}
 
 	rest = rest.replace(/^of\s+/i, '').trim();
@@ -488,6 +515,13 @@ export function combineQuantities(a, b) {
  */
 export function scaleQuantity(quantity, factor) {
 	if (!quantity || factor === 1) return quantity;
+	// "1 cup + 2 tbsp": each part, not just the first number
+	if (quantity.includes(' + ')) {
+		return quantity
+			.split(' + ')
+			.map((part) => scaleQuantity(part, factor))
+			.join(' + ');
+	}
 	const x = readAmount(quantity);
 	// "1-inch piece": the number is a size, not a count
 	if (!x || x.rest.startsWith('-')) return quantity;
@@ -642,7 +676,7 @@ const GROUP_WORDS = new Set(
 
 const SERVES = /^(?:serves|servings?|yields?|makes)\s*:?\s*(?:about\s+)?(\d{1,2})\b/i;
 const META =
-	/^(?:(?:prep|cook|total|active|inactive|bake|rest|chill|marinate)\s*(?:time)?\s*:|(?:calories|course|cuisine|keyword|author|difficulty|tip|pro tip|note|hint)\s*:|print\b|jump to\b|pin (?:it|recipe)\b|save recipe\b|scale\b|us customary$|metric$|imperial$|\d+\s*(?:min|mins|minutes|hours?|hrs?)$|(?:\d+(?:\.\d+)?\s*[x×]\s*)+$)/i;
+	/^(?:(?:prep|cook|total|active|inactive|bake|rest|chill|marinate)\s*(?:time)?\s*:|(?:calories|course|cuisine|keyword|author|difficulty|tip|pro tip|note|hint|source|adapted from|recipe from|from|url|link)\s*:|https?:\/\/\S+$|print\b|jump to\b|pin (?:it|recipe)\b|save recipe\b|scale\b|us customary$|metric$|imperial$|\d+\s*(?:min|mins|minutes|hours?|hrs?)$|(?:\d+(?:\.\d+)?\s*[x×]\s*)+$)/i;
 const STEP_VERB =
 	/^(?:preheat|heat|add|stir|cook|bake|mix|combine|serve|place|pour|whisk|bring|reduce|simmer|remove|transfer|let|season|garnish|sprinkle|spread|fold|beat|cover|drain|rinse|chop|slice|dice|mince|boil|fry|saute|sauté|toss|knead|set|allow|make|prepare|repeat|divide|arrange|refrigerate|meanwhile|in a|in the|once|when|while|using|use|then|next|finally|first|step)\s/i;
 
@@ -716,8 +750,11 @@ function headingOf(text, { bulleted, marked }) {
  * @returns {boolean}
  */
 function looksLikeProse(text) {
-	const words = text.split(' ').length;
-	if (text.length > 120 || words > 14) return true;
+	// Notes in brackets don't make a sentence of a line: "1 1/2 cups plus
+	// 1 tbsp flour (spooning into measuring cups, then leveling)".
+	const bare = text.replace(/\s*\([^()]*\)/g, '').trim() || text;
+	const words = bare.split(' ').length;
+	if (bare.length > 120 || words > 14) return true;
 	if (/[!?]$/.test(text)) return true;
 	if (/\.$/.test(text) && words > 8) return true;
 	if (STEP_VERB.test(text) && (words >= 3 || /\.$/.test(text))) return true;
@@ -732,6 +769,8 @@ function looksLikeProse(text) {
  * @returns {string[]}
  */
 function splitListLine(text, onlyLine) {
+	// Commas in brackets are notes on one thing: "1 onion (diced, brown or white)".
+	if (/\([^()]*[,;][^()]*\)/.test(text)) return [text];
 	const parts = text
 		.split(/\s*[,;]\s*/)
 		.map((p) => p.trim())
@@ -882,4 +921,52 @@ export function parseIngredients(text) {
 	}
 
 	return { items: [...found.values()], title, servings };
+}
+
+// ── Recipes from a link ─────────────────────────────────────
+
+/**
+ * The link, when what was pasted is a recipe's address — on its own, or with
+ * the title a phone's share sheet puts with it ("Easy Chili\nhttps://…").
+ * A list that happens to hold a link is still a list.
+ * @param {string} text
+ * @returns {string | null}
+ */
+export function recipeLink(text) {
+	const t = String(text || '').trim();
+	const links = t.match(/https?:\/\/[^\s<>"]+/gi) || [];
+	if (links.length !== 1) return null;
+	const lines = t.split(/\n/).filter((l) => l.trim());
+	const around = t.replace(links[0], ' ').trim();
+	if (lines.length > 2 || around.split(/\s+/).filter(Boolean).length > 12) return null;
+	try {
+		return new URL(links[0]).href;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * A recipe read from a link, written down the way a paste would be: the link
+ * at the top (kept, never read as a thing to buy), then the ingredients.
+ * @param {{ ingredients: string[], source: string }} found
+ * @returns {string}
+ */
+export function recipeFromLink({ ingredients, source }) {
+	return [`Source: ${source}`, '', 'Ingredients', ...ingredients].join('\n');
+}
+
+/**
+ * Where a kept recipe came from: its "Source:" line, if it has one.
+ * @param {string | null | undefined} body
+ * @returns {string | null}
+ */
+export function recipeSource(body) {
+	const m = /^\s*source\s*:\s*(https?:\/\/\S+)/im.exec(String(body || ''));
+	if (!m) return null;
+	try {
+		return new URL(m[1]).href;
+	} catch {
+		return null;
+	}
 }

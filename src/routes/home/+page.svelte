@@ -15,12 +15,13 @@
 	import PixelArt from '$lib/components/PixelArt.svelte';
 	import CareGlance from '$lib/components/CareGlance.svelte';
 	import FamilyToday from '$lib/components/FamilyToday.svelte';
+	import HomeChores from '$lib/components/HomeChores.svelte';
 	import { ART } from '$lib/art.js';
 
 	/*
 	 * Home: the household's page — the hearth, today on the family calendar,
-	 * a window onto Care, the week's money and the grocery list; chores land
-	 * here next. The nanny's landing page is Care, so /home sends them there.
+	 * a window onto Care, the week's money, the grocery list and the chores.
+	 * The nanny's landing page is Care, so /home sends them there.
 	 */
 
 	/** @type {Record<string, string>} */
@@ -54,6 +55,8 @@
 	let groceries = null;
 	/** @type {any[]} */
 	let groceryLists = [];
+	/** Whether the chores card has anything to show (it stays away before chores.sql). */
+	let choresShown = false;
 	let now = Date.now();
 
 	/** @type {ReturnType<typeof supabase.channel> | null} */
@@ -417,6 +420,11 @@
 					</a>
 				</section>
 			{/if}
+
+			<!-- ── Chores: a column a person ──────────────── -->
+			<div class="chores-slot" class:hidden={!choresShown}>
+				<HomeChores bind:shown={choresShown} />
+			</div>
 		</div>
 
 		<!-- The shelf grounds the page, and carries the outstanding balance. -->
@@ -473,6 +481,16 @@
 		grid-column: 3;
 		grid-row: 2;
 	}
+	.chores-slot {
+		grid-column: 1 / 4;
+		grid-row: 3;
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
+	}
+	.chores-slot.hidden {
+		display: none;
+	}
 
 	@media (max-width: 1024px) {
 		.today-grid {
@@ -499,6 +517,10 @@
 			grid-column: 1 / 3;
 			grid-row: 4;
 		}
+		.chores-slot {
+			grid-column: 1 / 3;
+			grid-row: 5;
+		}
 	}
 
 	@media (max-width: 640px) {
@@ -510,7 +532,8 @@
 		.today-slot,
 		.glance-slot,
 		.approval-card,
-		.grocery-card {
+		.grocery-card,
+		.chores-slot {
 			grid-column: 1 !important;
 			grid-row: auto !important;
 		}

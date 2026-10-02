@@ -5,8 +5,8 @@ project: family-hub2.0
 repo: itfitzreitzin/family-hub2.0
 status: active, in production use by one household
 started: 2025-10-03
-last-major-update: 2026-09-26
-doc-date: 2026-09-26
+last-major-update: 2026-10-02
+doc-date: 2026-10-02
 stack: [SvelteKit 2, Svelte 5, Vite 7, Supabase, ical.js]
 tags: [family-hub, nanny, time-tracking, childcare, household, home-hub, side-project]
 ---
@@ -161,6 +161,18 @@ addresses (`/dashboard`, `/tracker`, `/history`, `/chronicle`, `/family`,
   Worcestershire), then **Add N** — each row notes "for Chili". A recipe that
   says how many it serves can be scaled. Named ones can be kept in the recipe
   book, which lists the most recently cooked first; next time it's one tap.
+- **Recipe links:** paste a recipe's link instead (on its own, or with the
+  title a phone's share sheet adds) and **Read the recipe from …** fetches the
+  page on the server (`POST /api/recipe/read`) and reads the schema.org Recipe
+  data most recipe sites publish for search engines — the name, how many it
+  serves, the ingredient list (`src/lib/server/recipePage.js`; JSON-LD, then
+  microdata). No AI, no API key. The ingredients become the paste, under a
+  "Source:" line the reader skips, so a kept recipe remembers its link (the
+  book shows the site; the pick step links back to the method). Sites behind
+  bot walls (AllRecipes, Serious Eats, Simply Recipes, Food Network, Budget
+  Bytes from a cloud server, as of Oct 2026) say so, and the paste still works;
+  Bon Appétit, NYT Cooking, Delish, King Arthur, Skinnytaste, Love & Lemons and
+  RecipeTin Eats read fine.
 - **Quick add:** chips for what the house buys most often (learned from the
   list's own history), then the staples — milk, eggs, ground beef, chicken,
   greens, kale, onions, diapers, wipes, paper towels, toilet paper… — minus
@@ -284,6 +296,8 @@ place; Home's month card and its shift dots went with it.
   forward while history keeps its rows.
 - **External calendars:** each person connects any iCal feed URL (Google/Outlook
   publish URLs — no OAuth). A server endpoint (`POST /api/calendar/sync`) fetches
+  (through `src/lib/server/publicFetch.js`, the public-internet-only fetch the
+  recipe links share)
   and parses feeds with ical.js — full RRULE expansion with timezone handling,
   exception/override support, stable per-instance IDs for clean re-sync upserts,
   and pruning of vanished events in a −180d/+365d window; hardened with a 20s
@@ -500,6 +514,16 @@ system, documented in the README and enforced by semantic tokens.
   `supabase/family_calendar.sql`. Then Home → Calendar → Calendars → Connect a
   calendar, once per Google calendar.
 
+*Recent (2026-10-02, recipe links)*
+- Shipped: a recipe's link pasted into Recipes is read from the page's recipe
+  data; the reader also learned "800g / 28 oz can", "1/3 cup plus 2 tbsp",
+  "2 cups minus 2 tbsp", recipe-plugin brackets ("(, minced)") and long notes in
+  brackets; spices, pastes and sauces go to Pantry, not Produce.
+- The calendar sync's fetch guard moved to `src/lib/server/publicFetch.js`;
+  its size error now reads "Calendar feed is too large to read" (was "…to
+  sync"), and its other messages are unchanged.
+- No migrations.
+
 *Recent (2026-09-26, grocery list feedback from the first shop)*
 - Shipped: crossed-off items wait in place with an Undo before dropping into
   the basket (removing and clearing the basket too); amounts typed with the
@@ -600,9 +624,9 @@ or everything) on Care → Today.
 **Grocery list, next ideas** (sections, multiple lists, undo, amounts and the
 recipe book shipped; use it a week or two and let what's annoying pick the next
 one):
-- Recipe links: paste a recipe site's URL and read its ingredients from the
-  page's schema.org Recipe data. Needs a server endpoint that fetches outside
-  pages — the calendar sync's public-address guard is the pattern to reuse.
+- Recipe links for the walled sites: from the Mac mini (a home address, not a
+  cloud one) most of them would read; or a share-sheet shortcut that sends the
+  page's text from the phone, which has already loaded it.
 - A pantry that remembers: "you said you had Worcestershire last time" —
   pre-mark it in the recipe sheet. Needs somewhere shared to keep it (a small
   table), since both parents plan.
@@ -633,9 +657,11 @@ calls, all cheap to change:
 - *Recipes → the list:* grocery rows don't point back at recipes; the note
   says "for Chili". A `recipe_id` (or a join table, since two recipes can want
   the same onion) is the step up if the list ever needs to know more.
-- *Reading recipes:* plain rules, no AI and no network. Turning "tacos for 6"
-  into a list would take a Claude API call from a server endpoint — a new
-  outside dependency and an API key, so a decision to make together.
+- *Reading recipes:* plain rules, no AI. A link is read from the recipe data
+  the page itself publishes (the only network call, on our own server).
+  Turning "tacos for 6" into a list would take a Claude API call from a server
+  endpoint — a new outside dependency and an API key, so a decision to make
+  together.
 
 Signals already in the repo: the nav art fronts real pages (nav-home → Home,
 nav-care → Care) and the thermometer/droplet/cauldron/clipboard icons serve the
@@ -687,7 +713,7 @@ the other unbuilt bullet from the screens list.
   `/home/groceries` · `/care` (Today) ·
   `/care/journal` · `/care/sheet` · `/care/hours` · `/settings` ·
   `/settings/household` · `/settings/accounts` (parents) · `/schedule` (out of
-  the nav) · `POST /api/calendar/sync`. Retired, redirecting: `/dashboard` →
+  the nav) · `POST /api/calendar/sync` · `POST /api/recipe/read`. Retired, redirecting: `/dashboard` →
   Home, `/tracker` → Care, `/history` → Hours & Pay, `/chronicle` → Journal,
   `/family` → Household, `/admin` → Accounts.
 - **Key files:** `src/lib/nav.js` (the section/tab map, landing by role) ·
@@ -697,6 +723,8 @@ the other unbuilt bullet from the screens list.
   nanny's view of the parents' day) ·
   `src/lib/groceries.js` (aisles, quick add) · `src/lib/ingredients.js`
   (amounts and pasted recipes) · `RecipeSheet.svelte` ·
+  `src/lib/server/recipePage.js` (a recipe page's ingredients) ·
+  `src/lib/server/publicFetch.js` (public-internet-only fetching) ·
   `src/lib/components/ShiftClock.svelte` · `CareCockpit.svelte` (the Care Day) ·
   `MorningNote.svelte` · `WrapUpCard.svelte` · `CareGlance.svelte` (Home's Right
   now) · `src/lib/time.js` (local-time policy, week bounds) ·

@@ -9,13 +9,17 @@
 		ingredientKey,
 		alwaysHave,
 		scaleQuantity,
+		recipeLink,
+		recipeFromLink,
+		recipeSource,
 		NOTE_MAX
 	} from '$lib/ingredients.js';
 	import Icon from '$lib/icons/Icon.svelte';
 
 	/*
 	 * Groceries from a recipe. Paste one — a recipe's ingredients, a recipe
-	 * site, a list ChatGPT made — or pick one from the recipe book; tap off
+	 * site, a list ChatGPT made, or just a recipe's link (read on the server
+	 * from the page's recipe data) — or pick one from the recipe book; tap off
 	 * what's already in the house (the Worcestershire), and the rest goes on
 	 * the list, each thing saying which recipe wants it. A kept recipe is one
 	 * tap next time.
@@ -61,6 +65,8 @@
 	let choices = {};
 	let keep = true;
 	let busy = false;
+	/** Reading a recipe from its link. */
+	let reading = false;
 	/** @type {HTMLTextAreaElement | null} */
 	let bodyEl = null;
 
@@ -87,6 +93,9 @@
 	}
 
 	$: title = cleanGroceryName(name);
+	// A pasted link is read from its page, not as a list.
+	$: link = recipeLink(body);
+	$: source = recipeSource(body);
 	$: serves = Number(servings) >= 1 && Number(servings) <= 99 ? Math.round(Number(servings)) : null;
 	$: factor = serves && makeFor ? makeFor / serves : 1;
 	$: counts = Object.fromEntries(recipes.map((r) => [r.id, parseIngredients(r.body).items.length]));
@@ -105,12 +114,22 @@
 	$: toAdd = lines.filter((l) => !inHouse.has(l.key) && !onList.has(l.key));
 	$: groups = groupBySection(lines);
 
+	/** @param {string | null} url */
+	function hostOf(url) {
+		try {
+			return url ? new URL(url).hostname.replace(/^www\./, '') : '';
+		} catch {
+			return '';
+		}
+	}
+
 	/** @param {any} r */
 	function meta(r) {
 		const count = counts[r.id] || 0;
 		return [
 			r.servings ? `serves ${r.servings}` : '',
-			`${count} ${count === 1 ? 'thing' : 'things'}`
+			`${count} ${count === 1 ? 'thing' : 'things'}`,
+			hostOf(recipeSource(r.body))
 		]
 			.filter(Boolean)
 			.join(' · ');
@@ -153,6 +172,38 @@
 		makeFor = Number(servings) || 0;
 		lines = parsed.items;
 		view = 'pick';
+	}
+
+	// The page's recipe data — name, how many it serves, the ingredients —
+	// written into the paste, link on top, then on to picking.
+	async function readLink() {
+		if (!link || reading) return;
+		reading = true;
+		try {
+			const {
+				data: { session }
+			} = await supabase.auth.getSession();
+			if (!session) throw new Error('Not signed in');
+			const response = await fetch('/api/recipe/read', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					Authorization: `Bearer ${session.access_token}`
+				},
+				body: JSON.stringify({ url: link })
+			});
+			const found = await response.json().catch(() => ({}));
+			if (!response.ok)
+				throw new Error(found.error || `Couldn't read that link (${response.status})`);
+			if (!cleanGroceryName(name) && found.name) name = found.name;
+			if (!(Number(servings) >= 1) && found.servings) servings = found.servings;
+			body = recipeFromLink(found);
+			pick();
+		} catch (err) {
+			toast.error(errorMessage(err), 8000);
+		} finally {
+			reading = false;
+		}
 	}
 
 	/** @param {import('$lib/ingredients.js').Ingredient} line */
@@ -356,7 +407,7 @@
 			{:else if view === 'book'}
 				<!-- ── The book ───────────────────────────────── -->
 				<button class="rs-new" on:click={startPaste}>
-					<Icon name="plus" size={16} /> Paste a recipe or a list
+					<Icon name="plus" size={16} /> Paste a recipe, a link or a list
 				</button>
 				<ul class="rs-book">
 					{#each recipes as r (r.id)}
@@ -406,12 +457,19 @@
 						bind:value={body}
 						rows="10"
 						maxlength="20000"
-						placeholder="Paste a recipe, a recipe site, or a list from ChatGPT.&#10;One thing per line — “2 lb ground beef”, “Worcestershire”.&#10;Headings and cooking steps are skipped."
+						placeholder="Paste a recipe's link, a recipe, or a list from ChatGPT.&#10;One thing per line — “2 lb ground beef”, “Worcestershire”.&#10;Headings and cooking steps are skipped."
 					></textarea>
 				</div>
-				<button class="btn btn-primary rs-go" on:click={pick} disabled={!body.trim()}>
-					Pick what we need <Icon name="chevron-right" size={16} />
-				</button>
+				{#if link}
+					<button class="btn btn-primary rs-go" on:click={readLink} disabled={reading}>
+						<Icon name="grimoire" size={16} />
+						{reading ? `Reading ${hostOf(link)}…` : `Read the recipe from ${hostOf(link)}`}
+					</button>
+				{:else}
+					<button class="btn btn-primary rs-go" on:click={pick} disabled={!body.trim()}>
+						Pick what we need <Icon name="chevron-right" size={16} />
+					</button>
+				{/if}
 				<div class="rs-more">
 					{#if recipes.length}
 						<button class="btn-small" on:click={() => (view = 'book')}>
@@ -438,6 +496,15 @@
 			{:else}
 				<!-- ── Picking what's needed ──────────────────── -->
 				<p class="rs-lede">Tap what's already in the house. The rest goes on {listName}.</p>
+				{#if source}
+					<p class="rs-source">
+						<!-- Out to the recipe's own site, not a page of the app. -->
+						<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
+						<a href={source} target="_blank" rel="noopener noreferrer"
+							>The recipe at {hostOf(source)} ↗</a
+						>
+					</p>
+				{/if}
 				{#if serves}
 					<div class="rs-scale">
 						<span>Serves {serves} · shopping for</span>
@@ -590,6 +657,22 @@
 		margin: 0 0 0.85rem;
 		color: var(--text-muted);
 		font-size: 0.92rem;
+	}
+
+	/* Where the recipe came from: the method's still there. */
+	.rs-source {
+		margin: -0.5rem 0 0.85rem;
+		font-size: 0.88rem;
+	}
+
+	.rs-source a {
+		color: var(--accent-bright);
+		font-weight: 600;
+		text-decoration: none;
+	}
+
+	.rs-source a:hover {
+		text-decoration: underline;
 	}
 
 	.rs-hint {

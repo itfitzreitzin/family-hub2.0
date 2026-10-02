@@ -9,8 +9,7 @@
  */
 
 import ICAL from 'ical.js';
-import { lookup } from 'node:dns/promises';
-import { isIP } from 'node:net';
+import { fetchPublicText } from '$lib/server/publicFetch.js';
 
 /**
  * Parse an iCal string into flat event instances.
@@ -221,129 +220,23 @@ function zonedWallClock(y, mo, d, h, mi, s, timeZone) {
 // must not exhaust server memory. Real household feeds are well under 5 MB.
 const FETCH_TIMEOUT_MS = 20_000;
 const MAX_FEED_BYTES = 10 * 1024 * 1024;
-const MAX_REDIRECTS = 3;
 
 /**
- * Loopback, private, link-local (cloud metadata lives at 169.254.169.254),
- * carrier-grade NAT, multicast and reserved ranges, v4 and v6.
- * @param {string} ip
- * @returns {boolean}
- */
-function isPrivateAddress(ip) {
-	if (isIP(ip) === 4) {
-		const [a, b] = ip.split('.').map(Number);
-		return (
-			a === 0 ||
-			a === 10 ||
-			a === 127 ||
-			(a === 100 && b >= 64 && b <= 127) ||
-			(a === 169 && b === 254) ||
-			(a === 172 && b >= 16 && b <= 31) ||
-			(a === 192 && b === 168) ||
-			a >= 224
-		);
-	}
-	const v6 = ip.toLowerCase();
-	if (v6 === '::' || v6 === '::1') return true;
-	const mapped = v6.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-	if (mapped) return isPrivateAddress(mapped[1]);
-	return /^(f[cd]|fe[89ab]|ff)/.test(v6);
-}
-
-/**
- * The server fetches whatever feed URL a household member saved, so it must
- * only reach the public internet — not itself, the cloud metadata service or
- * anything else on a private network. webcal:// (iCloud's public links) is
- * https under another name.
- * @param {string} raw
- * @returns {Promise<URL>}
- */
-export async function publicFeedUrl(raw) {
-	let url;
-	try {
-		url = new URL(
-			String(raw)
-				.trim()
-				.replace(/^webcals?:\/\//i, 'https://')
-		);
-	} catch {
-		throw new Error("That calendar link isn't a valid web address");
-	}
-	if (url.protocol !== 'https:' && url.protocol !== 'http:') {
-		throw new Error('Calendar links must start with https://');
-	}
-	const host = url.hostname.replace(/^\[|\]$/g, '');
-	let addresses;
-	try {
-		addresses = isIP(host) ? [host] : (await lookup(host, { all: true })).map((a) => a.address);
-	} catch {
-		throw new Error(`Couldn't find the calendar host ${host}`);
-	}
-	if (addresses.length === 0 || addresses.some(isPrivateAddress)) {
-		throw new Error('Calendar links must point to a public internet address');
-	}
-	return url;
-}
-
-/**
- * Fetch and parse an iCal feed from a URL.
+ * Fetch and parse an iCal feed from a URL — only from the public internet
+ * (see publicFetch.js).
  * @param {string} url The iCal feed URL
  * @param {Object} [options] Passed through to parseICal
  * @returns {Promise<Array<{uid: string, summary: string, start: Date, end: Date, isBusy: boolean, allDay: boolean}>>}
  */
 export async function fetchAndParseICal(url, options = {}) {
-	const signal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
-	let target = await publicFeedUrl(url);
-	let response;
-	try {
-		// Follow redirects by hand so every hop gets the same public-address
-		// check as the first.
-		for (let hop = 0; ; hop++) {
-			response = await fetch(target, {
-				headers: {
-					Accept: 'text/calendar, application/calendar+json, text/plain',
-					'User-Agent': 'FamilyHub/2.0 Calendar Sync'
-				},
-				redirect: 'manual',
-				signal
-			});
-			const location = response.headers.get('location');
-			if (response.status < 300 || response.status >= 400 || !location) break;
-			if (hop >= MAX_REDIRECTS) throw new Error('Calendar feed redirected too many times');
-			target = await publicFeedUrl(new URL(location, target).href);
-		}
-	} catch (err) {
-		if (err instanceof Error && err.name === 'TimeoutError') {
-			throw new Error(`Calendar feed timed out after ${FETCH_TIMEOUT_MS / 1000}s`);
-		}
-		throw err;
-	}
-
-	if (!response.ok) {
-		throw new Error(`Failed to fetch calendar: ${response.status} ${response.statusText}`);
-	}
-
-	const declaredLength = Number(response.headers.get('content-length'));
-	if (declaredLength > MAX_FEED_BYTES) {
-		throw new Error('Calendar feed is too large to sync');
-	}
-
-	// Count bytes as they arrive rather than buffering first and checking after.
-	/** @type {Uint8Array[]} */
-	const chunks = [];
-	let received = 0;
-	const reader = response.body?.getReader();
-	while (reader) {
-		const { done, value } = await reader.read();
-		if (done) break;
-		received += value.byteLength;
-		if (received > MAX_FEED_BYTES) {
-			await reader.cancel();
-			throw new Error('Calendar feed is too large to sync');
-		}
-		chunks.push(value);
-	}
-	const text = Buffer.concat(chunks).toString('utf8');
+	const { text } = await fetchPublicText(url, {
+		noun: 'calendar',
+		thing: 'Calendar feed',
+		accept: 'text/calendar, application/calendar+json, text/plain',
+		userAgent: 'FamilyHub/2.0 Calendar Sync',
+		timeoutMs: FETCH_TIMEOUT_MS,
+		maxBytes: MAX_FEED_BYTES
+	});
 
 	try {
 		return parseICal(text, options);

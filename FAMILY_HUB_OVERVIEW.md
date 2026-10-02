@@ -13,8 +13,8 @@ tags: [family-hub, nanny, time-tracking, childcare, household, home-hub, side-pr
 
 # Family Hub — What It Is, What We've Built, Where It's Going
 
-> AI-readable reference. Facts below are verified against the codebase as of 2026-09-26
-> (the family calendar). The final section ("Where it may go") is forward-looking:
+> AI-readable reference. Facts below are verified against the codebase as of 2026-10-02
+> (chores). The final section ("Where it may go") is forward-looking:
 > the agreed plan plus speculation, not shipped functionality.
 
 ## TL;DR
@@ -23,7 +23,7 @@ Family Hub is a private web app for running one household: Nick, Rhea, and their
 daughter Indigo. It started as the childcare operation — the parents and their nanny
 track hours worked, settle weekly pay over Venmo, and log Indigo's day — and in Sept
 2026 it was reorganized into two halves: **Home**, the household's page (the family
-calendar and the grocery lists so far; chores and Home Assistant next), and **Care**,
+calendar, the grocery lists and chores so far; Home Assistant next), and **Care**,
 everything about Indigo and the nanny. It replaces the usual mess of texted hours, mental math,
 and "how was the nap?" with a single source of truth that all three roles log into.
 
@@ -68,6 +68,11 @@ realtime multi-device sync, row-level security, and a fully bespoke design syste
   each parent's Google calendar and the family's shared one, today's events on the
   front page and the month on a Calendar tab. The nanny sees when the parents are
   busy, not what they're doing, unless a calendar is shared in full.
+- **Oct 2026 — chores.** The last of Home's basics: a chore board for the
+  household — trash day, recycling every other week, the plants every few days,
+  a favor for the nanny — ticked off by whoever does it, with streaks and a
+  "who did what" tally. Designed after a look at Skylight, Habitica, Tody,
+  Sweepy and OurHome (see "Chores, next ideas").
 
 The build itself is a human+AI collaboration: ~70 commits on main split almost evenly
 between Nick (34) and Claude (36), across ~27 merged PRs whose branch names
@@ -82,7 +87,7 @@ that produced them.
 |---|---|---|
 | `admin` | The Keeper | Everything family can, plus letting new accounts in (Settings → Accounts) and role changes |
 | `family` | The Household | Home; clock the nanny in/out; log the Care Day; write the morning note; record and send payments; manage nannies' accounts, the roster and the Care Sheet |
-| `nanny` | The Guardian | Care only (plus own Settings): clock own shifts in/out, log the Care Day, stamp the morning note Seen, see when the parents are busy (as they share it), see own hours, request payment via Venmo |
+| `nanny` | The Guardian | Care only (plus own Settings): clock own shifts in/out, log the Care Day, stamp the morning note Seen, see when the parents are busy (as they share it), tick off the chores asked of them, see own hours, request payment via Venmo |
 
 Assumptions baked in (fine for now, listed under "gaps" below): one household, one
 timezone, a **two-parent** model ("You" / "Partner" in the calendar), and **only one
@@ -92,7 +97,7 @@ nanny on the clock at any moment** (enforced in app logic and by a DB index).
 
 | Section | Tabs | Who |
 |---|---|---|
-| Home `/home` | Hearth · Calendar `/home/calendar` · Groceries `/home/groceries` | parents (the nanny is sent to Care) |
+| Home `/home` | Hearth · Calendar `/home/calendar` · Chores `/home/chores` · Groceries `/home/groceries` | parents (the nanny is sent to Care) |
 | Care `/care` | Today · Journal `/care/journal` · Care Sheet `/care/sheet` · Hours & Pay `/care/hours` | everyone |
 | Settings `/settings` | You · Household `/settings/household` · Accounts `/settings/accounts` | everyone; Accounts is parents only |
 
@@ -129,7 +134,10 @@ addresses (`/dashboard`, `/tracker`, `/history`, `/chronicle`, `/family`,
   refresh-on-tab-focus; the Today card re-reads every 5 minutes and quietly
   re-syncs any calendar older than 30 minutes. The nanny visiting `/home` is sent
   on to Care.
-- Chores and Home Assistant tiles land here next (see "Where it may go").
+- **Chores** (`HomeChores.svelte`), full width beneath: a column for each
+  parent, then anyone's, then the nanny's when they've been asked for
+  something — what's due now and tomorrow, ticked off right there.
+- Home Assistant tiles land here next (see "Where it may go").
 
 ### Home → Groceries (`/home/groceries`) — the grocery lists
 - **Lists:** "Groceries" to start; parents add more (Costco, Target, the
@@ -186,6 +194,40 @@ addresses (`/dashboard`, `/tracker`, `/history`, `/chronicle`, `/family`,
   through (checked and cleared are timestamps), so the history is there for
   price tracking later.
 
+### Home → Chores (`/home/chores`) — what the house needs doing
+
+- **Three kinds** (`src/lib/chores.js`): **once** ("switch the laundry over",
+  by a day or whenever); **on a schedule** — a weekday every 1–4 weeks, due that
+  day whether or not the last one got done (trash every Friday, recycling every
+  other Friday, with "Next one" picking which Fridays); and **every so often** —
+  N days after it was last done (the plants every 3 days, the sheets every 14).
+- **Never stacked:** each chore is on the board once. A scheduled chore can be
+  ticked off any time before its day, or the day after ("done, forgot to tap" —
+  one grace day, borrowed from Habitica's "record yesterday"); after that the
+  miss is quietly behind it and the next one is up. An every-so-often chore just
+  waits, marked "due Tuesday" in ember, until it's done. A one-off with a day
+  goes late the same way; a one-off without one sits in Now.
+- **Whose:** Nick, Rhea, the nanny, or anyone — each person has a color dot.
+  Whoever ticks it off gets the credit, whoever it was assigned to.
+- **The board:** Ask for something at the top (a one-off, with a whose chip;
+  "A day, or repeats…" opens the sheet), filter by person, then **Now** (late,
+  today, whenever), **This Week** and **Later**. Tap a row to tick it off: a
+  gilt line inks through it and it stays where it is, saying who and when;
+  tapping again takes it back. The quill edits; removing archives it (the record
+  stays). Rows show the cadence and, from two up, the streak (a candle and a
+  count: scheduled days met in a row, or every-so-often ones done on time).
+- **Start the Board:** until there are three repeating chores, starter chips
+  (trash Fridays, recycling every other Friday, the plants, the sheets, the
+  bathroom, vacuuming) open the sheet prefilled.
+- **Who Did What:** this week's tally per person and the last eight things done.
+- **The nanny:** a "Could You…?" card on Care → Today lists the chores
+  assigned to them, ticked off right there. RLS shows the nanny only their own
+  chores and lets them tick off only those, as themselves.
+- One store (`src/lib/stores/choreBoard.js`) loads, follows realtime on
+  `chores` and `chore_completions`, and ticks off optimistically for the page,
+  Home's card and the nanny's card; a second phone ticking the same chore is
+  refused by the database, not doubled.
+
 ### Home → Calendar (`/home/calendar`) — the family calendar
 
 - **The month:** each parent's own Google calendar and the family's shared one,
@@ -225,6 +267,9 @@ Top to bottom:
 - **The morning note** (`MorningNote.svelte`): parents write/amend one note per
   morning (DB-enforced; after 5pm the button writes tomorrow's). It pins here
   until the nanny taps **Seen ✓**; the receipt (time) shows back to the parents.
+- **Could You…?** (`ChoreAsks.svelte`, the nanny only): the chores the parents
+  have asked of them ("switch the laundry over"), ticked off right here; away
+  when there are none.
 - **When the parents are busy** (`ParentsDay.svelte`, the nanny only): "Nick &
   Rhea today" — each parent's status now ("Busy until 2:00 PM", "Free until
   3:00 PM"), a strip of the day's busy time with a now marker, and the times
@@ -398,6 +443,8 @@ place; Home's month card and its shift dots went with it.
 | `grocery_lists` | The lists: name, position, created_by | Added by `grocery_items.sql` (seeds "Groceries"); unique name; everyone reads, parents write |
 | `grocery_items` | Things to buy: list_id, name, quantity, note, added_by/at, checked_by/at, cleared_at | Same file; partial unique: **one open item per name per list** (case-insensitive); RLS: parents everything, the nanny adds and sees only their own; deleting a list deletes its items. `quantity` (text: "2", "2 lb") added by `grocery_recipes.sql` |
 | `recipes` | The recipe book: name, servings, body (the recipe as written, read into groceries each time it's used), created_by, updated_at, last_used_at | Added by `grocery_recipes.sql`; unique name (case-insensitive); parents only |
+| `chores` | The chore board: title, note, assigned_to (null = anyone), cadence ('once'/'weeks'/'days'), every, due_on, closed_at, archived_at, created_by | Added by `chores.sql`; `due_on` is a one-off's day, a schedule's first day (it fixes the weekday and which weeks), or an every-so-often chore's first due date; `closed_at` is kept by a trigger when a one-off is done; removing archives. RLS: parents everything, the nanny reads only theirs |
+| `chore_completions` | The record: chore_id, counts_for, done_by, done_at | Same file; unique **(chore_id, counts_for)** — the scheduled day it met, a one-off's day, or the day an every-so-often chore was done. The nanny ticks off only their own chores, as themselves, and takes back only their own ticks |
 | `availability`, `schedule_blocks` | Defined in `supabase/schedule.sql` | **Legacy — no longer referenced by code** |
 
 Security: RLS on all tables, set by `supabase/household_access.sql` — reading
@@ -498,6 +545,16 @@ system, documented in the README and enforced by semantic tokens.
   table.
 - `adapter-auto` with no pinned deploy target in-repo.
 
+*Recent (2026-10-02, chores)*
+- Shipped: Home → Chores (one-offs, schedules, every-so-often chores; whose,
+  streaks, who did what; starter chips), Home's chores card with a column a
+  person, and the nanny's "Could You…?" card on Care → Today.
+- Migration to run once in Supabase, after `household_access.sql`:
+  `supabase/chores.sql` (it also adds both tables to the realtime publication).
+  Until it runs, Home's card stays away and the Chores tab says to run it.
+- Points/"spells" aren't built yet; the record (`done_by` on every
+  completion) is there for them.
+
 *Recent (2026-09-26, the family calendar)*
 - Shipped: Home → Calendar (the month, with the settings sheet: connect a
   calendar, whose it is, show on Home, what the nanny sees); the Today card on
@@ -590,13 +647,13 @@ system, documented in the README and enforced by semantic tokens.
 Skylight-style kitchen display without buying a Skylight), with Care as one
 section of it:
 1. **Restructure — done.** Home · Care · Settings (see "The map").
-2. **Home basics:** a shared grocery list (**shipped** — `/home/groceries`) and chores (stored in Supabase, so the
-   list works at the store), and a shared family calendar that reads the
+2. **Home basics — done.** A shared grocery list (**shipped** — `/home/groceries`) and chores (**shipped** —
+   `/home/chores`), stored in Supabase so the list works at the store, and a shared family calendar that reads the
    family's Google calendars through their private iCal links — the existing
    parser (**shipped** — the Today card on Home and `/home/calendar`). Moving off
    Google gradually: Family Hub owns lists and chores from day one; the calendar
    feed can later point at a self-hosted CalDAV (or any other provider) without
-   app changes. Chores are what's left of this step.
+   app changes.
 3. **Home Assistant** on the Mac mini (Home Assistant OS in a UTM virtual
    machine, with the Tailscale add-on).
 4. **A bridge** on the Mac mini that mirrors a short list of devices (thermostat,
@@ -620,6 +677,21 @@ or everything) on Care → Today.
   the app open.
 - The kitchen display's day view: the Today card, full-screen.
 - Tagging events with kids ("Indigo: swim"), so Care can show the kids' plans.
+
+**Chores, next ideas** (from the Oct 2026 look at Skylight, Habitica, Tody,
+Sweepy and OurHome; use it a while first):
+- **Spells:** points for what's done, spent on small rewards the family sets
+  (Habitica's gold and reward shop; Skylight's stars). For two adults, a shared
+  goal may beat a scoreboard — Tody's monthly race against "Dusty", a common foe,
+  rather than Nick vs Rhea. The record is already there (`done_by`).
+- Rotation: "alternate weeks between Nick and Rhea" (OurHome, Tody) — mind that
+  one missed turn shouldn't throw the rotation off, the common complaint.
+- A best-streak line and a kind word when a streak ends ("8 Fridays running").
+- Vacation mode: pause someone's chores while they're away (Sweepy).
+- Several weekdays for one chore (trash Monday and Thursday); monthly chores.
+- Nudges once there are push notifications ("trash is out tomorrow morning").
+- The kitchen display: Home's chore card full-screen, a column a person
+  (Skylight's day view).
 
 **Grocery list, next ideas** (sections, multiple lists, undo, amounts and the
 recipe book shipped; use it a week or two and let what's annoying pick the next
@@ -710,7 +782,7 @@ the other unbuilt bullet from the screens list.
 ## Quick reference (for retrieval)
 
 - **Routes:** `/` (login) · `/setup` · `/home` (parents) · `/home/calendar` ·
-  `/home/groceries` · `/care` (Today) ·
+  `/home/chores` · `/home/groceries` · `/care` (Today) ·
   `/care/journal` · `/care/sheet` · `/care/hours` · `/settings` ·
   `/settings/household` · `/settings/accounts` (parents) · `/schedule` (out of
   the nav) · `POST /api/calendar/sync` · `POST /api/recipe/read`. Retired, redirecting: `/dashboard` →
@@ -721,6 +793,9 @@ the other unbuilt bullet from the screens list.
   the nanny's busy view, quiet sync) · `FamilyToday.svelte` (Home's Today) ·
   `FamilyCalendars.svelte` (calendar settings) · `ParentsDay.svelte` (the
   nanny's view of the parents' day) ·
+  `src/lib/chores.js` (when chores are due, streaks, labels) ·
+  `src/lib/stores/choreBoard.js` (the board, live) · `ChoreRow.svelte` ·
+  `ChoreSheet.svelte` · `HomeChores.svelte` · `ChoreAsks.svelte` ·
   `src/lib/groceries.js` (aisles, quick add) · `src/lib/ingredients.js`
   (amounts and pasted recipes) · `RecipeSheet.svelte` ·
   `src/lib/server/recipePage.js` (a recipe page's ingredients) ·

@@ -23,6 +23,7 @@ export const SECTIONS = [
 		tabs: [
 			{ href: '/home', label: 'Hearth' },
 			{ href: '/home/calendar', label: 'Calendar' },
+			{ href: '/home/chores', label: 'Chores' },
 			{ href: '/home/groceries', label: 'Groceries' }
 		]
 	},

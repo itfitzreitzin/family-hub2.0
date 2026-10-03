@@ -512,7 +512,9 @@ system, documented in the README and enforced by semantic tokens.
   cut into `static/`: `favicon.ico` (16/32/48), `apple-touch-icon.png` (180px,
   opaque — iOS rounds its own corners), and the manifest's 192/512 plus a
   full-bleed maskable 512 (`static/manifest.webmanifest`, `display: browser`).
-  Linked from `src/app.html`, so `ssr = false` pages carry them too.
+  Linked from `src/app.html`, so `ssr = false` pages carry them too, with
+  `apple-mobile-web-app-title` naming the home-screen icon "Family Hub" (no page
+  sets a `<title>`, so iOS would otherwise name it after the address).
 - **Flavor with function:** a real moon-phase component (accurate to hours) on the
   login crest; role titles as arcana; empty states as illustrated vignettes
   ("The purse is empty," "The scrying pool is clouded"); skeleton loaders.

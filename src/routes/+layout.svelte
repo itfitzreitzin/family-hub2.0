@@ -6,7 +6,6 @@
 	import { resolve } from '$app/paths';
 	import { supabase } from '$lib/supabase';
 	import { landingFor } from '$lib/nav.js';
-	import favicon from '$lib/assets/favicon.svg';
 	import Nav from '$lib/Nav.svelte';
 	import Toast from '$lib/components/Toast.svelte';
 	import ConfirmModal from '$lib/components/ConfirmModal.svelte';
@@ -61,10 +60,6 @@
 		guard(page.url.pathname);
 	});
 </script>
-
-<svelte:head>
-	<link rel="icon" href={favicon} />
-</svelte:head>
 
 <!-- A whisper of grain over the whole app, so flat colour never looks flat. -->
 <div class="grain-overlay" aria-hidden="true"></div>

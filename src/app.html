@@ -7,6 +7,20 @@
 		<meta name="theme-color" content="#150e1e" />
 
 		<!--
+			The cottage icon, cut from one painting into static/: favicon.ico
+			(16/32/48) for tabs, a 180px opaque square for iOS's home screen
+			(iOS rounds its own corners), and the manifest's 192/512 plus a
+			full-bleed maskable 512 for Android. Here rather than in the layout
+			so pages with ssr = false still carry them in their first HTML.
+			No page sets a <title>, so iOS would name the home-screen icon after
+			the address; apple-mobile-web-app-title names it instead.
+		-->
+		<link rel="icon" href="/favicon.ico" sizes="any" />
+		<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+		<link rel="manifest" href="/manifest.webmanifest" />
+		<meta name="apple-mobile-web-app-title" content="Family Hub" />
+
+		<!--
 			Resolve the theme before first paint so the page never flashes the
 			wrong one. Mirrors the logic in src/lib/theme.js.
 		-->

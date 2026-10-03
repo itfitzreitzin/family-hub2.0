@@ -6,7 +6,7 @@ repo: itfitzreitzin/family-hub2.0
 status: active, in production use by one household
 started: 2025-10-03
 last-major-update: 2026-10-02
-doc-date: 2026-10-02
+doc-date: 2026-10-03
 stack: [SvelteKit 2, Svelte 5, Vite 7, Supabase, ical.js]
 tags: [family-hub, nanny, time-tracking, childcare, household, home-hub, side-project]
 ---
@@ -507,6 +507,12 @@ system, documented in the README and enforced by semantic tokens.
   gilt corner filigree, a three-part painted shelf, still lifes, painted nav
   icons, and **stand-in portraits** (three adults, two kids; the files carry
   placeholder names). A stable hash assigns them as avatar stand-ins.
+- **App icon:** a pixel cottage (red roof, a heart over the chimney smoke) in a
+  navy rounded frame, replacing the gilt crescent-moon SVG favicon. One painting
+  cut into `static/`: `favicon.ico` (16/32/48), `apple-touch-icon.png` (180px,
+  opaque — iOS rounds its own corners), and the manifest's 192/512 plus a
+  full-bleed maskable 512 (`static/manifest.webmanifest`, `display: browser`).
+  Linked from `src/app.html`, so `ssr = false` pages carry them too.
 - **Flavor with function:** a real moon-phase component (accurate to hours) on the
   login crest; role titles as arcana; empty states as illustrated vignettes
   ("The purse is empty," "The scrying pool is clouded"); skeleton loaders.
